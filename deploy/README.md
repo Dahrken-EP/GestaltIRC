@@ -83,7 +83,7 @@ Open these ports: 80 and 443 (tcp, and 443 udp), 3478 (udp and tcp), 5349 (tcp),
   `command_rate` (how fast a client may send), `turn_ttl`, `sts_duration`, and `allow_private_networks` (whether
   the web editor may add servers on private addresses; off by default). See `server/bouncer.example.yaml`.
 - **Size.** Measured with `test/load/run.sh` on a 4-core machine: an idle bouncer with one user is about
-  18 MB, and 50 users with two networks and 20 channels each, every one with a client attached, about 65 MB
+  19 MB, and 50 users with two networks and 20 channels each, every one with a client attached, about 60 MB
   (the budget in DESIGN.md is 25 MB and 300 MB). History is kept in SQLite on disk, about 0.5 KB a message.
 
 ## Backing up and restoring

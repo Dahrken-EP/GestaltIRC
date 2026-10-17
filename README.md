@@ -147,9 +147,9 @@ Measured, on the 4-core test machine (`test/load/run.sh`, `test/load/web.sh`):
 
 | | measured | budget in DESIGN.md |
 |---|---|---|
-| bouncer, idle, one user | 18.5 MB | 25 MB |
+| bouncer, idle, one user | 19.5 MB | 25 MB |
 | 50 users, 2 networks, 20 channels of 100 messages each, nobody attached | 56.5 MB | |
-| the same with 100 clients attached | 65.3 MB | 300 MB |
+| the same with 100 clients attached | 59.5 MB | 300 MB |
 | web client, 10 channels with 2000 messages each (20,000) fully loaded | 16.4 MB JS heap | 60 MB |
 
 The web figure is taken after a garbage collection, with the oldest message of all ten channels reached
