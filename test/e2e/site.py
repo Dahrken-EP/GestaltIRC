@@ -28,18 +28,25 @@ PAGE = """<!doctype html><html><head>
 
 
 # Pictures for the screenshot script, if they are there (see samples/make_samples.py). The tests do not need them.
+# Only these names are served, so nothing a request says reaches the file system.
 SAMPLES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "samples")
-SAMPLE_TYPES = {".png": "image/png", ".gif": "image/gif"}
+SAMPLES = {
+    "/photo.png": ("photo.png", "image/png"),
+    "/dashboard.png": ("dashboard.png", "image/png"),
+    "/thumb.png": ("thumb.png", "image/png"),
+    "/loop.gif": ("loop.gif", "image/gif"),
+}
 
 
 def sample(path):
-    name = os.path.basename(path)
-    ext = os.path.splitext(name)[1]
-    full = os.path.join(SAMPLES_DIR, name)
-    if ext in SAMPLE_TYPES and os.path.dirname(path) == "/" and os.path.isfile(full):
-        with open(full, "rb") as f:
-            return SAMPLE_TYPES[ext], f.read()
-    return None
+    entry = SAMPLES.get(path)
+    if entry is None:
+        return None
+    full = os.path.join(SAMPLES_DIR, entry[0])
+    if not os.path.isfile(full):
+        return None
+    with open(full, "rb") as f:
+        return entry[1], f.read()
 
 
 # Every path that was asked for, so a test can show something was never requested.
