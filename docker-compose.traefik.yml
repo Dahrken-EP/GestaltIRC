@@ -1,0 +1,31 @@
+# For a server where Traefik already terminates HTTPS: Gestalt without Caddy, found by Traefik through labels.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d
+#
+# The bouncer is not published on any port: Traefik reaches it over the Docker network it already shares with
+# your other services. Set these in .env to match your Traefik (the defaults are the usual names):
+#   TRAEFIK_NETWORK       the Docker network Traefik watches                  (default: traefik)
+#   TRAEFIK_ENTRYPOINT    its HTTPS entrypoint                                 (default: websecure)
+#   TRAEFIK_CERTRESOLVER  the certificate resolver; leave empty if a default
+#                         or wildcard certificate already covers the name      (default: letsencrypt)
+# coturn is unchanged and still needs its own ports open: Traefik does not carry it.
+
+services:
+  caddy:
+    # Never started: the profile is not one anyone turns on.
+    profiles: ["unused"]
+  bouncer:
+    networks: [default, traefik]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK:-traefik}
+      - traefik.http.routers.gestalt.rule=Host(`${DOMAIN:?set DOMAIN in .env}`)
+      - traefik.http.routers.gestalt.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.gestalt.tls=true
+      - traefik.http.routers.gestalt.tls.certresolver=${TRAEFIK_CERTRESOLVER-letsencrypt}
+      - traefik.http.services.gestalt.loadbalancer.server.port=8080
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik}

@@ -33,6 +33,52 @@ The first `up` starts a one-off `setup` container that writes `bouncer.yaml`, `t
 secret (shared by the bouncer and coturn) into the `config` volume. It never overwrites a file that is already
 there, so editing the copy in the volume is safe and starting again changes nothing.
 
+## Behind Traefik
+
+If Traefik already terminates HTTPS on the server, leave Caddy out and let Traefik find the bouncer through labels:
+
+```bash
+cp .env.example .env     # DOMAIN=gestalt.example.org, PUBLIC_IP if behind NAT, and the TRAEFIK_* names below
+docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d
+echo 'a-long-password' | docker compose -f docker-compose.yml -f docker-compose.traefik.yml exec -T bouncer bouncer user add alice
+```
+
+`docker-compose.traefik.yml` joins the bouncer to the Docker network Traefik watches and gives it a router for
+`Host(DOMAIN)`. Nothing is published on the host for the bouncer. Three names must match your Traefik, set in `.env`:
+
+| Variable | Is | Default |
+|---|---|---|
+| `TRAEFIK_NETWORK` | the Docker network Traefik watches (`docker network ls`; it must already exist) | `traefik` |
+| `TRAEFIK_ENTRYPOINT` | its HTTPS entrypoint | `websecure` |
+| `TRAEFIK_CERTRESOLVER` | the certificate resolver that gets the certificate; set it empty (`TRAEFIK_CERTRESOLVER=`) if a wildcard or default certificate already covers the name | `letsencrypt` |
+
+Things that matter with Traefik:
+
+- **WebSockets** work without any setting.
+- **Do not attach a security-headers middleware** to this router. The bouncer sets its own, and they differ by page (only
+  the plugin sandbox page may be framed). A middleware that adds `frameDeny` or a content security policy silently
+  stops plugins from running.
+- **Client addresses.** Traefik sets `X-Forwarded-Proto` and `X-Forwarded-For` itself, and on an entrypoint without
+  `forwardedHeaders.trustedIPs` it replaces whatever a client sent, which is what the bouncer needs (it counts failed
+  logins per address). Tested: forged `X-Forwarded-For` headers did not get around the login limit. If Traefik sits behind
+  another proxy or a CDN, add that proxy's addresses to `trustedIPs` and expect the bouncer to see the CDN's address
+  unless you also make the CDN the last hop it trusts.
+- **If Traefik does not use the Docker provider** (a file provider, or Traefik running on the host), use
+  `docker-compose.proxy.yml` instead, which publishes the bouncer on `127.0.0.1:8081`, and point a router at it:
+
+  ```yaml
+  http:
+    routers:
+      gestalt: { rule: "Host(`gestalt.example.org`)", entryPoints: [websecure], service: gestalt, tls: { certResolver: letsencrypt } }
+    services:
+      gestalt: { loadBalancer: { servers: [{ url: "http://127.0.0.1:8081" }] } }
+  ```
+
+  (If Traefik itself runs in a container, `127.0.0.1` is that container; use the host's address, publish the bouncer
+  with `BOUNCER_BIND=0.0.0.0`, and firewall port 8081 to the Traefik machine.)
+
+Voice and direct chat still need coturn reachable on its own ports (see below), directly and not through Traefik.
+
 ## Behind a proxy you already have
 
 If the server already has a reverse proxy handling HTTPS on 80 and 443, Caddy would fight it for those ports. Leave
@@ -110,6 +156,7 @@ firewall (ufw, nftables, a cloud security group) is what limits it.
 | `../Dockerfile` | Builds the web client and a static bouncer into one small image with no operating system in it. Also runs on its own: see the README. |
 | `../docker-compose.yml` | `setup` (one-off), the bouncer (not published), Caddy, and coturn on the host network. |
 | `../docker-compose.proxy.yml` | An override that leaves Caddy out and publishes the bouncer on 127.0.0.1 for a proxy you already have. |
+| `../docker-compose.traefik.yml` | An override that leaves Caddy out and gives the bouncer Traefik labels instead. |
 | `../.env.example` | `DOMAIN`, `PUBLIC_IP`, `TURN_HOST`, `ADMIN_EMAIL`. |
 | `Caddyfile` | HTTPS and the proxy to the bouncer. WebSockets just work. The bouncer sets the security headers. |
 | `bouncer.yaml.template` | Production settings: trusts Caddy for client addresses, `Secure` cookies, `sts`, and the TURN servers. |
@@ -190,6 +237,11 @@ credentials, and coturn answers a STUN request on 3478 (udp and tcp).
 
 The proxy override was also run: no Caddy, the bouncer published on 127.0.0.1 only, HSTS and a `Secure` cookie
 only when the request carries `X-Forwarded-Proto: https`. The nginx snippet above was not run.
+
+The Traefik override was run against a real Traefik v3 (Docker provider, default self-signed certificate): the router
+found the bouncer, HTTPS served the client, a WebSocket upgrade returned 101, the session cookie was `Secure`, HSTS was
+sent, forged `X-Forwarded-For` headers did not get around the login limit, and another host name got Traefik's 404. Not
+run: a certificate resolver getting a real certificate, Traefik v2, the file provider, and Traefik behind a CDN.
 
 **Not tested:** a real domain with a real certificate, Caddy renewing it, coturn relaying media between two real
 browsers behind real NATs (the browser tests use loopback), TURN over TLS, the `PUBLIC_IP` path, and an upgrade

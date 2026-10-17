@@ -74,7 +74,7 @@ Point `DOMAIN` at the server first. Open these ports in the firewall:
 | 49152-49252/udp | coturn | the relay range for media that cannot go direct |
 | 5349/tcp | coturn | TURN over TLS, once you give it a certificate (optional) |
 
-The bouncer's own port, 8080, is never published. See **[deploy/README.md](deploy/README.md)** for what the stack does, backing up, and what has and has not been tested.
+The bouncer's own port, 8080, is never published. Already have Traefik, nginx or another proxy handling HTTPS? Add `-f docker-compose.traefik.yml` (or `-f docker-compose.proxy.yml`) to leave Caddy out. See **[deploy/README.md](deploy/README.md)** for what the stack does, backing up, and what has and has not been tested.
 
 ## Features
 - **Many servers, one login.** Each server has its own icon in the left bar, with channels, queries and a status window. Unread counts are grey, mentions are coloured, and the tab title shows the total. The **+** adds a server; click the one you are on to edit, switch off or remove it. A server can have a server password, alternative nicks (tried in order when the first is taken), SASL PLAIN or SCRAM or a NickServ password, channels to join, and commands to run after connecting, plus highlight words and notifications of its own.
