@@ -12,6 +12,8 @@
 #   5349/tcp        coturn: TURN over TLS (only useful once you give it a certificate; see deploy/README.md)
 #   49152-49252/udp coturn: the relay range for media that cannot go direct
 # The bouncer's own port, 8080, is not published: only Caddy reaches it.
+# With a reverse proxy already on the server, add -f docker-compose.proxy.yml (nginx and others) or
+# -f docker-compose.traefik.yml (Traefik) to leave Caddy out. See deploy/README.md.
 
 name: gestalt
 
