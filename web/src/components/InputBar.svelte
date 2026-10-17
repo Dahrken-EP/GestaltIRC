@@ -1,6 +1,7 @@
 <script lang="ts">
   import { applyCompletion, findCompletions, type Completion } from '../lib/complete'
   import type { Buffer, ChatMessage, NetworkState } from '../lib/network.svelte'
+  import EmojiPicker from './EmojiPicker.svelte'
 
   let { net, buf, reply, oncancelreply }: {
     net: NetworkState
@@ -17,6 +18,7 @@
   ]
 
   let text = $state('')
+  let picking = $state(false)
   let el: HTMLTextAreaElement
   const history: string[] = []
   let histIdx = -1
@@ -78,8 +80,25 @@
     queueMicrotask(() => el.setSelectionRange(out.caret, out.caret))
   }
 
+  /** Puts an emoji where the caret is, and leaves the caret after it. */
+  function insert(char: string) {
+    const at = el?.selectionStart ?? text.length
+    const end = el?.selectionEnd ?? at
+    text = text.slice(0, at) + char + text.slice(end)
+    const caret = at + char.length
+    queueMicrotask(() => {
+      el?.focus()
+      el?.setSelectionRange(caret, caret)
+    })
+  }
+
   function onkeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && reply) {
+    if (e.key === 'e' && e.ctrlKey && !e.altKey && !e.shiftKey) {
+      e.preventDefault()
+      picking = !picking
+    } else if (e.key === 'Escape' && picking) {
+      picking = false
+    } else if (e.key === 'Escape' && reply) {
       e.preventDefault()
       oncancelreply()
     } else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
@@ -133,7 +152,11 @@
       <button type="button" aria-label="Cancel reply" title="Cancel reply (Esc)" onclick={oncancelreply}>×</button>
     </div>
   {/if}
+  {#if picking}
+    <EmojiPicker onpick={insert} onclose={() => { picking = false; el?.focus() }} />
+  {/if}
   <label class="visually-hidden" for="msg-input">Message</label>
+  <div class="field">
   <textarea
     id="msg-input"
     bind:this={el}
@@ -147,16 +170,35 @@
     autocapitalize="off"
     disabled={buf.kind === 'p2p' ? buf.p2p?.state !== 'connected' : net.status !== 'connected'}
   ></textarea>
+  <button type="button" class="emoji" title="Emoji (Ctrl+E)" aria-label="Emoji" aria-expanded={picking} onclick={() => (picking = !picking)}>😊</button>
+  </div>
   <div class="typing" aria-live="polite">{typingText}</div>
 </form>
 
 <style>
   .input {
+    position: relative;
     padding: 8px 10px;
     border-top: 1px solid var(--border);
     background: var(--bg);
   }
+  .field {
+    display: flex;
+    gap: 6px;
+    align-items: flex-end;
+  }
+  .emoji {
+    flex: none;
+    font-size: 1.2em;
+    padding: 3px 6px;
+    border-radius: 6px;
+  }
+  .emoji:hover {
+    background: var(--bg-hover);
+  }
   textarea {
+    flex: 1;
+    min-width: 0;
     display: block;
     width: 100%;
     resize: none;

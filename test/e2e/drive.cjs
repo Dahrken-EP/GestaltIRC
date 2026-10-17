@@ -151,14 +151,14 @@ async function send(page, text) {
 
   // The settings switches really turn it off.
   await page.click('button[aria-label="Settings"]')
-  await page.getByLabel('Show pictures and video inline').uncheck()
+  await page.getByLabel('Show pictures, video and sound inline').uncheck()
   await page.getByLabel('Show a title and picture for other links').uncheck()
   await page.getByLabel('Offer YouTube and Streamable players').uncheck()
   await page.keyboard.press('Escape')
   await page.waitForFunction(() => document.querySelectorAll('img[src^="/api/media?u="], video, .card, iframe').length === 0, null, { timeout: 5000 })
   ok(true, 'with the three switches off, nothing is fetched or shown')
   await page.click('button[aria-label="Settings"]')
-  await page.getByLabel('Show pictures and video inline').check()
+  await page.getByLabel('Show pictures, video and sound inline').check()
   await page.getByLabel('Show a title and picture for other links').check()
   await page.getByLabel('Offer YouTube and Streamable players').check()
   await page.keyboard.press('Escape')

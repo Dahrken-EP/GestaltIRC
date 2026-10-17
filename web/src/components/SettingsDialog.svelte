@@ -101,7 +101,7 @@
       <legend>Links</legend>
       <label class="check">
         <input type="checkbox" bind:checked={settings.inlineMedia} onchange={() => settings.save()} />
-        Show pictures and video inline
+        Show pictures, video and sound inline
       </label>
       <label class="check">
         <input type="checkbox" bind:checked={settings.previews} onchange={() => settings.save()} />

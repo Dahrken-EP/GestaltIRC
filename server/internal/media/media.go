@@ -30,6 +30,7 @@ import (
 const (
 	DefaultMaxImage   = 15 << 20  // 15 MiB
 	DefaultMaxVideo   = 150 << 20 // 150 MiB
+	DefaultMaxAudio   = 60 << 20  // 60 MiB
 	maxURLLen         = 2048
 	perUserFetches    = 4
 	globalFetches     = 24
@@ -49,6 +50,7 @@ type Proxy struct {
 	// MaxImage and MaxVideo cap the size of what is served, in bytes.
 	MaxImage int64
 	MaxVideo int64
+	MaxAudio int64
 	// ShortTimeout is how long a request has to produce its first bytes, and to finish if it
 	// turns out to be a picture or a preview. A video may take much longer once it has started.
 	ShortTimeout time.Duration
@@ -81,6 +83,7 @@ func New() *Proxy {
 	return &Proxy{
 		MaxImage:         DefaultMaxImage,
 		MaxVideo:         DefaultMaxVideo,
+		MaxAudio:         DefaultMaxAudio,
 		ShortTimeout:     fetchTimeout,
 		YouTubeOEmbed:    "https://www.youtube.com/oembed",
 		StreamableOEmbed: "https://api.streamable.com/oembed.json",
@@ -169,6 +172,7 @@ const (
 	kindNone kind = iota
 	kindImage
 	kindVideo
+	kindAudio
 )
 
 // sniff decides what the first bytes of a body really are. The server's
@@ -179,12 +183,29 @@ func sniff(head []byte) (string, kind) {
 	if len(head) >= 12 && string(head[4:8]) == "ftyp" && (string(head[8:12]) == "avif" || string(head[8:12]) == "avis") {
 		return "image/avif", kindImage
 	}
+	// Audio that net/http does not name: FLAC, a bare MP3 stream, and the audio-only MP4 family.
+	if len(head) >= 4 && string(head[:4]) == "fLaC" {
+		return "audio/flac", kindAudio
+	}
+	if len(head) >= 12 && string(head[4:8]) == "ftyp" && (string(head[8:12]) == "M4A " || string(head[8:12]) == "M4B ") {
+		return "audio/mp4", kindAudio
+	}
+	if len(head) >= 4 && head[0] == 0xFF && head[1]&0xE0 == 0xE0 && (head[1]>>3)&3 != 1 && (head[1]>>1)&3 != 0 && head[2]>>4 != 0xF {
+		// An MPEG audio frame header: the sync bits, a real version and layer, and a real bit rate.
+		return "audio/mpeg", kindAudio
+	}
 	ct := http.DetectContentType(head)
 	switch ct {
 	case "image/png", "image/jpeg", "image/gif", "image/webp":
 		return ct, kindImage
 	case "video/mp4", "video/webm":
 		return ct, kindVideo
+	case "audio/mpeg":
+		return ct, kindAudio
+	case "audio/wave":
+		return "audio/wav", kindAudio
+	case "application/ogg", "audio/ogg":
+		return "audio/ogg", kindAudio
 	}
 	return ct, kindNone
 }
@@ -222,7 +243,7 @@ func (p *Proxy) handleMedia(w http.ResponseWriter, r *http.Request, user store.U
 		return
 	}
 	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "image/*,video/*")
+	req.Header.Set("Accept", "image/*,video/*,audio/*")
 	// Neither the user's cookies nor where they came from go to the other site.
 	var known *sniffedType
 	if rg := r.Header.Get("Range"); rg != "" {
@@ -237,8 +258,8 @@ func (p *Proxy) handleMedia(w http.ResponseWriter, r *http.Request, user store.U
 					return
 				}
 				known = &sniffedType{contentType: ct, k: k}
-				if k != kindVideo {
-					api.WriteError(w, http.StatusUnsupportedMediaType, "that is not a video this proxy serves")
+				if k != kindVideo && k != kindAudio {
+					api.WriteError(w, http.StatusUnsupportedMediaType, "that is not a video or sound this proxy serves")
 					return
 				}
 			}
@@ -275,12 +296,15 @@ func (p *Proxy) handleMedia(w http.ResponseWriter, r *http.Request, user store.U
 		return
 	}
 	limit := p.MaxImage
-	if k == kindVideo {
+	if k == kindVideo || k == kindAudio {
 		limit = p.MaxVideo
+		if k == kindAudio {
+			limit = p.MaxAudio
+		}
 		// From here on this is a long-lived stream: move to the video pool and the long timeout.
 		if !p.videos.acquire(user.ID) {
 			w.Header().Set("Retry-After", "5")
-			api.WriteError(w, http.StatusTooManyRequests, "too many videos at once")
+			api.WriteError(w, http.StatusTooManyRequests, "too many videos and sounds at once")
 			return
 		}
 		defer p.videos.release(user.ID)
@@ -302,7 +326,7 @@ func (p *Proxy) handleMedia(w http.ResponseWriter, r *http.Request, user store.U
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Content-Disposition", "inline")
 	h.Set("Cache-Control", "private, max-age=86400")
-	if k == kindVideo {
+	if k == kindVideo || k == kindAudio {
 		h.Set("Accept-Ranges", "bytes")
 	}
 	if resp.StatusCode == http.StatusPartialContent {
@@ -339,7 +363,7 @@ func (p *Proxy) typeOf(ctx context.Context, target *url.URL) (string, kind, erro
 		return "", kindNone, err
 	}
 	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "image/*,video/*")
+	req.Header.Set("Accept", "image/*,video/*,audio/*")
 	req.Header.Set("Range", "bytes=0-"+strconv.Itoa(sniffLen-1))
 	resp, err := p.client.Do(req)
 	if err != nil {

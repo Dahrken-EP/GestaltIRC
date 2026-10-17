@@ -12,7 +12,7 @@
   // What to show for each link: the kind from its address, and a preview where one is needed.
   const items = $derived(
     links.map((href) => ({ href, info: classifyLink(href) })).filter(({ info }) => {
-      if (info.kind === 'image' || info.kind === 'video') return settings.inlineMedia
+      if (info.kind === 'image' || info.kind === 'video' || info.kind === 'audio') return settings.inlineMedia
       if (info.kind === 'youtube' || info.kind === 'streamable') return settings.embeds || settings.previews
       return settings.previews
     }),
@@ -53,7 +53,7 @@
       <p class="note">Could not load that picture. <a href={href} target="_blank" rel="noopener noreferrer nofollow">Open the link</a></p>
     {:else}
       <a class="media" href={href} target="_blank" rel="noopener noreferrer nofollow">
-        <img src={mediaSrc(href)} alt="Picture from {siteName(href)}" loading="lazy" decoding="async" onerror={() => (failed[href] = true)} />
+        <img src={mediaSrc(info.src ?? href)} alt="Picture from {siteName(href)}" loading="lazy" decoding="async" onerror={() => (failed[href] = true)} />
       </a>
     {/if}
   {:else if kind === 'video'}
@@ -61,7 +61,14 @@
       <p class="note">Could not load that video. <a href={href} target="_blank" rel="noopener noreferrer nofollow">Open the link</a></p>
     {:else}
       <!-- svelte-ignore a11y_media_has_caption -->
-      <video class="media" src={mediaSrc(href)} controls preload="metadata" playsinline onerror={() => (failed[href] = true)}></video>
+      <video class="media" src={mediaSrc(info.src ?? href)} controls preload="metadata" playsinline onerror={() => (failed[href] = true)}></video>
+    {/if}
+  {:else if kind === 'audio'}
+    {#if failed[href]}
+      <p class="note">Could not load that sound. <a href={href} target="_blank" rel="noopener noreferrer nofollow">Open the link</a></p>
+    {:else}
+      <!-- svelte-ignore a11y_media_has_caption -->
+      <audio class="sound" src={mediaSrc(href)} controls preload="none" onerror={() => (failed[href] = true)}></audio>
     {/if}
   {:else if (kind === 'youtube' || kind === 'streamable') && info.id}
     {#if playing[href] && settings.embeds}
@@ -123,6 +130,11 @@
   }
   video.media {
     width: min(100%, 480px);
+  }
+  audio.sound {
+    display: block;
+    margin-top: 4px;
+    width: min(100%, 360px);
   }
   .note {
     margin: 4px 0 0;
