@@ -13,12 +13,16 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// ErrLegacySchema means the database was written by phase 2, which keyed
+// messages by network name. Move the data directory aside to start fresh.
+var ErrLegacySchema = errors.New("store: database uses the phase 2 schema; move the data directory aside")
+
 // MaxFetch caps how many messages one history query can return.
 const MaxFetch = 500
 
 // Record is one stored message.
 type Record struct {
-	Network string
+	Network int64
 	Target  string // lower-cased buffer name: channel or nick
 	TimeMS  int64  // server-time of the message, or receive time if none
 	RecvMS  int64  // local receive time, used for "what did I miss"
@@ -57,19 +61,54 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(`
-CREATE TABLE IF NOT EXISTS messages (
-	id       INTEGER PRIMARY KEY AUTOINCREMENT,
-	network  TEXT    NOT NULL,
-	target   TEXT    NOT NULL,
-	time_ms  INTEGER NOT NULL,
-	recv_ms  INTEGER NOT NULL,
-	msgid    TEXT    NOT NULL DEFAULT '',
-	line     TEXT    NOT NULL
+	// Phase 2 stored messages under the network name. Refuse to run over that
+	// layout rather than mix the two, since there is no automatic migration yet.
+	var legacy int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'network'`).Scan(&legacy)
+	if err != nil {
+		return fmt.Errorf("store: inspect schema: %w", err)
+	}
+	if legacy > 0 {
+		return ErrLegacySchema
+	}
+
+	_, err = s.db.Exec(`
+CREATE TABLE IF NOT EXISTS users (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	name          TEXT    NOT NULL UNIQUE,
+	password_hash TEXT    NOT NULL,
+	created_ms    INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS messages_target ON messages (network, target, id);
-CREATE INDEX IF NOT EXISTS messages_recv   ON messages (network, recv_ms);
-CREATE INDEX IF NOT EXISTS messages_msgid  ON messages (network, msgid);
+CREATE TABLE IF NOT EXISTS networks (
+	id              INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id         INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+	name            TEXT    NOT NULL,
+	host            TEXT    NOT NULL,
+	port            INTEGER NOT NULL,
+	tls             INTEGER NOT NULL,
+	nick            TEXT    NOT NULL,
+	ident           TEXT    NOT NULL,
+	realname        TEXT    NOT NULL,
+	server_password TEXT    NOT NULL DEFAULT '',
+	sasl_mech       TEXT    NOT NULL DEFAULT '',
+	sasl_user       TEXT    NOT NULL DEFAULT '',
+	sasl_password   TEXT    NOT NULL DEFAULT '',
+	join_list       TEXT    NOT NULL DEFAULT '',
+	enabled         INTEGER NOT NULL DEFAULT 1,
+	UNIQUE (user_id, name)
+);
+CREATE TABLE IF NOT EXISTS messages (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	network_id INTEGER NOT NULL,
+	target     TEXT    NOT NULL,
+	time_ms    INTEGER NOT NULL,
+	recv_ms    INTEGER NOT NULL,
+	msgid      TEXT    NOT NULL DEFAULT '',
+	line       TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS messages_target ON messages (network_id, target, id);
+CREATE INDEX IF NOT EXISTS messages_recv   ON messages (network_id, recv_ms);
+CREATE INDEX IF NOT EXISTS messages_msgid  ON messages (network_id, msgid);
 CREATE TABLE IF NOT EXISTS kv (
 	key   TEXT PRIMARY KEY,
 	value INTEGER NOT NULL
@@ -90,7 +129,7 @@ func (s *Store) Append(r Record, limit int) error {
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(
-		`INSERT INTO messages (network, target, time_ms, recv_ms, msgid, line) VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO messages (network_id, target, time_ms, recv_ms, msgid, line) VALUES (?, ?, ?, ?, ?, ?)`,
 		r.Network, r.Target, r.TimeMS, r.RecvMS, r.MsgID, r.Line,
 	); err != nil {
 		return err
@@ -99,8 +138,8 @@ func (s *Store) Append(r Record, limit int) error {
 	// id of the row just past the window, so everything at or below it goes.
 	if _, err := tx.Exec(`
 DELETE FROM messages
-WHERE network = ? AND target = ? AND id <= (
-	SELECT id FROM messages WHERE network = ? AND target = ?
+WHERE network_id = ? AND target = ? AND id <= (
+	SELECT id FROM messages WHERE network_id = ? AND target = ?
 	ORDER BY id DESC LIMIT 1 OFFSET ?
 )`, r.Network, r.Target, r.Network, r.Target, limit); err != nil {
 		return err
@@ -119,33 +158,33 @@ func clampLimit(n int) int {
 }
 
 // Latest returns the newest lines in the buffer, oldest first.
-func (s *Store) Latest(network, target string, limit int) ([]string, error) {
-	return s.query(true, `SELECT line FROM messages WHERE network = ? AND target = ? ORDER BY id DESC LIMIT ?`,
+func (s *Store) Latest(network int64, target string, limit int) ([]string, error) {
+	return s.query(true, `SELECT line FROM messages WHERE network_id = ? AND target = ? ORDER BY id DESC LIMIT ?`,
 		network, target, clampLimit(limit))
 }
 
 // Before returns up to limit lines with time_ms before ms, oldest first.
-func (s *Store) Before(network, target string, ms int64, limit int) ([]string, error) {
-	return s.query(true, `SELECT line FROM messages WHERE network = ? AND target = ? AND time_ms < ? ORDER BY id DESC LIMIT ?`,
+func (s *Store) Before(network int64, target string, ms int64, limit int) ([]string, error) {
+	return s.query(true, `SELECT line FROM messages WHERE network_id = ? AND target = ? AND time_ms < ? ORDER BY id DESC LIMIT ?`,
 		network, target, ms, clampLimit(limit))
 }
 
 // After returns up to limit lines with time_ms after ms, oldest first.
-func (s *Store) After(network, target string, ms int64, limit int) ([]string, error) {
-	return s.query(false, `SELECT line FROM messages WHERE network = ? AND target = ? AND time_ms > ? ORDER BY id ASC LIMIT ?`,
+func (s *Store) After(network int64, target string, ms int64, limit int) ([]string, error) {
+	return s.query(false, `SELECT line FROM messages WHERE network_id = ? AND target = ? AND time_ms > ? ORDER BY id ASC LIMIT ?`,
 		network, target, ms, clampLimit(limit))
 }
 
 // LatestAfter returns up to limit newest lines with time_ms after ms, oldest first.
-func (s *Store) LatestAfter(network, target string, ms int64, limit int) ([]string, error) {
-	return s.query(true, `SELECT line FROM messages WHERE network = ? AND target = ? AND time_ms > ? ORDER BY id DESC LIMIT ?`,
+func (s *Store) LatestAfter(network int64, target string, ms int64, limit int) ([]string, error) {
+	return s.query(true, `SELECT line FROM messages WHERE network_id = ? AND target = ? AND time_ms > ? ORDER BY id DESC LIMIT ?`,
 		network, target, ms, clampLimit(limit))
 }
 
 // TimeOfMsgID returns the server time of a stored message, if it exists.
-func (s *Store) TimeOfMsgID(network, msgid string) (int64, bool, error) {
+func (s *Store) TimeOfMsgID(network int64, msgid string) (int64, bool, error) {
 	var ms int64
-	err := s.db.QueryRow(`SELECT time_ms FROM messages WHERE network = ? AND msgid = ? ORDER BY id DESC LIMIT 1`,
+	err := s.db.QueryRow(`SELECT time_ms FROM messages WHERE network_id = ? AND msgid = ? ORDER BY id DESC LIMIT 1`,
 		network, msgid).Scan(&ms)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
@@ -161,8 +200,8 @@ type Target struct {
 
 // Missed returns, for every buffer with messages received after recvMS, up to
 // perTarget of its newest lines, oldest first. Buffers come sorted by name.
-func (s *Store) Missed(network string, recvMS int64, perTarget int) ([]Target, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT target FROM messages WHERE network = ? AND recv_ms > ?`, network, recvMS)
+func (s *Store) Missed(network int64, recvMS int64, perTarget int) ([]Target, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT target FROM messages WHERE network_id = ? AND recv_ms > ?`, network, recvMS)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +221,7 @@ func (s *Store) Missed(network string, recvMS int64, perTarget int) ([]Target, e
 
 	out := make([]Target, 0, len(names))
 	for _, name := range names {
-		lines, err := s.query(true, `SELECT line FROM messages WHERE network = ? AND target = ? AND recv_ms > ? ORDER BY id DESC LIMIT ?`,
+		lines, err := s.query(true, `SELECT line FROM messages WHERE network_id = ? AND target = ? AND recv_ms > ? ORDER BY id DESC LIMIT ?`,
 			network, name, recvMS, clampLimit(perTarget))
 		if err != nil {
 			return nil, err

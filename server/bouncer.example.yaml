@@ -1,28 +1,9 @@
-# Copy to bouncer.yaml and chmod 600. The file holds network credentials.
-#
-#   bouncer hash-password        # then paste the output into user.password_hash
+# Copy to bouncer.yaml. Users and networks are not in this file. Manage them
+# with the admin commands (see README.md).
 
 listen: "127.0.0.1:8080"        # serve plain HTTP here; terminate TLS in a reverse proxy
 allowed_origins: []             # extra WebSocket Origin patterns, if the web client is hosted elsewhere
 data_dir: "./data"              # bouncer.db lives here
+secret_key_file: "./data/secret.key"  # encrypts network passwords; back this up
 history_limit: 2000             # messages kept per buffer
 replay_limit: 200               # messages per buffer replayed when a client attaches
-
-user:
-  name: matt
-  password_hash: "$argon2id$v=19$m=19456,t=2,p=1$REPLACE$REPLACE"
-
-network:
-  name: libera
-  host: irc.libera.chat
-  port: 6697
-  tls: true
-  nick: matt
-  user: matt
-  realname: Matt
-  sasl:
-    mechanism: PLAIN            # PLAIN or SCRAM-SHA-256, or leave empty to skip SASL
-    username: matt
-    password: "REPLACE"
-  join:
-    - "#irc-webclient-test"

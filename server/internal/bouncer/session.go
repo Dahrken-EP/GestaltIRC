@@ -33,8 +33,9 @@ const advertisedCaps = "message-tags server-time batch echo-message sasl=PLAIN c
 
 // Session is one client connected to the bouncer over WebSocket.
 type Session struct {
-	b    *Bouncer
-	conn irc.LineConn
+	b      *Bouncer
+	conn   irc.LineConn
+	target *Network // chosen at login; nil until authenticated
 
 	// mu guards everything below it. Lock order: Network.mu, then Session.mu.
 	mu       sync.Mutex
@@ -72,7 +73,7 @@ func (s *Session) run(ctx context.Context) {
 	go s.writeLoop()
 	defer func() {
 		if s.attached {
-			s.b.net.Detach(s)
+			s.target.Detach(s)
 		}
 		s.close()
 	}()
@@ -135,7 +136,7 @@ func (s *Session) handle(m *irc.Message) bool {
 }
 
 func (s *Session) forward(m *irc.Message) {
-	if err := s.b.net.Forward(m); err != nil {
+	if err := s.target.Forward(m); err != nil {
 		s.enqueueMsg(notice(s.nickOr("*"), fmt.Sprintf("Message not sent: %v", err)))
 	}
 }
@@ -225,14 +226,20 @@ func (s *Session) handleAuthenticate(m *irc.Message) {
 
 	// PLAIN carries "authzid\0authcid\0password".
 	parts := bytes.SplitN(data, []byte{0}, 3)
-	if len(parts) != 3 || !s.b.checkPassword(string(parts[1]), string(parts[2])) {
+	if len(parts) != 3 {
 		s.sendNumeric(904, "SASL authentication failed")
 		return
 	}
+	login := string(parts[1])
+	target, err := s.b.authenticate(login, string(parts[2]))
+	if err != nil {
+		s.sendNumeric(904, err.Error())
+		return
+	}
+	s.target = target
 	s.authed = true
-	user := string(parts[1])
 	s.enqueueLine(fmt.Sprintf(":%s 900 %s %s!%s@%s %s :You are now logged in as %s",
-		bouncerPrefix, s.nickOr("*"), s.nickOr("*"), user, bouncerPrefix, user, user))
+		bouncerPrefix, s.nickOr("*"), s.nickOr("*"), login, bouncerPrefix, login, login))
 	s.sendNumeric(903, "SASL authentication successful")
 	s.maybeRegister()
 }
@@ -242,11 +249,17 @@ func (s *Session) handlePass(m *irc.Message) {
 	if s.registered {
 		return
 	}
-	user, pass, ok := strings.Cut(m.Param(0), ":")
-	if !ok || !s.b.checkPassword(user, pass) {
+	login, pass, ok := strings.Cut(m.Param(0), ":")
+	var target *Network
+	var err error
+	if ok {
+		target, err = s.b.authenticate(login, pass)
+	}
+	if !ok || err != nil {
 		s.enqueueLine(fmt.Sprintf(":%s 464 %s :Password incorrect", bouncerPrefix, s.nickOr("*")))
 		return
 	}
+	s.target = target
 	s.authed = true
 	s.maybeRegister()
 }
@@ -258,14 +271,14 @@ func (s *Session) maybeRegister() {
 		return
 	}
 	s.registered = true
-	if err := s.b.net.Attach(s); err != nil {
+	if err := s.target.Attach(s); err != nil {
 		log.Printf("attach session: %v", err)
 		s.close()
 		return
 	}
 	s.attached = true
 	// The network decides the nick. Use it from now on, even if the client asked for another.
-	s.nick = s.b.net.Nick()
+	s.nick = s.target.Nick()
 }
 
 // --- CHATHISTORY ---
@@ -284,7 +297,7 @@ func (s *Session) handleCHATHISTORY(m *irc.Message) {
 	if err != nil || limit < 1 {
 		limit = 50
 	}
-	limit = min(limit, s.b.net.limit)
+	limit = min(limit, s.target.limit)
 
 	wildcard := selector == "*"
 	var ms int64
@@ -298,7 +311,7 @@ func (s *Session) handleCHATHISTORY(m *irc.Message) {
 		}
 		ms = t.UnixMilli()
 	case strings.HasPrefix(selector, "msgid="):
-		found, ok, err := s.b.store.TimeOfMsgID(s.b.net.name, strings.TrimPrefix(selector, "msgid="))
+		found, ok, err := s.b.store.TimeOfMsgID(s.target.id, strings.TrimPrefix(selector, "msgid="))
 		if err != nil {
 			s.sendFail("CHATHISTORY", "UNKNOWN_ERROR", sub, "Lookup failed")
 			return
@@ -315,7 +328,7 @@ func (s *Session) handleCHATHISTORY(m *irc.Message) {
 
 	key := strings.ToLower(target)
 	st := s.b.store
-	name := s.b.net.name
+	name := s.target.id
 	var lines []string
 	switch sub {
 	case "LATEST":

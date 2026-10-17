@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"irc-webclient/server/internal/config"
+	"irc-webclient/server/internal/accounts"
 	"irc-webclient/server/internal/irc"
 	"irc-webclient/server/internal/store"
 	"irc-webclient/server/internal/upstream"
@@ -42,8 +42,9 @@ type channelState struct {
 
 // Network is one upstream IRC connection, kept alive for the user.
 type Network struct {
-	cfg   config.NetworkConfig
-	name  string // key for the store
+	spec  accounts.NetworkSpec
+	id    int64  // key for the store
+	name  string // display name, as the user chose it
 	store *store.Store
 	limit int // history cap per buffer
 	// replayLimit caps the messages per buffer sent on attach.
@@ -64,21 +65,22 @@ type Network struct {
 }
 
 // NewNetwork builds an upstream connection manager. Call Run to start it.
-func NewNetwork(cfg config.NetworkConfig, st *store.Store, historyLimit, replayLimit int) *Network {
+func NewNetwork(spec accounts.NetworkSpec, st *store.Store, historyLimit, replayLimit int) *Network {
 	n := &Network{
-		cfg:         cfg,
-		name:        cfg.Name,
+		spec:        spec,
+		id:          spec.ID,
+		name:        spec.Name,
 		store:       st,
 		limit:       historyLimit,
 		replayLimit: replayLimit,
-		nick:        cfg.Nick,
+		nick:        spec.Nick,
 		caps:        map[string]string{},
 		channels:    map[string]*channelState{},
 		wanted:      map[string]string{},
 		pending:     map[string][]string{},
 		sessions:    map[*Session]struct{}{},
 	}
-	for _, ch := range cfg.Join {
+	for _, ch := range spec.Join {
 		n.wanted[strings.ToLower(ch)] = ch
 	}
 	return n
@@ -165,25 +167,25 @@ func (n *Network) watchdog(c *upstream.Client, done <-chan struct{}) {
 
 // connect dials the network and registers. Registration runs under a deadline.
 func (n *Network) connect(ctx context.Context) (*upstream.Client, error) {
-	conn, err := dialUpstream(ctx, n.cfg)
+	conn, err := dialUpstream(ctx, n.spec)
 	if err != nil {
 		return nil, err
 	}
 	conn.SetDeadline(time.Now().Add(registrationTimeout))
 
 	var sasl irc.SASLMechanism
-	switch strings.ToUpper(n.cfg.SASL.Mechanism) {
+	switch strings.ToUpper(n.spec.SASLMech) {
 	case "PLAIN":
-		sasl = &irc.PlainMechanism{Username: n.cfg.SASL.Username, Password: n.cfg.SASL.Password}
+		sasl = &irc.PlainMechanism{Username: n.spec.SASLUser, Password: n.spec.SASLPassword}
 	case "SCRAM-SHA-256":
-		sasl = &irc.ScramSHA256Mechanism{Username: n.cfg.SASL.Username, Password: n.cfg.SASL.Password}
+		sasl = &irc.ScramSHA256Mechanism{Username: n.spec.SASLUser, Password: n.spec.SASLPassword}
 	}
 
 	client, err := upstream.Connect(irc.NewNetConn(conn), upstream.Config{
-		Nick:     n.cfg.Nick,
-		User:     n.cfg.User,
-		RealName: n.cfg.RealName,
-		Password: n.cfg.Password,
+		Nick:     n.spec.Nick,
+		User:     n.spec.Ident,
+		RealName: n.spec.RealName,
+		Password: n.spec.ServerPassword,
 		SASL:     sasl,
 	})
 	if err != nil {
@@ -193,7 +195,7 @@ func (n *Network) connect(ctx context.Context) (*upstream.Client, error) {
 	return client, nil
 }
 
-func dialUpstream(ctx context.Context, nc config.NetworkConfig) (net.Conn, error) {
+func dialUpstream(ctx context.Context, nc accounts.NetworkSpec) (net.Conn, error) {
 	d := &net.Dialer{Timeout: 20 * time.Second}
 	raw, err := d.DialContext(ctx, "tcp", net.JoinHostPort(nc.Host, strconv.Itoa(nc.Port)))
 	if err != nil {
@@ -289,11 +291,11 @@ func (n *Network) Attach(s *Session) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	lastSeen, err := n.store.GetKV("last_seen:" + n.name)
+	lastSeen, err := n.store.GetKV(store.LastSeenKey(n.id))
 	if err != nil {
 		return err
 	}
-	missed, err := n.store.Missed(n.name, lastSeen, n.replayLimit)
+	missed, err := n.store.Missed(n.id, lastSeen, n.replayLimit)
 	if err != nil {
 		return err
 	}
@@ -314,7 +316,7 @@ func (n *Network) Detach(s *Session) {
 	defer n.mu.Unlock()
 	delete(n.sessions, s)
 	if len(n.sessions) == 0 {
-		if err := n.store.SetKV("last_seen:"+n.name, nowMS()); err != nil {
+		if err := n.store.SetKV(store.LastSeenKey(n.id), nowMS()); err != nil {
 			log.Printf("record last seen: %v", err)
 		}
 	}
@@ -461,7 +463,7 @@ func (n *Network) record(target string, m *irc.Message) {
 	}
 	msgid, _ := m.Tag("msgid")
 	err := n.store.Append(store.Record{
-		Network: n.name,
+		Network: n.id,
 		Target:  target,
 		TimeMS:  ts,
 		RecvMS:  now,
@@ -614,4 +616,18 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 
 func nowMS() int64 {
 	return time.Now().UnixMilli()
+}
+
+// Stop disconnects every attached client. Cancel the context passed to Run to
+// close the upstream connection.
+func (n *Network) Stop() {
+	n.mu.Lock()
+	sessions := make([]*Session, 0, len(n.sessions))
+	for s := range n.sessions {
+		sessions = append(sessions, s)
+	}
+	n.mu.Unlock()
+	for _, s := range sessions {
+		s.close()
+	}
 }
