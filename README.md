@@ -63,8 +63,8 @@ Gestalt has two parts: the **bouncer** (a small server that stays connected to I
 Both desktop apps connect to a bouncer you run elsewhere (the address is remembered), or start a bouncer of their own on your
 computer, which is connected to IRC only while the app is open. Linux uses Electron and Windows uses Tauri; see **[docs/DESKTOP.md](docs/DESKTOP.md)**.
 
-- **Linux:** download **[Gestalt-0.1.3.AppImage](https://github.com/Dahrken-EP/GestaltIRC/releases/download/v0.1.3/Gestalt-0.1.3.AppImage)**, then `chmod +x Gestalt-0.1.3.AppImage && ./Gestalt-0.1.3.AppImage`. On a recent distribution you may need FUSE 2 (`sudo apt install libfuse2`).
-- **Windows:** download **[Gestalt_0.1.3_x64-setup.exe](https://github.com/Dahrken-EP/GestaltIRC/releases/download/v0.1.3/Gestalt_0.1.3_x64-setup.exe)** and run it. The installer is not signed yet, so Windows SmartScreen will warn: choose *More info*, then *Run anyway*.
+- **Linux:** download **[Gestalt-0.1.4.AppImage](https://github.com/Dahrken-EP/GestaltIRC/releases/download/v0.1.4/Gestalt-0.1.4.AppImage)**, then `chmod +x Gestalt-0.1.4.AppImage && ./Gestalt-0.1.4.AppImage`. On a recent distribution you may need FUSE 2 (`sudo apt install libfuse2`).
+- **Windows:** download **[Gestalt_0.1.4_x64-setup.exe](https://github.com/Dahrken-EP/GestaltIRC/releases/download/v0.1.4/Gestalt_0.1.4_x64-setup.exe)** and run it. The installer is not signed yet, so Windows SmartScreen will warn: choose *More info*, then *Run anyway*.
 - Newer versions are always on the **[releases page](https://github.com/Dahrken-EP/GestaltIRC/releases/latest)**.
 
 ## Run the bouncer with Docker
