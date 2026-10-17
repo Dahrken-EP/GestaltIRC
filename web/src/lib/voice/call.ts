@@ -188,7 +188,7 @@ export class VoiceCall {
     this.local = mic
     const make = this.o.createMeter ?? audioMeter
     this.meters.local = make(mic)
-    this.ticker = setInterval(() => this.tick(), this.o.tickMs ?? 100)
+    this.ticker = setInterval(() => this.tick(), this.o.tickMs ?? 50)
   }
 
   private async makeSession(sid: string): Promise<PeerSession> {

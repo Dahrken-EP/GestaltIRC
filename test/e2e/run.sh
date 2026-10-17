@@ -6,6 +6,8 @@
 #   npm --prefix web run build     # once, and after changing the client
 #   test/e2e/run.sh
 #
+#   VOICE_LOAD=1 test/e2e/run.sh   # ten browsers in one voice room instead (slower)
+#
 # Needs Go, Node, Python 3 and Playwright (npm i -g playwright, or set
 # PLAYWRIGHT_MODULE to its path). Set CHROMIUM_PATH to use a Chromium you
 # already have instead of Playwright's own.
@@ -62,6 +64,15 @@ b network add matt fake --host 127.0.0.1 --port "$irc_port" --nick matt --join '
 # A second person, for the tests where two browsers talk to each other.
 echo "$password" | b user add jane > /dev/null
 b network add jane fake --host 127.0.0.1 --port "$irc_port" --nick jane --join '#chat' > /dev/null
+echo "$password" | b user add kim > /dev/null
+b network add kim fake --host 127.0.0.1 --port "$irc_port" --nick kim --join '#chat' > /dev/null
+if [ -n "${VOICE_LOAD:-}" ]; then
+  # Eleven more people for the voice room load test: ten fit, the eleventh is turned away.
+  for i in $(seq -w 1 11); do
+    echo "$password" | b user add "u$i" > /dev/null
+    b network add "u$i" fake --host 127.0.0.1 --port "$irc_port" --nick "u$i" --join '#chat' > /dev/null
+  done
+fi
 
 IRC_PORT=$irc_port python3 -I "$here/fake_irc.py" &
 pids+=($!)
@@ -87,11 +98,13 @@ if [ -z "${CHROMIUM_PATH:-}" ]; then
   done
 fi
 
+script=drive
+[ -n "${VOICE_LOAD:-}" ] && script=voice_load
 out=${OUT_DIR:-$work/out}
 mkdir -p "$out"
 status=0
 BASE_URL="http://127.0.0.1:$bouncer_port" SITE_URL="http://127.0.0.1:$site_port" TEST_PASSWORD="$password" OUT_DIR="$out" \
-  node "$here/drive.cjs" || status=$?
+  node "$here/$script.cjs" || status=$?
 echo "screenshots: $out (removed on exit unless OUT_DIR is set)"
 if [ "$status" -ne 0 ]; then echo "--- bouncer log"; tail -20 "$work/bouncer.log"; fi
 exit "$status"

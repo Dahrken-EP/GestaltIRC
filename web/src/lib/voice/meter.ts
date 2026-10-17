@@ -32,7 +32,7 @@ export const audioMeter: MeterFactory = (stream) => {
   if (!ctx || stream.getAudioTracks().length === 0) return { level: () => 0, close() {} }
   const source = ctx.createMediaStreamSource(stream)
   const analyser = ctx.createAnalyser()
-  analyser.fftSize = 512
+  analyser.fftSize = 2048 // about 43 ms of sound, so polling twenty times a second misses nothing
   source.connect(analyser)
   const data = new Uint8Array(analyser.fftSize)
   return {

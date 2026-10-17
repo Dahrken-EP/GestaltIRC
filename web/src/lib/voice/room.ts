@@ -119,7 +119,7 @@ export class VoiceRoom {
     this.answered.clear()
     this.localMeter = (this.o.createMeter ?? audioMeter)(stream)
     this.update({ state: 'active', muted: false })
-    this.ticker = setInterval(() => this.tick(), this.o.tickMs ?? 100)
+    this.ticker = setInterval(() => this.tick(), this.o.tickMs ?? 50)
     this.o.sendPresence(this.o.channel, formatPresence({ t: 'join' }))
   }
 

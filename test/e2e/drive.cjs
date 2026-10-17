@@ -36,6 +36,9 @@ async function send(page, text) {
     executablePath: process.env.CHROMIUM_PATH || undefined,
     args: [
       ...(process.env.CI || process.env.NO_SANDBOX ? ['--no-sandbox'] : []),
+      // A microphone that is a fake source making a beep every second, with no permission prompt.
+      '--use-fake-device-for-media-stream',
+      '--use-fake-ui-for-media-stream',
     ],
   })
   const ctxA = await browser.newContext({ viewport: { width: 1280, height: 760 } })
@@ -416,6 +419,131 @@ async function send(page, text) {
   await page.waitForSelector('.panel .status[data-state=ended]:has-text("declined")')
   ok(true, 'a declined request ends the call on the caller')
   await ctxJ.close()
+
+
+  // ---------- M. voice: a channel room, then a private call ----------
+  const voiceUser = async (user) => {
+    const ctx = await browser.newContext({ viewport: { width: 1100, height: 760 } })
+    const p = await ctx.newPage()
+    p.on('pageerror', (e) => errors.push(`${user} pageerror: ` + e.message))
+    p.on('console', (m) => m.type() === 'error' && errors.push(`${user} console: ` + m.text()))
+    await p.goto(URL)
+    await login(p, user)
+    await p.waitForSelector('.status.connected')
+    await p.waitForSelector('button.name:has-text("#chat")')
+    await openBuffer(p, '#chat')
+    return { ctx, p }
+  }
+  const vJane = await voiceUser('jane')
+  const vKim = await voiceUser('kim')
+  await openBuffer(page, '#chat')
+  const people = (p) => p.locator('[data-testid=voice-person]')
+  const speakingOf = (p, nick) => p.locator(`[data-testid=voice-person]:has-text("${nick}").speaking`)
+
+  ok((await page.getByRole('button', { name: /Join voice/ }).count()) === 1, 'a joined channel offers to join its voice room')
+  await page.getByRole('button', { name: /Join voice/ }).click()
+  await page.getByRole('button', { name: 'Leave voice' }).waitFor()
+  ok(true, 'joining asks for the microphone and enters the room')
+  await vJane.p.waitForSelector('.voice:has-text("In voice: matt")')
+  ok(true, 'others in the channel see who is in the voice room')
+
+  await vJane.p.getByRole('button', { name: /Join voice/ }).click()
+  await page.waitForSelector('[data-testid=voice-person][data-state=connected]:has-text("jane")', { timeout: 20000 })
+  await vJane.p.waitForSelector('[data-testid=voice-person][data-state=connected]:has-text("matt")', { timeout: 20000 })
+  ok(true, 'two browsers connect to each other for voice')
+
+  // The fake microphone beeps; hearing it on the other side shows audio really crossed the connection.
+  await speakingOf(page, 'jane').first().waitFor({ timeout: 15000 })
+  await speakingOf(vJane.p, 'matt').first().waitFor({ timeout: 15000 })
+  ok(true, "each side's speaking indicator lights up from the other's audio")
+  ok((await page.locator('audio[data-testid=voice-audio]').count()) === 1, 'one audio element plays the one other person')
+  const live = await page.evaluate(() => {
+    const a = document.querySelector('audio[data-testid=voice-audio]')
+    return { tracks: a.srcObject.getAudioTracks().filter((t) => t.readyState === 'live').length, paused: a.paused }
+  })
+  ok(live.tracks === 1 && live.paused === false, 'the received audio track is live and playing: ' + JSON.stringify(live))
+  const codeA = await page.locator('[data-testid=voice-person] code').count()
+  await page.getByRole('button', { name: 'Safety codes' }).click()
+  await vJane.p.getByRole('button', { name: 'Safety codes' }).click()
+  const c1 = await page.locator('[data-testid=voice-person] code').first().innerText()
+  const c2 = await vJane.p.locator('[data-testid=voice-person] code').first().innerText()
+  ok(codeA === 0 && /^[0-9A-F]{4}( [0-9A-F]{4}){4}$/.test(c1) && c1 === c2, 'the pair share one safety code: ' + c1)
+
+  await vKim.p.getByRole('button', { name: /Join voice/ }).click()
+  for (const who of [page, vJane.p, vKim.p]) {
+    await who.waitForFunction(() => document.querySelectorAll('[data-testid=voice-person][data-state=connected]').length === 2, null, { timeout: 25000 })
+  }
+  ok(true, 'a third person joins and everyone is connected to everyone')
+
+  // Audio goes on when looking at another window.
+  await openBuffer(page, '#bulk')
+  await sleep(500)
+  ok((await page.locator('audio[data-testid=voice-audio]').count()) === 2, 'audio keeps playing while another buffer is open')
+  ok((await page.locator('button.name:has-text("🎙 #chat")').count()) === 1, 'the channel list marks the room you are in')
+  await openBuffer(page, '#chat')
+
+  // Muting silences you for the others without a new connection.
+  await page.getByRole('button', { name: 'Mute' }).click()
+  await sleep(1500)
+  let leaked = false
+  for (let i = 0; i < 20; i++) {
+    if ((await speakingOf(vJane.p, 'matt').count()) > 0) leaked = true
+    await sleep(150)
+  }
+  ok(!leaked, 'a muted person is not heard')
+  ok((await speakingOf(vJane.p, 'kim').count()) > 0 || (await speakingOf(vJane.p, 'kim').first().waitFor({ timeout: 6000 }).then(() => true, () => false)), 'others are still heard while one is muted')
+  await page.getByRole('button', { name: 'Unmute' }).click()
+  await speakingOf(vJane.p, 'matt').first().waitFor({ timeout: 10000 })
+  ok(true, 'unmuting makes them heard again')
+
+  await vKim.p.getByRole('button', { name: 'Leave voice' }).click()
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid=voice-person]').length === 1, null, { timeout: 10000 })
+  ok(true, 'someone leaving disappears from the others')
+
+  // The room is limited to one voice chat: a private call cannot start while in it.
+  await send(page, '/call jane')
+  await page.waitForSelector('.panel .call')
+  await page.waitForSelector('.panel .call:has-text("already in a voice chat")')
+  ok(true, 'a call is refused while in a voice room')
+  await openBuffer(page, '#chat')
+  await page.getByRole('button', { name: 'Leave voice' }).click()
+  await page.getByRole('button', { name: /Join voice/ }).waitFor()
+  await vJane.p.waitForFunction(() => document.querySelectorAll('[data-testid=voice-person]').length === 0)
+  await vJane.p.getByRole('button', { name: 'Leave voice' }).click()
+
+  // A private call.
+  await openBuffer(page, 'jane')
+  await page.getByRole('button', { name: /Call/ }).first().click()
+  await page.waitForSelector('.panel .call[data-state=calling]')
+  await openBuffer(vJane.p, 'matt')
+  await vJane.p.waitForSelector('.panel .call[data-state=incoming]')
+  ok((await vJane.p.locator('.panel .call').innerText()).includes('microphone stays off'), 'the callee is told the microphone is off until answering')
+  ok((await vJane.p.locator('.panel .status[data-state=connected]').count()) === 0, 'ringing does not connect anything')
+  await vJane.p.getByRole('button', { name: 'Answer' }).click()
+  await page.waitForSelector('.panel .call[data-state=connected]', { timeout: 20000 })
+  await vJane.p.waitForSelector('.panel .call[data-state=connected]', { timeout: 20000 })
+  ok(true, 'answering connects a private call')
+  await page.locator('[data-testid=remote-speaking].speaking').waitFor({ timeout: 15000 })
+  await vJane.p.locator('[data-testid=remote-speaking].speaking').waitFor({ timeout: 15000 })
+  ok(true, 'each person hears the other')
+  const k1 = await page.getByTestId('call-code').innerText()
+  const k2 = await vJane.p.getByTestId('call-code').innerText()
+  ok(k1 === k2 && /^[0-9A-F]{4}( [0-9A-F]{4}){4}$/.test(k1), 'the call shows the same safety code on both ends: ' + k1)
+  await page.screenshot({ path: OUT + '/voice-call.png' })
+  await page.getByRole('button', { name: 'Hang up' }).click()
+  await vJane.p.waitForSelector('.panel .call[data-state=ended]')
+  ok((await vJane.p.locator('.panel .call').innerText()).includes('They ended the call'), 'hanging up is shown to the other person')
+  ok((await page.locator('audio[data-testid=voice-audio]').count()) === 0 && (await vJane.p.locator('audio[data-testid=voice-audio]').count()) === 0, 'no audio element is left playing')
+
+  // Declining sends the caller away without the callee's microphone ever being used.
+  await page.getByRole('button', { name: /Call again/ }).click()
+  await vJane.p.waitForSelector('.panel .call[data-state=incoming]')
+  await vJane.p.getByRole('button', { name: 'Decline' }).first().click()
+  await page.waitForSelector('.panel .call:has-text("They declined")')
+  ok(true, 'a declined call is reported to the caller')
+
+  await vJane.ctx.close()
+  await vKim.ctx.close()
 
   // ---------- L. logout ----------
   await page.click('button[aria-label="Settings"]')
