@@ -2,6 +2,7 @@ package auth
 
 import (
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -36,5 +37,33 @@ func TestVerifyRejectsMalformed(t *testing.T) {
 		if _, err := Verify("p", bad); err == nil {
 			t.Errorf("Verify accepted %q", bad)
 		}
+	}
+}
+
+func TestAtMostAFewHashesRunAtOnce(t *testing.T) {
+	hash, err := Hash("a-long-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peak.Store(0)
+	var wg sync.WaitGroup
+	for i := 0; i < 24; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if ok, err := Verify("a-long-password", hash); !ok || err != nil {
+				t.Errorf("verify = %v, %v", ok, err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := peak.Load(); got > maxConcurrent {
+		t.Errorf("%d hashes ran at once, the limit is %d", got, maxConcurrent)
+	}
+	if got := peak.Load(); got < 2 {
+		t.Errorf("only %d ran at once; the limit may have made them run one at a time", got)
+	}
+	if n := active.Load(); n != 0 {
+		t.Errorf("%d still counted as running", n)
 	}
 }
