@@ -183,9 +183,22 @@ async function send(page, text) {
   }
   ok((await page.locator('iframe').count()) === 0, 'a YouTube link shows a card and loads nothing from YouTube yet')
   await page.click('.card.video button:has-text("Play here")')
-  await page.waitForSelector('iframe[src^="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"]')
+  await page.waitForSelector('[data-testid=floating-player] iframe[src^="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"]')
   ok((await page.locator('iframe').first().getAttribute('referrerpolicy')) === 'strict-origin-when-cross-origin', 'the player is sent this site\'s address, which YouTube needs to play (error 153 otherwise)')
   ok(true, 'pressing play loads the privacy-friendly player')
+
+  // The video keeps playing when the channel changes: the same iframe element, not a new one that starts over.
+  await page.evaluate(() => { document.querySelector('[data-testid=floating-player] iframe').dataset.mark = 'same' })
+  await openBuffer(page, 'Status')
+  await page.waitForTimeout(500)
+  ok((await page.locator('[data-testid=floating-player] iframe[data-mark=same]').count()) === 1, 'the video is still playing, in the same player, after changing channel')
+  await openBuffer(page, '#chat')
+  await page.waitForSelector('.card.video.now')
+  ok(true, 'back in the channel the message shows that it is playing, not the preview again')
+  await page.click('[data-testid=floating-player] button[aria-label="Close the player"]')
+  await page.waitForFunction(() => document.querySelectorAll('iframe').length === 0)
+  ok(true, 'closing the player stops the video')
+  await page.waitForSelector('.card.video button:has-text("Play here")')
 
   // The point of the proxy: the browser asked only the bouncer, and YouTube only after the click.
   const direct = requested.filter((u) => u.startsWith(SITE))

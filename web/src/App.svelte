@@ -17,6 +17,7 @@
   import Splitter from './components/Splitter.svelte'
   import QuickSwitcher from './components/QuickSwitcher.svelte'
   import SearchBar from './components/SearchBar.svelte'
+  import FloatingPlayer from './components/FloatingPlayer.svelte'
   import ServerDialog from './components/ServerDialog.svelte'
   import ServerMenu from './components/ServerMenu.svelte'
   import SettingsDialog from './components/SettingsDialog.svelte'
@@ -176,6 +177,7 @@
 </div>
 
 <VoiceAudio />
+<FloatingPlayer />
 
 {#if app.showSettings}<SettingsDialog />{/if}
 {#if app.showSwitcher}<QuickSwitcher />{/if}
