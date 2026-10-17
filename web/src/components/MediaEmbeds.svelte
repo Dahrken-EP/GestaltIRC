@@ -10,6 +10,13 @@
   /** Why a picture or video would not load, when the bouncer could say (for example that the other site refused it). */
   let why = $state<Record<string, string>>({})
 
+  /** The address to load a picture or video from: the bouncer's copy, or imgur itself when the user chose that. */
+  function sourceOf(src: string): string {
+    return settings.imgurDirect && src.startsWith('https://i.imgur.com/') ? src : mediaSrc(src)
+  }
+
+  const refused = (href: string) => /answered (403|429)/.test(why[href] ?? '') && /imgur\.com/.test(href)
+
   /** Marks a picture or video as failed, and asks the bouncer why: its answer to the same request says. */
   function fail(href: string, src: string) {
     failed[href] = true
@@ -64,10 +71,14 @@
   {@const p = previews[href]}
   {#if kind === 'image'}
     {#if failed[href]}
-      <p class="note">Could not load that picture{why[href] ? ` (${why[href]})` : ''}. <a href={href} target="_blank" rel="noopener noreferrer nofollow">Open the link</a></p>
+      <p class="note">Could not load that picture{why[href] ? ` (${why[href]})` : ''}. <a href={href} target="_blank" rel="noopener noreferrer nofollow">Open the link</a>
+        {#if refused(href) && !settings.imgurDirect}
+          <br />Imgur is refusing the bouncer's address. <button class="link" onclick={() => { settings.imgurDirect = true; settings.save(); failed[href] = false }}>Load imgur pictures from my browser instead</button> (imgur will see your address).
+        {/if}
+      </p>
     {:else}
       <a class="media" href={href} target="_blank" rel="noopener noreferrer nofollow">
-        <img src={mediaSrc(info.src ?? href)} alt="Picture from {siteName(href)}" loading="lazy" decoding="async" onerror={() => fail(href, mediaSrc(info.src ?? href))} />
+        <img src={sourceOf(info.src ?? href)} referrerpolicy="no-referrer" alt="Picture from {siteName(href)}" loading="lazy" decoding="async" onerror={() => fail(href, sourceOf(info.src ?? href))} />
       </a>
     {/if}
   {:else if kind === 'video'}
@@ -75,7 +86,7 @@
       <p class="note">Could not load that video{why[href] ? ` (${why[href]})` : ''}. <a href={href} target="_blank" rel="noopener noreferrer nofollow">Open the link</a></p>
     {:else}
       <!-- svelte-ignore a11y_media_has_caption -->
-      <video class="media" src={mediaSrc(info.src ?? href)} controls preload="metadata" playsinline onerror={() => fail(href, mediaSrc(info.src ?? href))}></video>
+      <video class="media" src={sourceOf(info.src ?? href)} controls preload="metadata" playsinline onerror={() => fail(href, sourceOf(info.src ?? href))}></video>
     {/if}
   {:else if kind === 'audio'}
     {#if failed[href]}
@@ -127,6 +138,10 @@
 {/each}
 
 <style>
+  .link {
+    text-decoration: underline;
+    color: var(--accent);
+  }
   .media {
     display: block;
     width: fit-content;
