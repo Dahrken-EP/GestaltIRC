@@ -2,6 +2,7 @@
 //
 //	bouncer -config bouncer.yaml init                 create the database and secret key
 //	bouncer -config bouncer.yaml serve                run the bouncer (default)
+//	bouncer -config bouncer.yaml healthcheck          exit 0 if a running bouncer answers
 //	bouncer -config bouncer.yaml user add|passwd|list|remove ...
 //	bouncer -config bouncer.yaml network add|list|cert|remove ...
 //	bouncer hash-password                             print an argon2id hash of a stdin line
@@ -13,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,7 +37,9 @@ const usage = `usage: bouncer [-config FILE] COMMAND [ARGS]
 
 commands:
   init                         create the database and secret key
-  serve                        run the bouncer (default)
+  serve                        run the bouncer (default); with GESTALT_AUTO_INIT=1 it first creates
+                               the database and key if neither exists
+  healthcheck                  exit 0 if the bouncer answers on its listen address (for containers)
   user add NAME                create a user; password is read from stdin
   user passwd NAME             change a user's password; password from stdin
   user list
@@ -49,7 +53,12 @@ commands:
 
 func main() {
 	fs := flag.NewFlagSet("bouncer", flag.ExitOnError)
-	configPath := fs.String("config", "bouncer.yaml", "path to the config file")
+	// GESTALT_CONFIG gives containers a default, so `docker exec NAME bouncer user add ...` finds the config.
+	defaultConfig := "bouncer.yaml"
+	if env := os.Getenv("GESTALT_CONFIG"); env != "" {
+		defaultConfig = env
+	}
+	configPath := fs.String("config", defaultConfig, "path to the config file (default: $GESTALT_CONFIG, else bouncer.yaml)")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	fs.Parse(os.Args[1:])
 
@@ -76,7 +85,14 @@ func main() {
 	case "init":
 		err = initialise(cfg)
 	case "serve":
-		err = serve(cfg)
+		if os.Getenv("GESTALT_AUTO_INIT") == "1" {
+			err = autoInit(cfg)
+		}
+		if err == nil {
+			err = serve(cfg)
+		}
+	case "healthcheck":
+		err = healthcheck(cfg)
 	case "user":
 		err = userCommand(cfg, args[1:])
 	case "network":
@@ -131,6 +147,41 @@ func initialise(cfg *config.Config) error {
 	defer st.Close()
 	fmt.Printf("database ready at %s\nsecret key at %s (back it up)\n",
 		filepath.Join(cfg.DataDir, "bouncer.db"), cfg.SecretKeyFile)
+	return nil
+}
+
+// autoInit creates the database and secret key the first time a container starts with an empty data
+// directory. It does so only when neither exists. With one of the two missing it does nothing, so that
+// serve reports the problem: a fresh key next to an old database (or the reverse) would leave every
+// stored network password unreadable.
+func autoInit(cfg *config.Config) error {
+	_, dbErr := os.Stat(filepath.Join(cfg.DataDir, "bouncer.db"))
+	_, keyErr := os.Stat(cfg.SecretKeyFile)
+	if !errors.Is(dbErr, os.ErrNotExist) || !errors.Is(keyErr, os.ErrNotExist) {
+		return nil
+	}
+	log.Printf("empty data directory: creating the database and secret key")
+	return initialise(cfg)
+}
+
+// healthcheck asks the running bouncer for its front page, so a container runtime can tell it is up.
+func healthcheck(cfg *config.Config) error {
+	host, port, err := net.SplitHostPort(cfg.Listen)
+	if err != nil {
+		return err
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://" + net.JoinHostPort(host, port) + "/")
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("the bouncer answered %s", resp.Status)
+	}
 	return nil
 }
 

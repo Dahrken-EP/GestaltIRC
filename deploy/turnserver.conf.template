@@ -1,6 +1,5 @@
-# Written by setup.sh from this template. Edit the result, not this file.
+# Written into the config volume by init-config.sh the first time the stack starts.
 listening-port=3478
-tls-listening-port=5349
 realm=@TURN_HOST@
 server-name=@TURN_HOST@
 @EXTERNAL_IP_LINE@
@@ -10,7 +9,6 @@ use-auth-secret
 static-auth-secret=@TURN_SECRET@
 
 fingerprint
-no-cli
 no-multicast-peers
 no-tcp-relay
 
@@ -37,6 +35,7 @@ total-quota=100
 stale-nonce=600
 
 # For turns: (TLS), point these at a certificate for @TURN_HOST@, for example one
-# mounted from Caddy's data volume, then uncomment.
-#cert=/etc/coturn/tls.crt
-#pkey=/etc/coturn/tls.key
+# mounted from Caddy's data volume, then uncomment them and the port.
+#tls-listening-port=5349
+#cert=/config/tls.crt
+#pkey=/config/tls.key

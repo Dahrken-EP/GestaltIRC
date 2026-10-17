@@ -37,6 +37,9 @@ jobs:
   codeql:
     runs-on: ubuntu-latest
     strategy:
+      # One language failing (for instance because code scanning is not switched on for the repository) must not
+      # cancel the other.
+      fail-fast: false
       matrix:
         language: [go, javascript-typescript]
     steps:

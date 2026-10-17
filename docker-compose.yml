@@ -1,0 +1,94 @@
+# The whole stack on one server: the bouncer with the web client, Caddy for HTTPS, and coturn so that
+# direct chat, file transfer and voice work across NATs.
+#
+#   cp .env.example .env     # set DOMAIN (and PUBLIC_IP behind NAT), then:
+#   docker compose up -d
+#   echo 'a-long-password' | docker compose exec -T bouncer bouncer user add alice
+#
+# Ports to open in the firewall:
+#   80/tcp          Caddy: the certificate challenge, and the redirect to HTTPS
+#   443/tcp, 443/udp   Caddy: the web client (udp is HTTP/3)
+#   3478/udp, 3478/tcp coturn: STUN and TURN
+#   5349/tcp        coturn: TURN over TLS (only useful once you give it a certificate; see deploy/README.md)
+#   49152-49252/udp coturn: the relay range for media that cannot go direct
+# The bouncer's own port, 8080, is not published: only Caddy reaches it.
+
+name: gestalt
+
+services:
+  # Runs once and exits: writes bouncer.yaml, turnserver.conf and a fresh TURN secret into the config volume,
+  # unless they are already there.
+  setup:
+    image: alpine:3
+    restart: "no"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      TURN_HOST: ${TURN_HOST:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      PUBLIC_IP: ${PUBLIC_IP:-}
+    volumes:
+      - config:/config
+      - ./deploy:/templates:ro
+    entrypoint: ["/bin/sh", "/templates/init-config.sh"]
+
+  bouncer:
+    build: .
+    image: gestalt:local
+    restart: unless-stopped
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    environment:
+      GESTALT_CONFIG: /config/bouncer.yaml
+    volumes:
+      - data:/data
+      - config:/config:ro
+    expose:
+      - "8080"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      bouncer:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+
+  coturn:
+    image: coturn/coturn:4
+    restart: unless-stopped
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    # Host networking: a TURN relay uses a range of UDP ports and must know its real address. Publishing
+    # the range through Docker's proxy is slow and unreliable. Ports: 3478 udp+tcp, 5349 tcp, 49152-49252 udp.
+    network_mode: host
+    volumes:
+      - config:/config:ro
+    command: ["-c", "/config/turnserver.conf"]
+    # The coturn binary carries a file capability, so the capability has to stay in the container's set
+    # or the program cannot start at all.
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+
+volumes:
+  config:
+  data:
+  caddy_data:
+  caddy_config:

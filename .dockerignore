@@ -1,0 +1,16 @@
+.git
+.github
+**/node_modules
+web/dist
+server/bin
+server/bouncer
+server/data
+server/bouncer.yaml
+**/*.db
+**/*.db-wal
+**/*.db-shm
+test
+docs
+*.md
+!web/README.md
+.env

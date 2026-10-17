@@ -5,334 +5,101 @@
   </picture>
 </p>
 
-# Gestalt
+A self-hosted IRC bouncer with a compact web client. The bouncer keeps you connected to your IRC networks and keeps the history; the client runs in any browser, on a phone or a desktop, and adds direct chat, file transfer, voice and plugins. A gestalt is a whole that is more than its parts: IRC, kept alive by the bouncer, seen through one client, with the people on it able to reach each other directly.
 
-A self-hosted IRC bouncer and compact web client, with direct chat, file transfer, voice and
-plugins. A gestalt is a whole that is more than its parts: IRC, kept alive by the bouncer, seen
-through one client, with the people on it able to reach each other directly. See
-[DESIGN.md](DESIGN.md) for the architecture and roadmap.
+The server is Go and the client is Svelte. Any other IRC client can use the same bouncer.
 
-The server binary is still called `bouncer`, and its Go module `gestalt/server`.
+## Screenshots
+<p align="center">
+  <img src="docs/assets/screenshot-channel-dark.png" alt="A channel in the dark theme, with a link preview and the member list" width="900">
+</p>
+<p align="center">
+  <img src="docs/assets/screenshot-voice.png" alt="A voice room in a channel, with two people speaking and a volume slider for each" width="900">
+</p>
+<p align="center">
+  <img src="docs/assets/screenshot-direct.png" alt="A direct chat between two browsers with a safety code and a finished file transfer" width="900">
+</p>
+<p align="center">
+  <img src="docs/assets/screenshot-switcher.png" alt="The quick switcher over a channel" width="440">
+  <img src="docs/assets/screenshot-networks.png" alt="The network editor in Settings" width="440">
+</p>
 
-## Status
+## Try it
+You need Docker. This runs the bouncer and web client on your own machine:
 
-Phase 1 (protocol core) and phase 2 (bouncer MVP) are done. Phase 3 (multi-user
-and multi-network) is in place:
+    docker build -t gestalt .
+    docker run -d --name gestalt -p 127.0.0.1:8080:8080 -v gestalt-data:/data gestalt
+    echo 'a-long-password' | docker exec -i gestalt bouncer user add alice
 
-- Users and networks live in the database and are managed with admin commands.
-  A running bouncer picks up new and removed networks within 5 seconds.
-- Network passwords are encrypted at rest with AES-256-GCM. The key is in
-  `secret.key`, which `bouncer init` creates.
-- Clients log in as `user/network` with SASL PLAIN (or `PASS user/network:password`).
-  A user with exactly one network can log in as just `user`.
-- `server/internal/accounts`: user and network management, shared by the CLI and the bouncer.
-- `server/internal/secret`: the AES-GCM box and key file handling.
+Open <http://localhost:8080>, log in as `alice`, then **Settings, Networks, Add a network** (Libera is `irc.libera.chat`, port 6697, TLS). The first start creates the database and secret key in the `gestalt-data` volume. Back that volume up: the key protects your saved passwords.
 
-The web client (DESIGN.md phase 3) is in `web/`. It is Svelte 5 and TypeScript, about
-40 KB gzipped. It has:
+## Run it on a server
+`docker-compose.yml` runs the whole stack: the bouncer and web client, [Caddy](https://caddyserver.com) for HTTPS (it gets and renews the certificate by itself), and [coturn](https://github.com/coturn/coturn) so that direct chat, file transfer and voice work between people behind NATs.
 
-- login with an account name and password, then a session cookie (HttpOnly, SameSite=Strict).
-  No password is kept in the page. One WebSocket per network, shown as icons in the left
-  rail, logged in with the cookie
-- channels, queries and a status buffer, with unread and mention badges
-- the full command set from the design (`/help` lists it), and any other `/command` is
-  sent to the server as it is
-- nick colours with per-nick overrides, mention and keyword highlighting, tab completion
-  for nicks, channels and commands, and input history on Up and Down
-- scrollback through `CHATHISTORY`, with replay on reconnect and de-duplication, in a list
-  that renders only the rows near the view, so memory stays flat in a long channel
-- replies, reactions, deleting your own messages, "is typing" (off until you turn it on),
-  and away members shown dimmed
-- light, dark and system themes and compact and comfortable density. Preferences are saved
-  on the bouncer and follow the account to other devices
-- read position kept by the bouncer, so reading a channel on one device clears it on the others
-- desktop notifications while the page is open, and background notifications through Web
-  Push when no client is connected
+    cp .env.example .env            # set DOMAIN, and PUBLIC_IP if the server is behind NAT
+    docker compose up -d
+    echo 'a-long-password' | docker compose exec -T bouncer bouncer user add alice
 
-Phase 5 adds pictures, video, link previews and direct chat:
+Point `DOMAIN` at the server first. Open these ports in the firewall:
 
-- **Media.** Pictures and video in links are shown inline, and other links get a title and
-  picture. The browser never contacts the linked site: the bouncer fetches it
-  (`/api/media`, `/api/preview`), refuses private addresses (checked at connect time, so a
-  redirect or DNS trick cannot get past it), sniffs the bytes instead of trusting the
-  server's content type, refuses SVG and HTML, and caps size and concurrency. YouTube and
-  Streamable show a card, and nothing loads from them until you press play. Three switches
-  in Settings turn media, previews and players off.
-- **Direct chat and file transfer.** `/direct NICK`, or the "Direct chat" button in a query,
-  asks the other person to connect browser to browser over WebRTC. The IRC network only
-  carries the offer and answer, as client-only message tags. Nothing is connected until they
-  accept, so no network address is revealed before that. Chat lines and files then go
-  straight between the browsers and are not stored anywhere. Files are accepted one by one,
-  streamed with back-pressure, checked against the size that was offered and a SHA-256, and
-  held in memory until you save them (up to 512 MB each). Both sides see a safety code made
-  from both certificate fingerprints; if you read it out to each other over another channel
-  and it matches, nobody in between, including the IRC server and the bouncer, altered the
-  connection. Without a TURN server (below) it only connects when a direct path exists.
-- **STUN and TURN.** `/api/ice` gives a logged-in browser the servers from `stun_uris` and
-  `turn_uris`, with TURN credentials that expire (`turn_ttl`, a day by default) and are derived from a secret
-  shared with coturn. `deploy/` has a Docker Compose setup with the bouncer, Caddy for HTTPS
-  and coturn. See `deploy/README.md` for what was and was not run.
-
-Phase 6 adds voice, in two forms (see DESIGN.md section 6):
-
-- **A channel's voice room.** Press "Join voice" in a channel (or `/voice`; `/voice leave` to go).
-  The room is the channel itself: you announce yourself with a client-only tag, the people
-  already there answer you, and every pair of people holds one WebRTC connection (a mesh), so
-  there is no media server. The person whose nick sorts first makes the offer, so nobody offers
-  twice. Up to 10 people (`MAX_VOICE` in `web/src/lib/voice/presence.ts`); an eleventh is told the
-  room is full and does not join, and members also refuse their own unexpected offers beyond the
-  cap. You see who is speaking, can mute, set each person's volume, and compare a safety code
-  with each person. Audio keeps playing while you look at another window.
-- **A private call between two people.** `/call NICK`, or the "Call" button in a query, rings
-  them in their direct chat window. Their microphone stays off and nothing connects until they
-  answer; yours is asked for only when you place the call.
-
-Both use the same signalling and ICE servers as direct chat, and you can be in only one voice
-chat at a time. The microphone needs HTTPS (or localhost). Echo cancellation and noise
-suppression are the browser's own; use headphones.
-
-Voice limits to know about: who is "in voice" is only what your browser has seen since it
-connected (people who joined before that appear when you join, because they answer you), so the
-list on an idle channel is a hint. Someone who changes nick while in a room keeps their place under the new name; a call or direct chat
-keeps working but still goes by the nick it started with, so its goodbye may not reach the other side.
-Only people who are in the channel can be in its voice room. The same account in two browsers should not join the same room
-from both. A room is a mesh, so 10 people means nine connections each. `VOICE_LOAD=1 test/e2e/run.sh`
-puts ten real Chromium instances in one room (all connected to all, in about 10 s, each playing
-nine streams) and checks an eleventh is turned away. On the 4-core test machine, with a fake
-microphone and no hardware audio, the eleven browsers together used about 3.4 cores while
-everyone was connected (about a third of a core per participant) and each page's JavaScript
-heap stayed near 6 MB. That is a rough guide only: a phone with ten people is the case to try
-before relying on it. Push-to-talk and
-listen-only joining are not built.
-
-Things to know about direct chat: the same account logged in on two devices gets the request
-on both, and the first to accept connects. Chat is not kept after the page closes. A browser
-tab that sleeps (a phone with the screen off) may drop the connection.
-
-Phase 7 adds plugins (see DESIGN.md section 7). Open Settings, then Plugins, paste a plugin (one JSON
-document with `name`, `version`, `description`, `permissions` and `source`) or choose a file, and
-review what it asks for before it is installed. "Use the example" fills in a small working one.
-
-- **What a plugin can do.** Inside `source`, a plugin has an `irc` object: `irc.alias(name, fn)` adds a
-  `/name` command (it cannot replace a built-in one); `irc.on(EVENT, fn)` hears `TEXT`, `ACTION`, `NOTICE`,
-  `MENTION`, `JOIN`, `PART`, `QUIT`, `NICK`, `KICK`, `MODE`, `TOPIC`, `CONNECT` and `DISCONNECT`;
-  `irc.setTimer(ms, fn, repeat)`; `irc.send(line, window)` and `irc.say(nick, text)` (sent as you, by the
-  same path a typed command takes); `irc.print(text)` (a line only you see); `irc.storage.get/set/delete/keys`;
-  and `irc.log(...)`.
-- **Permissions.** `events`, `send`, `output`, `timers`, `storage`. You can untick any when installing. The
-  page, not the plugin, checks every call, and a plugin that keeps trying what it was refused is stopped.
-- **Where it runs.** In a Web Worker inside a frame with `sandbox="allow-scripts"` (no origin of its own, so
-  no cookies, storage or access to the page; requests carry no credentials) whose content security
-  policy forbids every connection, and the worker deletes `fetch`, `WebSocket`, `Worker`, `importScripts`
-  and the like before the plugin's code runs. The browser test has a plugin try to get out by each route
-  it can think of, and checks that the test website never hears from it.
-- **What `send` cannot do.** Lines a plugin sends go to the network. Commands that act on your browser
-  (`/voice`, `/call`, `/direct`, `/clear`) are refused, and a plugin cannot write in a direct chat. A plugin
-  cannot take over `/ns`, `/identify`, `/oper` and the other commands people type passwords into.
-- **Limits.** A few actions a second, 20 aliases, 20 timers (at least 100 ms apart), 100 KB of stored data.
-  A plugin that does not answer for five seconds, or crashes, or floods, is stopped and switched off, with
-  the reason shown. Direct chats are not passed to plugins.
-- **Not done.** Popups and dialogs (the design puts them later), and server-side WASM hooks. Plugins and
-  their data are kept in this browser, per account, and are not synced to your other devices. A plugin
-  with `events` can read your channels, and with `send` can speak as you: only install code you trust.
-
-Phase 8 is hardening, measurement and the finishing touches. The security side is written up in
-[SECURITY.md](SECURITY.md). In short: every response carries a content security policy and the other
-protective headers; a client that sends faster than a burst of 30 lines and then 10 a second has lines
-dropped and is disconnected if it keeps on; the database files are private to the bouncer's user; password
-hashing is limited to four at a time so a burst of logins cannot exhaust memory; and the plugin sandbox,
-the media proxy and the network editor are each tested by trying to get out of them.
-
-Measured, on the 4-core test machine (`test/load/run.sh`, `test/load/web.sh`):
-
-| | measured | budget in DESIGN.md |
+| Port | Used by | For |
 |---|---|---|
-| bouncer, idle, one user | 19.5 MB | 25 MB |
-| 50 users, 2 networks, 20 channels of 100 messages each, nobody attached | 58.3 MB | |
-| the same with 100 clients attached | 59.5 MB | 300 MB |
-| web client, 10 channels with 2000 messages each (20,000) fully loaded | 16.4 MB JS heap | 60 MB |
+| 80/tcp | Caddy | the certificate challenge, and the redirect to HTTPS |
+| 443/tcp and 443/udp | Caddy | the web client (udp is HTTP/3) |
+| 3478/udp and 3478/tcp | coturn | STUN and TURN |
+| 49152-49252/udp | coturn | the relay range for media that cannot go direct |
+| 5349/tcp | coturn | TURN over TLS, once you give it a certificate (optional) |
 
-The web figure is taken after a garbage collection, with the oldest message of all ten channels reached
-(the script checks that). It is Chromium's heap only, not the whole tab. Hundreds of simultaneous clients
-and a long-running soak are not tested.
+The bouncer's own port, 8080, is never published. See **[deploy/README.md](deploy/README.md)** for what the stack does, backing up, and what has and has not been tested.
 
-Also in this phase, found by comparing with other web clients:
+## Features
+- **Many networks, one login.** Each network has its own icon in the left rail, with channels, queries and a status window. Unread counts are grey, mentions are coloured, and the tab title shows the total. Add, edit, switch off and remove your networks in Settings, with SASL PLAIN or SCRAM and a server password.
+- **Always connected.** Close the browser and the bouncer stays on IRC. When you come back you get the messages you missed, and older ones by scrolling up (`CHATHISTORY`). The list draws only the rows near the view, so a channel with thousands of lines stays light: ten channels of 2000 messages each use about 16 MB in the browser.
+- **Read position follows you.** Reading a channel on your laptop clears it on your phone. Preferences follow your account too.
+- **Notifications.** Mentions and private messages raise a desktop notification while the page is open. With Web Push, the bouncer notifies your browser even when the tab is closed and no client is connected.
+- **Inline media.** Pictures (PNG, JPG, GIF, WEBP, AVIF, plus imgur and Giphy links) and video (MP4, WEBM, imgur GIFV) show in the chat, and sound files (MP3, OGG, OPUS, WAV, FLAC, M4A) get a player. Other links get a title and a picture. YouTube and Streamable show a card, and nothing loads from them until you press play. Your browser never contacts the linked site: the bouncer fetches it, so the site never sees your address. Each kind can be turned off.
+- **Direct chat and file transfer.** `/direct NICK` asks someone to connect browser to browser over WebRTC. Nothing is connected until they accept. Chat and files then go straight between you, are not stored anywhere, and both sides get a safety code to compare over another channel, so nobody in between, including the IRC server and the bouncer, can alter the connection unnoticed. Files are accepted one by one and checked against a SHA-256.
+- **Voice.** Press **Join voice** in any channel to talk with up to ten people at once, with no media server: everyone connects to everyone. You see who is speaking, can mute, and set each person's volume. `/call NICK` rings one person privately.
+- **Plugins.** Aliases, event hooks, timers and storage, written in JavaScript, run in a sandbox and limited to the permissions you grant. See [docs/PLUGINS.md](docs/PLUGINS.md).
+- **Replies, reactions, typing.** Reply to a message, react with emoji, delete your own messages, and see who is typing (off until you turn it on). Away members are dimmed.
+- **Commands.** Every IRC command works, and `/help` lists the built-in ones. Anything the client does not recognise is sent to the server as it is.
+- **Nick colours.** Automatic per nick, with overrides in Settings. Your nick and any highlight words colour the line and raise a badge.
+- **Themes.** Light, dark or follow the system, in compact or comfortable density.
+- **Emoji picker.** The smiley beside the input, or Ctrl+E: a search box, recently used, and groups.
+- **Keyboard.** Ctrl+K jumps to any channel on any network. Ctrl+F searches the messages of the channel you are in (`from:nick` narrows it to one person). Alt+A goes to the next unread, mentions first. Alt+Up and Alt+Down switch buffers. Tab completes nicks, channels and commands, and Up and Down recall what you typed. A button takes you back to the latest message when you have scrolled up.
+- **Installable.** A browser can install it as an app on a phone or desktop. It needs the bouncer, so there is no offline mode.
 
-- **Quick switcher and search.** Ctrl+K (or Cmd+K) opens a fuzzy switcher over every channel and query on
-  every network, with mentions and unread buffers first. Ctrl+F (or the magnifier) searches the messages
-  of the buffer on screen: every word must appear, and `from:nick` narrows it to one sender; "Load older
-  messages" reaches further back. Alt+A goes to the next buffer with unread messages, mentions first. A
-  "Jump to latest" button appears when you have scrolled up. These keys replace the browser's own
-  while the app is open.
-- **Emoji picker.** Ctrl+E or the button beside the input: a search box, recently used, and groups. It is a
-  curated set of about 380, not all of Unicode. Typing `:smile:`-style shortcodes is not built.
-- **More media.** Sound links (mp3, ogg, opus, wav, flac, m4a) become a player; the bouncer checks the
-  bytes and allows up to 60 MB, with seeking. Imgur and Giphy page links are shown as the picture they
-  stand for (an imgur album or gallery stays a plain link). Everything still goes through the bouncer.
-- **Network editor.** Settings, Networks: add, edit, switch off and remove your own networks, with
-  SASL PLAIN or SCRAM and a server password. Passwords are stored encrypted and never sent back to the
-  browser. Because this lets any account make the bouncer open connections, a network added or moved in the
-  editor may reach public addresses only (refused again at connect time, so a name that resolves to a private
-  address is turned away too) and ports from 1024 up, and an account can have ten. A bouncer on a home
-  network that needs to reach a server on it sets `allow_private_networks: true`. Networks added on the
-  command line are not restricted, and certificate logins (SASL EXTERNAL) are still set up there.
-- **Installable.** The page has a web app manifest and icons, so a browser can install it as an app. There is
-  no offline mode: it needs the bouncer.
+## Plugins
+A plugin is one JSON document, pasted into **Settings, Plugins**. You see what it asks for and can untick any permission before it is installed. This one adds `/greet`:
 
-Message text is never inserted as HTML. Only `http` and `https` links are clickable.
+    {
+      "name": "greeter", "version": "1.0.0", "description": "Adds /greet.",
+      "permissions": ["send"],
+      "source": "irc.alias('greet', function (args, ctx) { irc.send('Hello, ' + (args[0] || ctx.nick) + '!', ctx.buffer) })"
+    }
 
-Limits to know about: replying, reacting and deleting appear when you hover a message, so a
-touch screen has no way to reach them yet. Reactions, replies and typing need the network
-to support message tags.
+Plugins can react to messages, joins, parts, kicks, nick changes, topics and more, add their own commands, use timers and keep data. They cannot reach the network or the page, and cannot send commands that act on your browser or ask for passwords. **[Plugin guide and API reference](docs/PLUGINS.md)**
 
-To run it:
+## Use other IRC clients
+The bouncer speaks IRCv3 to clients, and the web client is one of them. An IRCv3 client such as HexChat or WeeChat can log in as `user/network` with SASL PLAIN, get the history it missed, and share one network connection with the web client. This is tested with the project's own scripted clients and a real Ergo server, not yet with those programs themselves. **[docs/SERVER.md](docs/SERVER.md)** lists the capabilities offered and the ones deliberately not.
 
-```bash
-cd web
-npm install
-npm run build                    # writes web/dist
-npm test                         # unit tests
-npm run check                    # type check
-```
+## Security
+IRC text is never rendered as HTML, and the page has a strict content security policy. Passwords are hashed with argon2id, saved network passwords are encrypted, and the bouncer fetches links for you but refuses to reach private addresses. Plugins run in a sandbox that cannot connect anywhere, and the browser tests try to get out of it. Dependencies and code are scanned daily. To report a problem privately, and to see what is and is not covered, read **[SECURITY.md](SECURITY.md)**.
 
-Set `web_dir: ../web/dist` in `bouncer.yaml` and the bouncer serves the client at `/` with the
-WebSocket at `/ws` on the same origin. For development, `npm run dev` serves the client on
-port 5173 and proxies `/ws` and `/api` to a bouncer on `127.0.0.1:8080`.
+## Roadmap
+Not built yet:
+- **Touch actions.** Reply, react and delete appear when you hover a message, so a touch screen cannot reach them yet.
+- **Voice extras.** Push-to-talk and joining a room listen-only.
+- **Plugin dialogs, and plugins that run on the server.**
+- **Typing `:smile:` shortcodes** in the emoji picker, and a fuller emoji set than the ~380 in it.
+- **Multiline messages** (`draft/multiline`).
+- **DCC.** Direct chat and file transfer use WebRTC, so people on other IRC clients cannot be sent files this way.
 
-`test/e2e/run.sh` drives the built client in Chromium against a real bouncer and a scripted
-IRC network. See `test/e2e/README.md`.
+Reactions, replies and typing need the IRC network to support message tags.
 
-## Automated checks
+## Build from source
+See **[docs/BUILDING.md](docs/BUILDING.md)** for requirements, running it without Docker, the admin commands and the tests, and [DESIGN.md](DESIGN.md) for how it is put together and why.
 
-`.github/workflows/` has two workflows, which I could not run from where this was written, so expect to read
-their first run. **CI** runs on every push and pull request: formatting, `go vet` and `go test -race`, the web type
-check, tests and build, the real-Ergo integration tests, and the browser tests (real WebRTC and audio in Chromium).
-**Security** runs on every push and pull request and daily: `govulncheck` for Go modules, `npm audit` for the packages
-that ship to browsers, and CodeQL for Go and TypeScript. Dependabot proposes dependency updates weekly.
+    docker build -t gestalt .
 
-## Accounts, networks and the bouncer's HTTP API
-
-Users and networks are managed with the admin commands below. The web client logs in at
-`/api/login`, which sets the session cookie; `/api/session` returns the user's networks and
-preferences, and `/api/prefs` saves preferences. Failed logins, over HTTP or WebSocket, are
-rate limited per client address and per user. A password change ends every session.
-
-Put the bouncer behind a TLS reverse proxy. The cookie gets the `Secure` flag when the request
-arrives over TLS or the proxy sends `X-Forwarded-Proto: https` (`cookie_secure` forces it either
-way). Set `trust_proxy: true` only when the proxy sets `X-Forwarded-For`, so rate limits count
-real client addresses. Set `sts_duration` once the site works over TLS, to tell clients to keep
-using it.
-
-**Background notifications** use Web Push. Keys are created on first start and the private key
-is sealed with the instance key. When a private message or a mention arrives and no client is
-attached to the network, the bouncer pushes to the user's browsers, at most one push per buffer
-every five seconds. Services notices and CTCP requests are not pushed. It needs HTTPS in the
-browser. Set `push_contact` to a real `mailto:` address, since Apple's push service rejects an
-implausible one.
-
-**Client certificates and SASL EXTERNAL** are supported for upstream networks:
-
-```
-bouncer network add matt libera --host irc.libera.chat --tls --nick matt --sasl EXTERNAL --generate-cert
-bouncer network cert matt libera        # prints the fingerprint to register with NickServ
-```
-
-or `--cert-file` and `--key-file` for a certificate you already have.
-
-## IRCv3 support for other clients
-
-The bouncer is not only for the web client. It offers these capabilities to any client, and
-adapts each message to what that client asked for, so clients with different capabilities can
-share one network connection: `message-tags`, `server-time`, `batch`, `echo-message`, `sasl`
-(PLAIN), `chathistory`, `message-ids`, `away-notify`, `account-notify`, `account-tag`,
-`extended-join`, `multi-prefix`, `userhost-in-names`, `invite-notify`, `chghost`, `setname`,
-`cap-notify`, `standard-replies`, `draft/read-marker` and `draft/message-redaction`. It also
-advertises `UTF8ONLY`, and `sts` when configured.
-
-Not offered, and why:
-
-- `labeled-response`: replies to a labelled command would need routing to the one client that
-  sent it, and the bouncer sends every reply to every client.
-- `draft/multiline`: networks rarely support it, and splitting it for those that do not is not done.
-- `MONITOR` and `WHOX` are passed through from the network when it has them, but one `MONITOR`
-  list is shared by all clients of a network.
-- `soju.im/bouncer-networks`: the web client lists a user's networks through `/api/session`
-  instead, and other clients log in once per network as `user/network`.
-- SASL SCRAM-SHA-256 and EXTERNAL from a client to the bouncer: accounts store an argon2id
-  hash, which cannot answer a SCRAM exchange, and TLS client certificates are terminated at
-  the reverse proxy. Use PLAIN over TLS.
-- `CHGHOST` is dropped for clients without the capability. A server may fake it with a QUIT
-  and JOIN; this one does not.
-
-Phase 2 pieces, still in place:
-
-- `server/internal/bouncer`: networks kept alive in the background, with reconnect
-  and backoff. Clients attach over WebSocket at `/ws`. On attach,
-  a client gets its channels, topics and members, then the messages it missed.
-  `CHATHISTORY LATEST|BEFORE|AFTER` is supported. A watchdog pings quiet
-  network connections and drops ones that stop answering.
-- `server/internal/store`: SQLite history, capped per buffer.
-- `server/internal/auth`: argon2id password hashes.
-- `server/cmd/bouncer`: the binary. Run `bouncer -config bouncer.yaml`, or
-  `bouncer hash-password` to make a hash.
-
-Phase 1 pieces:
-
-- `server/internal/irc`: line parser and formatter, IRCv3 message tags with
-  escaping, size limits, SASL PLAIN and SCRAM-SHA-256.
-- `server/internal/upstream`: registration client. It negotiates IRCv3
-  capabilities (CAP LS 302, REQ, ACK, NAK, NEW, DEL), runs SASL, and answers PING.
-- `server/internal/ws`: IRC over WebSocket, using the `text.ircv3.net` subprotocol.
-
-## Running the tests
-
-Unit tests:
-
-```bash
-cd server
-go test -race ./...
-```
-
-Set up and run the bouncer with a config based on `server/bouncer.example.yaml`
-(`chmod 600` it):
-
-```bash
-cd server
-go build -o bouncer ./cmd/bouncer
-./bouncer -config bouncer.yaml init
-echo 'a-long-password' | ./bouncer -config bouncer.yaml user add matt
-echo 'sasl-password'   | ./bouncer -config bouncer.yaml network add matt libera \
-    --host irc.libera.chat --port 6697 --tls --nick matt \
-    --sasl PLAIN --join '#gestalt-test'
-./bouncer -config bouncer.yaml serve
-```
-
-Admin commands:
-
-```
-bouncer -config FILE init
-bouncer -config FILE user add|passwd NAME        (password on stdin)
-bouncer -config FILE user list | remove NAME
-bouncer -config FILE network add USER NAME --host H --nick N [--port P] [--tls]
-                    [--sasl PLAIN|SCRAM-SHA-256] [--sasl-user U] [--join '#a,#b']
-                    [--server-password-stdin]    (SASL password is the first stdin line)
-bouncer -config FILE network list USER
-bouncer -config FILE network remove USER NAME
-bouncer hash-password                            (prints a hash; not needed by the admin commands)
-```
-
-`secret.key` and `bouncer.db` must stay together. Losing the key makes every
-stored network password unreadable.
-
-Phase 2 databases are not migrated. `bouncer` refuses to open one, so move the
-data directory aside and run `init` again.
-
-Integration tests run against a real [Ergo](https://github.com/ergochat/ergo)
-server. Download a release, then point `ERGO_DIR` at the directory that
-contains `ergo` and `default.yaml`. The tests need `openssl` for a throwaway
-TLS certificate.
-
-```bash
-cd server
-ERGO_DIR=/path/to/ergo-release go test -tags integration -race ./integration/
-```
+The server's Go module is still called `gestalt/server`, and the binary `bouncer`.
