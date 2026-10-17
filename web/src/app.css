@@ -1,0 +1,168 @@
+/* Colours are tokens on :root. Dark is used when the OS prefers it, unless the
+   user picked light; an explicit pick sets data-theme on <html>. */
+:root {
+  --bg: #ffffff;
+  --bg-panel: #f4f5f7;
+  --bg-rail: #e6e8ec;
+  --bg-hover: #e9ebef;
+  --bg-active: #d9e2f4;
+  --fg: #1c1f24;
+  --fg-dim: #5b6370;
+  --border: #d5d9e0;
+  --accent: #2f5fd0;
+  --accent-fg: #ffffff;
+  --mention-bg: #fff3c4;
+  --mention-bar: #e0a800;
+  --danger: #c0262d;
+  --ok: #1f8a4c;
+  --warn: #a86a00;
+  --nick-s: 62%;
+  --nick-l: 36%;
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-size: 13px;
+  --row-pad: 1px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #16181d;
+    --bg-panel: #1c1f26;
+    --bg-rail: #111317;
+    --bg-hover: #242832;
+    --bg-active: #2a3552;
+    --fg: #e3e6eb;
+    --fg-dim: #959daa;
+    --border: #2d323d;
+    --accent: #6c93f0;
+    --accent-fg: #0d1018;
+    --mention-bg: #3a3118;
+    --mention-bar: #e0b341;
+    --danger: #ff7b80;
+    --ok: #55c785;
+    --warn: #e0b341;
+    --nick-l: 68%;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #16181d;
+  --bg-panel: #1c1f26;
+  --bg-rail: #111317;
+  --bg-hover: #242832;
+  --bg-active: #2a3552;
+  --fg: #e3e6eb;
+  --fg-dim: #959daa;
+  --border: #2d323d;
+  --accent: #6c93f0;
+  --accent-fg: #0d1018;
+  --mention-bg: #3a3118;
+  --mention-bar: #e0b341;
+  --danger: #ff7b80;
+  --ok: #55c785;
+  --warn: #e0b341;
+  --nick-l: 68%;
+  color-scheme: dark;
+}
+
+/* Density only changes row spacing and font size. */
+:root[data-density='compact'] {
+  --font-size: 13px;
+  --row-pad: 1px;
+}
+:root[data-density='comfortable'] {
+  --font-size: 15px;
+  --row-pad: 4px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: var(--font-size) / 1.4 var(--font);
+  overflow: hidden;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+a {
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.btn {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+}
+.btn:hover {
+  background: var(--bg-hover);
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+.btn.primary:hover {
+  filter: brightness(1.08);
+}
+
+.badge {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--fg-dim);
+  color: var(--bg);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  font-weight: 600;
+}
+.badge.mention {
+  background: var(--danger);
+  color: #fff;
+}
