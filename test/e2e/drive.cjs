@@ -140,14 +140,30 @@ async function send(page, text) {
   await page.waitForSelector('audio.sound[src^="/api/media?u="]', { timeout: 20000 })
   ok((await page.locator('audio.sound').first().getAttribute('controls')) !== null, 'a sound link becomes a player on the bouncer address')
 
-  // Imgur and Giphy pages are shown as the file they stand for, still fetched through the bouncer.
+  // Imgur and Giphy pages are shown as the file they stand for, still fetched through the bouncer. The test only
+  // looks at what the page asks the bouncer for: the requests are stopped here, so that it does not matter whether
+  // the machine running the test can reach those sites (a CI runner can, and a real picture would change the layout).
+  await page.route(/\/api\/media\?u=https%3A%2F%2F(i\.imgur\.com|media\.giphy\.com)/, (route) => route.abort())
   await send(page, '!msg https://imgur.com/AbCd123 and https://giphy.com/gifs/cat-xT9IgzoKnwFNmISR8I')
   for (let i = 0; i < 40 && !(requested.some((u) => u.includes('i.imgur.com')) && requested.some((u) => u.includes('media.giphy.com'))); i++) await sleep(200)
   ok(requested.some((u) => u.endsWith('/api/media?u=https%3A%2F%2Fi.imgur.com%2FAbCd123.jpg')), 'an imgur page link is fetched as its picture, through the bouncer')
   ok(requested.some((u) => u.endsWith('/api/media?u=https%3A%2F%2Fmedia.giphy.com%2Fmedia%2FxT9IgzoKnwFNmISR8I%2Fgiphy.gif')), 'a giphy page link is fetched as its gif, through the bouncer')
 
   await send(page, '!msg watch https://youtu.be/dQw4w9WgXcQ')
-  await page.waitForSelector('.card.video button:has-text("Play here")', { timeout: 20000 })
+  try {
+    await page.waitForSelector('.card.video button:has-text("Play here")', { timeout: 20000 })
+  } catch (e) {
+    // Say what the page looked like, since a CI run leaves nothing else to go on.
+    console.log('DIAGNOSTIC', JSON.stringify(await page.evaluate(() => {
+      const vl = document.querySelector('.vl')
+      return {
+        scrollTop: vl && Math.round(vl.scrollTop), scrollHeight: vl && vl.scrollHeight, clientHeight: vl && vl.clientHeight,
+        cards: document.querySelectorAll('.card').length,
+        lines: [...document.querySelectorAll('.vl .line')].slice(-4).map((l) => l.textContent.trim().slice(0, 80)),
+      }
+    })))
+    throw e
+  }
   ok((await page.locator('iframe').count()) === 0, 'a YouTube link shows a card and loads nothing from YouTube yet')
   await page.click('.card.video button:has-text("Play here")')
   await page.waitForSelector('iframe[src^="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"]')
@@ -853,8 +869,8 @@ async function send(page, text) {
 
   // Errors from trying to reach a push service that does not exist in this sandbox are expected.
   // The browser logs every failed fetch itself, so the 401 after logout appears as a console error, and
-  // so does the 400 for the network editor test that adds a name already in use, and the 502 for the imgur and giphy pictures, which the sandbox has no way to reach.
-  const unexpected = errors.filter((e) => !/push service|Registration failed|AbortError|subscribe|status of 400|status of 401|status of 415|status of 502|incognito/i.test(e))
+  // so does the 400 for the network editor test that adds a name already in use, and the imgur and giphy pictures the test stops itself (ERR_FAILED, and a 429 from the bouncer's own limit when the list draws the same rows again and asks again).
+  const unexpected = errors.filter((e) => !/push service|Registration failed|AbortError|subscribe|status of 400|status of 401|status of 415|status of 429|ERR_FAILED|incognito/i.test(e))
   ok(unexpected.length === 0, 'no unexpected console or page errors' + (unexpected.length ? ': ' + unexpected.join(' | ') : ''))
 
   await browser.close()
