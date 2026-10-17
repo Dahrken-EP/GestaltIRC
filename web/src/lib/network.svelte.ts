@@ -351,6 +351,11 @@ export class NetworkState {
   guests = $state.raw<ReadonlyMap<string, GuestInfo>>(new Map())
   /** Who has been sent a link lately, so asking twice does not send two. */
   private linkSent = new Map<string, number>()
+  /**
+   * Conversations the user closed, by lower-case nick, with when. History fetched after a reload would open them again, so
+   * what is older than the closing is left out; a new message, or the user opening the conversation, opens it for good.
+   */
+  private closedQueries: Record<string, number> = {}
 
   constructor(id: string, login: string, nick: string, send: (line: string) => void, hooks: NetworkHooks) {
     this.id = id
@@ -361,6 +366,7 @@ export class NetworkState {
     this.send = send
     this.hooks = hooks
     this.readStore = loadReadStore(login)
+    this.closedQueries = loadClosed(login)
     this.buffers = [new Buffer(this.label, 'status', 0)]
     this.hub = new P2pHub({
       ownNick: () => this.nick,
@@ -848,6 +854,7 @@ export class NetworkState {
       this.rooms.get(buf.key)?.dispose()
       this.rooms.delete(buf.key)
     }
+    if (buf.kind === 'query') this.markClosed(buf.key)
     buf.dispose()
     this.buffers = this.buffers.filter((b) => b !== buf)
     if (this.activeKey === buf.key) this.activeKey = ''
@@ -861,7 +868,19 @@ export class NetworkState {
     else this.removeBuffer(buf)
   }
 
+  private markClosed(key: string): void {
+    this.closedQueries[key] = Date.now()
+    saveClosed(this.login, this.closedQueries)
+  }
+
+  private reopened(key: string): void {
+    if (this.closedQueries[key] === undefined) return
+    delete this.closedQueries[key]
+    saveClosed(this.login, this.closedQueries)
+  }
+
   openQuery(nick: string): void {
+    this.reopened(nick.toLowerCase())
     const buf = this.buffer(nick)
     this.select(buf.key)
   }
@@ -1090,6 +1109,10 @@ export class NetworkState {
       const names: string[] = []
       for (const m of b.messages) {
         const name = m.command === 'CHATHISTORY' && m.params[0]?.toUpperCase() === 'TARGETS' ? (m.params[1] ?? '') : ''
+        // A conversation closed since its last message stays closed.
+        const last = Date.parse(m.params[2] ?? '')
+        const closedAt = this.closedQueries[name.toLowerCase()]
+        if (closedAt !== undefined && Number.isFinite(last) && last <= closedAt) continue
         if (name && !this.isChannel(name) && name !== '*') names.push(name)
       }
       // Newest last, so the newest are the ones kept if there are many.
@@ -1266,6 +1289,15 @@ export class NetworkState {
       } else {
         if (!history && !self) this.onCtcp(m, from, name, ctcp[2]!)
         return
+      }
+    }
+
+    if (!isServerPrefix(m.prefix) && !this.isChannel(target)) {
+      const peer = (self ? target : from).toLowerCase()
+      const closedAt = this.closedQueries[peer]
+      if (closedAt !== undefined) {
+        if (history && time <= closedAt) return
+        if (!history) this.reopened(peer)
       }
     }
 
@@ -1623,6 +1655,25 @@ function loadReadStore(login: string): Record<string, number> {
     return JSON.parse(localStorage.getItem('irc:read:' + login) ?? '{}')
   } catch {
     return {}
+  }
+}
+
+function loadClosed(login: string): Record<string, number> {
+  try {
+    const o = JSON.parse(localStorage.getItem('irc:closed:' + login) ?? '{}')
+    return o && typeof o === 'object' && !Array.isArray(o) ? o : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveClosed(login: string, data: Record<string, number>): void {
+  // The newest 200, so the list does not grow for ever.
+  const keep = Object.fromEntries(Object.entries(data).sort((a, b) => b[1] - a[1]).slice(0, 200))
+  try {
+    localStorage.setItem('irc:closed:' + login, JSON.stringify(keep))
+  } catch {
+    // closed conversations come back after a reload
   }
 }
 

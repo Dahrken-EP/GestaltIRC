@@ -608,6 +608,13 @@ async function send(page, text) {
   ok(keptLines === 2, 'after a reload the private conversation is still there, each line once (' + keptLines + ')')
   await page.locator('.list').getByRole('button', { name: 'Close jane' }).click()
   await jane.locator('.list').getByRole('button', { name: 'Close matt' }).click()
+  // A conversation closed with its × stays closed through a reload, even though the bouncer still holds its history.
+  if (!process.env.NORELOAD) {
+    await page.reload()
+    await page.waitForSelector('.status.connected')
+    await page.waitForTimeout(1500)
+    ok((await page.locator('button.name:has-text("jane")').count()) === 0, 'a closed private conversation stays closed after a reload')
+  }
   await openBuffer(page, 'Status')
   await openBuffer(jane, 'Status')
 
