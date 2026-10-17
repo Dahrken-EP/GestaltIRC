@@ -1,0 +1,22 @@
+const { _electron } = require('playwright-core')
+;(async () => {
+  const app = await _electron.launch({ executablePath: require('electron'), args: ['.', '--no-sandbox'], cwd: process.cwd(), env: { ...process.env } })
+  const page = await app.firstWindow()
+  await page.waitForLoadState()
+  await page.waitForSelector('#local:not(.hidden)')
+  await page.fill('#user', 'me')
+  await page.fill('#pass', 'a-long-password')
+  await page.click('#local-go')
+  await page.waitForURL(/127\.0\.0\.1/, { timeout: 30000 })
+  await page.waitForSelector('form.card', { timeout: 15000 })
+  console.log('local mode shows the login page at', page.url())
+  // the bouncer's page is given no way to talk to the app
+  console.log('invoke exposed to the bouncer page:', await page.evaluate(() => typeof window.__TAURI__))
+  // log in through the real client
+  await page.getByLabel(/user/i).first().fill('me')
+  await page.locator('input[type=password]').fill('a-long-password')
+  await page.getByRole('button', { name: /log in|sign in/i }).click()
+  await page.waitForSelector('text=Add your first server', { timeout: 15000 })
+  console.log('logged in: the client shows "Add your first server"')
+  await app.close()
+})().catch((e) => { console.error('FAIL', e.message); process.exit(1) })

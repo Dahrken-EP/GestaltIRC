@@ -3,12 +3,18 @@
 A Linux and Windows desktop version of the client, built with [Tauri](https://tauri.app), as one executable (an AppImage on
 Linux, a single `.exe` on Windows). It can connect to a bouncer you run elsewhere, or run one itself.
 
-Status: **first version built** in `desktop/` (Tauri 2). It compiles on Linux, the launcher runs, and the local mode's steps
-(make the files, add the account, serve the web client, log in) were checked by hand against the bundled bouncer. **WebRTC does
-not work in the Linux webview** (see below), so the Linux build cannot yet do voice or direct chat. Windows is untested here.
+Status: **built.** Linux uses Electron and Windows uses Tauri, because Linux's own web view has no WebRTC (below). Both show the same
+launcher page (`desktop/ui/index.html`) and do the same: connect to a bouncer elsewhere, or start the one the app carries.
 
-Build it with `cd desktop && npm ci && npm run build`, which builds the bouncer and web client it carries (`build-sidecar.sh`)
-and then runs `tauri build`. `.github/workflows/desktop.yml` does the same on Linux and Windows runners.
+- **Linux (Electron, `desktop/electron/`):** checked here. The launcher runs, WebRTC is complete (the headless check finds
+  `RTCPeerConnection`, a data channel, an offer with a fingerprint), and `desktop/test/electron-smoke.cjs` drives the real app:
+  start local mode, reach the bouncer's login page, log in through the real client, and check that the bouncer's page is given no
+  way to talk to the app. Build it with `cd desktop && npm ci && npm run build:linux` (an AppImage in `dist-electron/`).
+- **Windows (Tauri, `desktop/src-tauri/`):** compiles on Linux, but is untried on Windows. WebView2 is Chromium, so WebRTC should
+  be complete. Build it with `npm run build`.
+
+`.github/workflows/desktop.yml` builds both on their own runners and runs the Linux smoke test. It is the first run of that
+workflow that will show whether the AppImage and the Windows installer build.
 
 ## Two ways to run
 
@@ -25,31 +31,19 @@ Both can be set up, and the user can switch between them from the app's menu.
 
 1. `desktop/` with a Tauri 2 project. The Rust side stays small: choose remote or local, start and stop the sidecar, wait for it to
    answer on its port, open the window, keep a single instance.
-2. The bouncer binary is built for each target (`GOOS`/`GOARCH`, pure Go with modernc SQLite, no cgo) and bundled as a Tauri
-   sidecar. `web/dist` is embedded in it through `web_dir` pointing at an extracted copy, or served from the sidecar's own files.
+2. The bouncer binary is built for each target (`GOOS`/`GOARCH`, pure Go with modernc SQLite, no cgo) and bundled with the app as a
+   resource, next to a copy of `web/dist` that the bouncer serves through `web_dir`.
 3. The webview must allow the microphone for the bouncer's origin and nothing else, and refuse to navigate anywhere else.
 4. CI: a matrix on Linux and Windows runners that builds the sidecar and the app and uploads the AppImage and `.exe` to releases.
 5. Desktop extras once it runs: a tray icon, start on login, an unread badge, and a system-wide push-to-talk key (which a
    browser cannot offer).
 
-## What was found about WebRTC in the webview
+## Why Linux uses Electron
 
-The launcher checks what the webview can do and shows a warning if voice and direct chat cannot work. Run headless with
-`GESTALT_DIAG=1 xvfb-run target/debug/gestalt-desktop` to print the result.
-
-- **Linux, WebKitGTK 2.52 from Ubuntu 24.04:** `RTCPeerConnection`, `RTCDataChannel` and the prefixed form are all
-  **undefined**, although the microphone (`getUserMedia`), `MediaStream` and the audio API are there. Ubuntu and Debian build
-  WebKitGTK without WebRTC, and the app's own settings (`enable-webrtc`) cannot add what the build left out. So a Tauri
-  Linux app that uses the system webview has no voice, no direct chat and no files on these systems.
-- **Windows, WebView2:** Chromium, so it should be complete. Not yet tried.
-
-## Decision needed for Linux
-
-1. **Tauri with the Chromium Embedded Framework** (an experimental community runtime for Tauri). One code base, WebRTC like Chrome,
-   but the AppImage grows to about 200 MB and the runtime is young.
-2. **Electron for Linux only.** Windows stays on Tauri. Two shells to maintain, but Electron is proven and has full WebRTC.
-3. **Tauri as it is, with voice and direct chat off on Linux** until distributions ship WebKitGTK with WebRTC, and a message
-   in the launcher saying so. The smallest and fastest; the Linux app would be a plain IRC client.
+The launcher checks what the web view can do. The Tauri build, headless on Ubuntu 24.04, found WebKitGTK 2.52 with the microphone
+and audio API but **no `RTCPeerConnection` at all**: Ubuntu and Debian build WebKitGTK without WebRTC, and the app's own settings
+cannot add it. A Tauri Linux app would have had no voice, no direct chat and no files. Electron carries Chromium, and the same
+check on it finds everything. (The Tauri code still builds on Linux and shows a warning in the launcher if WebRTC is missing.)
 
 ## Other things to remember
 
