@@ -159,6 +159,14 @@ port 5173 and proxies `/ws` and `/api` to a bouncer on `127.0.0.1:8080`.
 `test/e2e/run.sh` drives the built client in Chromium against a real bouncer and a scripted
 IRC network. See `test/e2e/README.md`.
 
+## Automated checks
+
+`.github/workflows/` has two workflows, which I could not run from where this was written, so expect to read
+their first run. **CI** runs on every push and pull request: formatting, `go vet` and `go test -race`, the web type
+check, tests and build, the real-Ergo integration tests, and the browser tests (real WebRTC and audio in Chromium).
+**Security** runs on every push and pull request and daily: `govulncheck` for Go modules, `npm audit` for the packages
+that ship to browsers, and CodeQL for Go and TypeScript. Dependabot proposes dependency updates weekly.
+
 ## Accounts, networks and the bouncer's HTTP API
 
 Users and networks are managed with the admin commands below. The web client logs in at
