@@ -122,6 +122,17 @@ between people behind NATs. Step by step:
 
    The first start builds the image, creates the database and secret key in a volume, and writes the bouncer's and coturn's
    configuration. `docker compose logs -f bouncer` shows it running, and `docker compose logs caddy` the certificate being issued.
+   `docker compose ps -a` also lists a `setup` container with the status *Exited (0)*. That is expected: it is a one-off job
+   that writes the configuration and stops. Once the stack is up you can tidy it away (it is only a stopped container; the
+   configuration lives in a volume and is kept):
+
+        docker compose rm -f setup
+
+   It is a container of its own on purpose. The bouncer image has no shell, so it cannot run the setup script; and only this job
+   needs to write the configuration, which lets the bouncer and coturn mount it read-only. A bouncer that could rewrite its own
+   settings and the TURN secret is a bigger target if it is ever compromised. The cost is one stopped container. `docker compose up`
+   runs the job again (it never overwrites a file that is already there), so remove it again after an update if you want the list
+   tidy.
 5. **Make your account.** The password is read from standard input, so it is not left in your shell history's arguments:
 
         echo 'a-long-password' | docker compose exec -T bouncer bouncer user add alice

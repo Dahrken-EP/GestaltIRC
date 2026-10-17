@@ -33,6 +33,15 @@ The first `up` starts a one-off `setup` container that writes `bouncer.yaml`, `t
 secret (shared by the bouncer and coturn) into the `config` volume. It never overwrites a file that is already
 there, so editing the copy in the volume is safe and starting again changes nothing.
 
+`docker compose ps -a` lists `setup` as *Exited (0)*, which is expected. To remove the stopped container (the
+configuration is in the volume and stays), run `docker compose rm -f setup`; the next `up` runs the job again and
+leaves another, so this is housekeeping, not a required step. (`--remove-orphans` does not help: `setup` is part of
+the compose file, so it is not an orphan.)
+
+It is a separate container for two reasons. The bouncer image is distroless, with no shell to run the script in.
+And only this job needs to write the configuration, so the bouncer and coturn mount it read-only: a compromised
+bouncer cannot rewrite its own settings or the TURN secret it shares with coturn.
+
 ## Behind Traefik
 
 If Traefik already terminates HTTPS on the server, leave Caddy out and let Traefik find the bouncer through labels:
