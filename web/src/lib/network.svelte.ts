@@ -7,12 +7,14 @@ import type { Batch, Status } from './irc/connection'
 import { format, isServerPrefix, nickOf, timeOf, type Message } from './irc/message'
 import { pageUnfocused } from './notify'
 import type { ChatLine, ChatView } from './p2p/chat'
+import { encodeRoster, GUEST_TAG, guestLabel, isGuestPrefix, parseGuestEvent, ROSTER_TAG, type RosterEntry } from './guest/protocol'
 import { P2pHub, SIGNAL_TAG } from './p2p/hub'
 import type { Signal } from './p2p/signal'
 import type { PluginEvent } from './plugins/types'
 import type { VoiceSlot } from './voice/active'
 import { VoiceCall, type CallView } from './voice/call'
 import { formatPresence, parsePresence, VOICE_TAG } from './voice/presence'
+import type { RoomMixer } from './voice/mixer'
 import { VoiceRoom, type RoomView } from './voice/room'
 import { mentions } from './render'
 import { settings } from './settings.svelte'
@@ -85,6 +87,8 @@ export class Buffer {
   readonly name: string
   readonly key: string
   readonly kind: 'status' | 'channel' | 'query' | 'p2p'
+  /** What to call the buffer on screen. It is the name, except for a guest, whose nick is made up. */
+  title = $state('')
 
   messages = $state.raw<ChatMessage[]>([])
   topic = $state('')
@@ -108,6 +112,10 @@ export class Buffer {
   voiceMembers = $state.raw<string[]>([])
   /** For a direct chat: the voice call with that person. */
   call = $state.raw<CallView | null>(null)
+  /** For a channel whose voice room we are in with guests allowed: the link a guest can open to join it. */
+  guestLink = $state('')
+  /** The bouncer's id for that link, so it can be ended. */
+  guestInviteId = ''
 
   /** Lowercase nick -> member. */
   members = new Map<string, Member>()
@@ -125,6 +133,7 @@ export class Buffer {
 
   constructor(name: string, kind: Buffer['kind'], lastRead: number) {
     this.name = name
+    this.title = name
     // A direct chat's key has a prefix, which no nick can contain, so it never collides with a query.
     this.key = kind === 'status' ? '' : kind === 'p2p' ? 'p2p:' + name.toLowerCase() : name.toLowerCase()
     this.kind = kind
@@ -272,7 +281,29 @@ export interface NetworkHooks {
   getMedia?: () => Promise<MediaStream>
   /** Which voice chat holds the microphone. One for the whole page unless a test says otherwise. */
   voiceSlot?: VoiceSlot
+  /** Makes a one-time link for a guest, and returns its address, or null when guests are not allowed or it failed. */
+  guestLink?(req: { network: string; kind: 'room' | 'direct'; target: string }): Promise<{ url: string; id: string } | null>
+  /** Ends a link made by `guestLink`. */
+  guestRevoke?(id: string): void
+  /** What a link is for, by the id the bouncer gives a guest who came by it. */
+  guestInvite?(id: string): { kind: 'room' | 'direct'; target: string } | undefined
+  /** Makes the mixer that lets guests hear a voice room and be heard in it. */
+  mixer?: () => RoomMixer | null
 }
+
+/** Someone connected through a link this user made. */
+export interface GuestInfo {
+  nick: string
+  name: string
+  inviteId: string
+  /** What the link they came by is for. */
+  kind: 'room' | 'direct'
+  /** The channel for a room, empty for a direct chat. */
+  target: string
+}
+
+/** How long a request waits for a sign that the other person's client got it before they are sent a link. */
+const GESTALT_WAIT_MS = 8_000
 
 export class NetworkState {
   readonly id: string
@@ -316,6 +347,10 @@ export class NetworkState {
   private hub: P2pHub
   private rooms = new Map<string, VoiceRoom>()
   private calls = new Map<string, VoiceCall>()
+  /** People connected through links this user made, by lower-case nick. */
+  guests = $state.raw<ReadonlyMap<string, GuestInfo>>(new Map())
+  /** Who has been sent a link lately, so asking twice does not send two. */
+  private linkSent = new Map<string, number>()
 
   constructor(id: string, login: string, nick: string, send: (line: string) => void, hooks: NetworkHooks) {
     this.id = id
@@ -424,11 +459,80 @@ export class NetworkState {
         getMedia: () => this.getMedia(),
         createConnection: this.hooks.createConnection,
         slot: this.hooks.voiceSlot,
-        onChange: (v) => (buf.voice = v),
+        mixer: this.hooks.mixer,
+        onChange: (v) => this.onRoomView(buf, v),
       })
       this.rooms.set(buf.key, room)
     }
     return room
+  }
+
+  private onRoomView(buf: Buffer, v: RoomView): void {
+    const before = buf.voice?.state
+    buf.voice = v
+    if (before !== 'active' && v.state === 'active' && !v.listenOnly) void this.announceVoice(buf)
+    else if (before === 'active' && v.state !== 'active') this.endVoiceLink(buf)
+    this.sendRoster(buf)
+  }
+
+  /**
+   * With guests allowed, joining a voice room makes a link and says so in the channel, so anyone can join from a
+   * browser. The link lives as long as the user is in the room. A listener has no voice to relay guests through, so
+   * gets no link.
+   */
+  private async announceVoice(buf: Buffer): Promise<void> {
+    if (!this.hooks.guestLink) return
+    let made: { url: string; id: string } | null = null
+    try {
+      made = await this.hooks.guestLink({ network: this.name, kind: 'room', target: buf.name })
+    } catch {
+      made = null
+    }
+    if (!made) return
+    if (buf.voice?.state !== 'active' || buf.voice.listenOnly) {
+      // They left while the link was being made.
+      this.hooks.guestRevoke?.(made.id)
+      return
+    }
+    buf.guestLink = made.url
+    buf.guestInviteId = made.id
+    if (settings.announceVoice && buf.joined) {
+      this.send(`PRIVMSG ${buf.name} :\x01ACTION has entered voice chat. Join from any browser, no account needed: ${made.url}\x01`)
+    }
+  }
+
+  private endVoiceLink(buf: Buffer): void {
+    if (buf.guestInviteId) this.hooks.guestRevoke?.(buf.guestInviteId)
+    buf.guestLink = ''
+    buf.guestInviteId = ''
+  }
+
+  private rosterSent = new Map<string, { value: string; at: number; timer?: ReturnType<typeof setTimeout> }>()
+
+  /** Tells the guests of a room who is in it, when that changes, and at most a few times a second. */
+  private sendRoster(buf: Buffer, force = false): void {
+    const here = [...this.guests.values()].filter((g) => g.kind === 'room' && g.target.toLowerCase() === buf.key)
+    const state = this.rosterSent.get(buf.key)
+    if (here.length === 0 || buf.voice?.state !== 'active') {
+      if (state?.timer) clearTimeout(state.timer)
+      this.rosterSent.delete(buf.key)
+      return
+    }
+    const v = buf.voice
+    const entries: RosterEntry[] = [
+      { name: this.nick, guest: false, host: true, speaking: v.speaking },
+      ...v.participants.filter((p) => p.state === 'connected' || (p.guest && p.state !== 'failed')).map((p) => ({ name: p.label, guest: p.guest, host: false, speaking: p.speaking })),
+    ]
+    const value = encodeRoster(entries)
+    const now = Date.now()
+    if (!force && state?.value === value) return
+    if (!force && state && now - state.at < 300) {
+      if (!state.timer) state.timer = setTimeout(() => ((state.timer = undefined), this.sendRoster(buf)), 300)
+      return
+    }
+    if (state?.timer) clearTimeout(state.timer)
+    this.rosterSent.set(buf.key, { value, at: now })
+    for (const g of here) this.tagmsg(g.nick, ROSTER_TAG, value)
   }
 
   private getMedia(): Promise<MediaStream> {
@@ -478,6 +582,7 @@ export class NetworkState {
     const buf = this.directBuffer(nick)
     this.select(buf.key)
     void this.callFor(nick).invite()
+    this.watchForGestalt(nick, 'call')
   }
 
   private onCallView(peer: string, view: CallView): void {
@@ -500,8 +605,18 @@ export class NetworkState {
     }
   }
 
+  /** The voice room a guest came to, if they came by a link to one and we are still in it. */
+  private roomOfGuest(nick: string): VoiceRoom | undefined {
+    const g = this.guests.get(nick.toLowerCase())
+    if (!g || g.kind !== 'room') return undefined
+    const buf = this.find(g.target)
+    return buf ? this.rooms.get(buf.key) : undefined
+  }
+
   private onVoiceSignal(from: string, sid: string, payload: Signal): void {
     if (payload.k !== 'voice') return
+    // A guest of a room is answered by the room, which mixes them in, not rung through as a private call.
+    if (!payload.room && this.isGuest(from) && this.roomOfGuest(from)?.handleGuestSignal(from, sid, payload)) return
     if (typeof payload.room === 'string' && payload.room) {
       // Only someone in the channel can be in its voice room. Anyone else sending an offer would otherwise
       // be answered with our microphone.
@@ -546,8 +661,56 @@ export class NetworkState {
     }
   }
 
+  /** True for someone who is here through one of our links, not a person on the network. */
+  isGuest(nick: string): boolean {
+    return this.guests.has(nick.toLowerCase())
+  }
+
+  /** How to name someone on screen. */
+  displayName(nick: string): string {
+    const g = this.guests.get(nick.toLowerCase())
+    return g ? guestLabel(g.name) : nick
+  }
+
+  private onGuestEvent(nick: string, value: string): void {
+    const ev = parseGuestEvent(value)
+    if (!ev) return
+    const key = nick.toLowerCase()
+    const next = new Map(this.guests)
+    if (ev.t === 'join') {
+      const invite = this.hooks.guestInvite?.(ev.inviteId)
+      const info: GuestInfo = { nick, name: ev.name, inviteId: ev.inviteId, kind: invite?.kind ?? 'direct', target: invite?.target ?? '' }
+      next.set(key, info)
+      this.guests = next
+      const buf = this.find('p2p:' + key)
+      if (buf) buf.title = guestLabel(ev.name)
+      this.local(this.active, 'info', `${guestLabel(ev.name)} joined by your link.`)
+      if (info.kind === 'room') {
+        const room = this.find(info.target)
+        if (!room || !this.rooms.get(room.key)?.guestJoined(nick, ev.name)) {
+          this.local(this.active, 'error', `${guestLabel(ev.name)} could not be put in the voice room: it is full, or you are not in it.`)
+        } else this.sendRoster(room, true)
+      }
+      return
+    }
+    const g = next.get(key)
+    if (!g) return
+    next.delete(key)
+    this.guests = next
+    this.local(this.find('p2p:' + key) ?? this.active, 'info', `${guestLabel(g.name)} left.`)
+    if (g.kind === 'room') {
+      const room = this.find(g.target)
+      if (room) this.rooms.get(room.key)?.guestLeft(nick)
+    }
+  }
+
   /** Opens a direct chat with `nick` and asks them to connect. */
   openDirect(nick: string, invite = true): void {
+    // Without a way to set up the connection, a link is the only way to reach them.
+    if (invite && !this.caps.has('message-tags') && this.hooks.guestLink) {
+      void this.sendGuestLink(nick, 'this network cannot carry the request for a direct chat')
+      return
+    }
     const problem = this.directProblem(nick)
     if (problem) {
       this.local(this.active, 'error', problem)
@@ -555,7 +718,46 @@ export class NetworkState {
     }
     const buf = this.directBuffer(nick)
     this.select(buf.key)
-    if (invite && buf.p2p?.state !== 'connected') void this.hub.chat(nick).invite()
+    if (invite && buf.p2p?.state !== 'connected') {
+      void this.hub.chat(nick).invite()
+      this.watchForGestalt(nick, 'chat')
+    }
+  }
+
+  /**
+   * Their client confirms it got a request as soon as it does, before they have decided anything. If no
+   * confirmation comes, they probably do not use Gestalt, and the way to reach them is a link to a web page.
+   */
+  private watchForGestalt(nick: string, what: 'chat' | 'call'): void {
+    if (!this.hooks.guestLink) return
+    setTimeout(() => {
+      const buf = this.find('p2p:' + nick.toLowerCase())
+      const waiting = what === 'chat' ? buf?.p2p : buf?.call
+      if (!waiting || waiting.state !== 'calling' || waiting.acked) return
+      void this.sendGuestLink(nick, 'no sign that their client received the request')
+    }, GESTALT_WAIT_MS)
+  }
+
+  /** Sends `nick` a one-time link to a page where they can talk to us from a browser, and says so here. */
+  private async sendGuestLink(nick: string, why: string): Promise<void> {
+    const key = nick.toLowerCase()
+    const now = Date.now()
+    if (now - (this.linkSent.get(key) ?? 0) < 10 * 60_000) return
+    this.linkSent.set(key, now)
+    const where = this.find('p2p:' + key) ?? this.active
+    let url: string | null = null
+    try {
+      url = (await this.hooks.guestLink?.({ network: this.name, kind: 'direct', target: nick }))?.url ?? null
+    } catch {
+      url = null
+    }
+    if (!url) {
+      this.linkSent.delete(key)
+      this.local(where, 'error', why.startsWith('this network') ? 'This network does not support message tags, which direct chat needs to set up the connection.' : 'No reply came.')
+      return
+    }
+    this.send(`PRIVMSG ${nick} :Hi, ${this.nick} would like to talk with you directly. If your IRC client cannot, open this one-time link in a web browser to join: ${url} (it works once, for 30 minutes)`)
+    this.local(where, 'info', `${nick} did not answer (${why}), so they were sent a one-time link to join from a browser. It works once, for 30 minutes.`)
   }
 
   /** Why a direct chat with `nick` cannot be started, or '' when it can. Checked before anything is sent: the offer carries the sender's network address. */
@@ -571,6 +773,7 @@ export class NetworkState {
     const existing = this.find(key)
     if (existing) return existing
     const buf = new Buffer(nick, 'p2p', Date.now())
+    if (this.isGuest(nick)) buf.title = this.displayName(nick)
     this.buffers = [...this.buffers, buf].sort((a, b) => (a.kind === 'status' ? -1 : b.kind === 'status' ? 1 : bufferOrder(a, b)))
     return buf
   }
@@ -587,6 +790,12 @@ export class NetworkState {
     if (before === view.state) return
     switch (view.state) {
       case 'incoming':
+        if (this.isGuest(peer)) {
+          // They came by a link we made, which is the request, so there is nothing more to ask.
+          this.local(buf, 'info', `${this.displayName(peer)} is connecting by your link.`)
+          void this.hub.chat(peer).acceptIncoming()
+          break
+        }
         this.local(buf, 'info', `${peer} wants to start a direct chat. Nothing is connected until you accept.`)
         if (this.activeKey !== buf.key || !this.viewing || pageUnfocused()) {
           buf.unread++
@@ -610,7 +819,7 @@ export class NetworkState {
     const buf = this.directBuffer(peer)
     this.push(
       buf,
-      { kind: 'msg', nick: line.self ? this.nick : peer, text: line.text, time: line.time, self: line.self, mention: !line.self, key: 'p2p|' + line.id },
+      { kind: 'msg', nick: line.self ? this.nick : this.displayName(peer), text: line.text, time: line.time, self: line.self, mention: !line.self, key: 'p2p|' + line.id },
       false,
     )
   }
@@ -1091,6 +1300,13 @@ export class NetworkState {
   private onTagmsg(m: Message, history: boolean): void {
     if (history || isServerPrefix(m.prefix)) return
     const from = nickOf(m.prefix)
+    // The bouncer says when someone joins or leaves by one of our links. Only its own lines, which carry the guest
+    // host, are believed; the bouncer drops the same tag from the network.
+    const guestEvent = m.tags[GUEST_TAG]
+    if (guestEvent !== undefined) {
+      if (isGuestPrefix(m.prefix)) this.onGuestEvent(from, guestEvent)
+      return
+    }
     const signal = m.tags[SIGNAL_TAG]
     if (signal !== undefined) {
       // Only a message addressed to us, from someone else, can start or answer a direct chat.

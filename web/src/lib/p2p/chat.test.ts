@@ -64,6 +64,30 @@ describe('DirectChat connection', () => {
     expect(p.a.view.fingerprints.remote).toBe(p.b.view.fingerprints.local)
   })
 
+  it('tells the caller as soon as the request arrives, before anyone has decided', async () => {
+    const net = new FakeNet()
+    const p = pair(net)
+    void p.a.chat.invite()
+    await settle()
+    expect(p.b.sent.map((x) => x.payload.t)).toEqual(['ack'])
+    expect(p.a.view.state).toBe('calling')
+    expect(p.a.view.acked).toBe(true)
+    // It is only a receipt: nothing is connected, and no description was made.
+    expect(net.created.length).toBe(1)
+    // A new request starts without it.
+    p.a.chat.hangUp()
+    void p.a.chat.invite()
+    expect(p.a.view.acked).toBe(false)
+  })
+
+  it('ignores a receipt for something else', async () => {
+    const p = pair()
+    void p.a.chat.invite()
+    await settle(0)
+    p.a.chat.handleSignal('otherid1234', { t: 'ack' })
+    expect(p.a.view.acked).toBe(false)
+  })
+
   it('makes no connection until the user accepts', async () => {
     const net = new FakeNet()
     const p = pair(net)

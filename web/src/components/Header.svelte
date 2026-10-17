@@ -17,7 +17,7 @@
 
 <header class="bar">
   <button class="icon menu" title="Show channels" aria-label="Show channels" onclick={onmenu}>☰</button>
-  <h1>{buf.kind === 'status' ? net.label : buf.kind === 'p2p' ? `⚡ ${buf.name}` : buf.name}</h1>
+  <h1>{buf.kind === 'status' ? net.label : buf.kind === 'p2p' ? `⚡ ${buf.title}` : buf.name}</h1>
   {#if buf.kind === 'channel' && buf.topic}
     <span class="topic" title={buf.topic}><TokenText tokens={topic} {onchannel} /></span>
   {:else if buf.kind === 'p2p'}

@@ -200,7 +200,9 @@ func serve(cfg *config.Config) error {
 	b.SetPush(pushSvc)
 	b.API().EnablePush(pushSvc)
 	media.New().Register(b.API())
-	ice.New(cfg.StunURIs, cfg.TurnURIs, cfg.TurnSecret, time.Duration(cfg.TurnTTL)*time.Second).Register(b.API())
+	iceSvc := ice.New(cfg.StunURIs, cfg.TurnURIs, cfg.TurnSecret, time.Duration(cfg.TurnTTL)*time.Second)
+	iceSvc.Register(b.API())
+	b.SetICE(func(name string) any { return iceSvc.Servers(name) })
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
