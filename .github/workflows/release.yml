@@ -1,15 +1,15 @@
 name: release
 
 # Makes a release: the web client, the Linux AppImage and the Windows installer, attached to a tag. Run it by hand from
-# the Actions tab with the version (for example 0.1.0), on the branch to release (normally master). The tag is made
+# the Actions tab with the version (for example 0.1.1), on the branch to release (normally master). The tag is made
 # for you, at the commit it ran on.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version, without the v (for example 0.1.0). It must match desktop/package.json and desktop/src-tauri/tauri.conf.json.'
+        description: 'Version, without the v (for example 0.1.1). It must match desktop/package.json and desktop/src-tauri/tauri.conf.json.'
         required: true
-        default: '0.1.0'
+        default: '0.1.1'
 
 permissions:
   contents: read
@@ -113,7 +113,7 @@ jobs:
           gh release create "v${{ inputs.version }}" files/* \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Gestalt ${{ inputs.version }}" \
-            --notes "The first release of the bouncer's clients.
+            --notes "The clients for the bouncer: the web client, and the desktop apps for Linux and Windows.
 
           - **gestalt-web-${{ inputs.version }}.zip**: the web client, for serving with the bouncer's \`web_dir\` (the Docker image already includes it).
           - **Gestalt-${{ inputs.version }}.AppImage**: the Linux desktop app (Electron). \`chmod +x\` it and run it. On a recent distribution you may need \`libfuse2\`.
