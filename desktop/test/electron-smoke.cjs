@@ -18,6 +18,10 @@ const { _electron } = require('playwright-core')
   await page.getByRole('button', { name: /log in|sign in/i }).click()
   await page.waitForSelector('text=Add your first server', { timeout: 15000 })
   console.log('logged in: the client shows "Add your first server"')
+  // The desktop app can notify without asking, and starts with mentions notifying.
+  const notif = await page.evaluate(() => ({ bridge: window.gestaltDesktop?.desktop, permission: Notification.permission, notify: JSON.parse(localStorage.getItem('irc:settings') || '{}').notify ?? 'unset' }))
+  console.log('notifications:', JSON.stringify(notif))
+  if (notif.bridge !== true || notif.permission !== 'granted') throw new Error('the desktop app cannot show notifications')
   // Closing the window keeps the app in the tray; the tray brings it back; quitting really quits.
   const closed = await app.evaluate(({ BrowserWindow }) => {
     const w = BrowserWindow.getAllWindows()[0]
@@ -26,6 +30,11 @@ const { _electron } = require('playwright-core')
   })
   console.log('after closing the window: visible, destroyed =', closed.join(', '))
   if (closed[0] !== false || closed[1] !== false) throw new Error('closing the window did not hide it to the tray')
+  // A notification's click brings a hidden window forward, through the bridge the page is given.
+  await page.evaluate(() => window.gestaltDesktop.show())
+  const shown = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible())
+  if (!shown) throw new Error('the bridge did not bring the window forward')
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close())
   const back = await app.evaluate(({ app, BrowserWindow }) => {
     app.tray.emit('click')
     return BrowserWindow.getAllWindows()[0].isVisible()

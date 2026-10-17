@@ -2,6 +2,11 @@
 // tab is closed needs a service worker and a push endpoint on the bouncer, which
 // do not exist yet.
 
+/** The desktop app's bridge, which it puts in every page it shows. Null in a browser. */
+export function desktop(): { desktop: true; show(): void } | null {
+  return (typeof window !== 'undefined' && (window as unknown as { gestaltDesktop?: { desktop: true; show(): void } }).gestaltDesktop) || null
+}
+
 export function notificationsSupported(): boolean {
   return typeof Notification !== 'undefined'
 }
@@ -25,6 +30,8 @@ export function showNotification(title: string, body: string, onClick: () => voi
   try {
     const n = new Notification(title, { body, tag: title })
     n.onclick = () => {
+      // In the desktop app the window may be hidden in the tray, and focusing a hidden window does not show it.
+      desktop()?.show()
       window.focus()
       onClick()
       n.close()

@@ -48,7 +48,8 @@ const DEFAULTS: Stored = {
   embeds: true,
   previews: true,
   imgurDirect: false,
-  notify: false,
+  // The desktop app has permission to notify already, so it starts with mentions notifying; a browser has to ask.
+  notify: typeof window !== 'undefined' && !!(window as unknown as { gestaltDesktop?: unknown }).gestaltDesktop,
 }
 
 /** The keys saved to the bouncer. */
