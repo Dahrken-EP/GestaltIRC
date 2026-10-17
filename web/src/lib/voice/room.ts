@@ -10,12 +10,20 @@ import { newSessionId, type Signal } from '../p2p/signal'
 import { voiceSlot, type VoiceSlot } from './active'
 import { stopStream } from './media'
 import { audioMeter, primeAudio, Speaking, type Meter, type MeterFactory } from './meter'
+import type { RoomMixer } from './mixer'
 import { formatPresence, MAX_VOICE, parsePresence } from './presence'
 
 export type PeerConnState = 'connecting' | 'connected' | 'failed'
 
 export interface Participant {
+  /** Unique within the room. For a guest it is not a nick on the network. */
   nick: string
+  /** What to call them on screen. */
+  label: string
+  /** Here by a link, with no Gestalt of their own. */
+  guest: boolean
+  /** For a guest brought by someone else: who. Empty otherwise. Their voice reaches us through that person. */
+  via: string
   state: PeerConnState
   speaking: boolean
   /** 0 to 1. */
@@ -53,6 +61,8 @@ export interface RoomOptions {
   newSid?: () => string
   slot?: VoiceSlot
   max?: number
+  /** Makes the mixer that lets guests hear the room and the room hear them. Without it a room takes no guests. */
+  mixer?: () => RoomMixer | null
   /** How long to wait for someone's offer before giving up on them. */
   offerTimeoutMs?: number
   /** How often speaking is checked, in milliseconds. */
@@ -63,6 +73,22 @@ interface Peer {
   nick: string
   sid: string
   offerer: boolean
+  session: PeerSession | null
+  state: PeerConnState
+  stream: MediaStream | null
+  meter: Meter | null
+  speaking: Speaking
+  isSpeaking: boolean
+  volume: number
+  code: string
+  timer: ReturnType<typeof setTimeout> | undefined
+}
+
+/** Someone here by a link, who talks to the room through this browser. */
+interface GuestPeer {
+  nick: string
+  name: string
+  sid: string
   session: PeerSession | null
   state: PeerConnState
   stream: MediaStream | null
@@ -85,6 +111,10 @@ export class VoiceRoom {
   private epoch = 0
   /** Everyone who has answered our join, to tell when the room was already full. */
   private answered = new Set<string>()
+  private mixer: RoomMixer | null = null
+  private guestPeers = new Map<string, GuestPeer>()
+  /** Guests other people said they brought, by lower-case nick of whoever brought them. */
+  private brought = new Map<string, { from: string; names: string[] }>()
   /** STUN and TURN servers, fetched once for all the connections of a join rather than once per person. */
   private ice: { at: number; servers: Promise<RTCIceServer[]> } | null = null
 
@@ -171,6 +201,10 @@ export class VoiceRoom {
     this.localMeter?.close()
     this.localMeter = null
     this.answered.clear()
+    for (const g of [...this.guestPeers.values()]) this.dropGuest(g)
+    this.brought.clear()
+    this.mixer?.close()
+    this.mixer = null
     if (this.local) stopStream(this.local)
     this.local = null
     this.slot.release(this)
@@ -187,6 +221,7 @@ export class VoiceRoom {
       case 'join':
         // Tell them we are here, whether or not there is room: they will see the room is full.
         this.o.sendPresence(from, formatPresence({ t: 'here', room: this.o.channel }))
+        this.tellGuests(from)
         // Joining again means the old connection is dead, whatever we last heard.
         this.forget(from)
         this.meet(from)
@@ -195,6 +230,7 @@ export class VoiceRoom {
         // Someone who lost touch. If we are still connected to them there is nothing to do.
         if (this.peers.get(from.toLowerCase())?.state === 'connected') return
         this.o.sendPresence(from, formatPresence({ t: 'here', room: this.o.channel }))
+        this.tellGuests(from)
         this.forget(from)
         this.meet(from)
         return
@@ -209,6 +245,11 @@ export class VoiceRoom {
         return
       case 'leave':
         this.forget(from)
+        return
+      case 'guests':
+        if (p.names.length) this.brought.set(from.toLowerCase(), { from, names: p.names })
+        else this.brought.delete(from.toLowerCase())
+        this.publish()
         return
     }
   }
@@ -263,6 +304,146 @@ export class VoiceRoom {
     if (this.view.state === 'active') this.o.sendPresence(this.o.channel, formatPresence({ t: 'hello' }))
   }
 
+  // --- guests ---
+
+  /** The names of the people here by a link, through this browser. */
+  get guestNames(): string[] {
+    return [...this.guestPeers.values()].map((g) => g.name)
+  }
+
+  /** Someone came by a link to this room, and their offer will follow. False if this room cannot take them. */
+  guestJoined(nick: string, name: string): boolean {
+    if (this.view.state !== 'active' || !this.local) return false
+    const key = nick.toLowerCase()
+    if (this.guestPeers.has(key)) return true
+    if (this.live() >= this.max() - 1 || !this.ensureMixer()) return false
+    const g: GuestPeer = {
+      nick, name, sid: '', session: null, state: 'connecting', stream: null, meter: null,
+      speaking: new Speaking(), isSpeaking: false, volume: 1, code: '', timer: undefined,
+    }
+    g.timer = setTimeout(() => g.state === 'connecting' && !g.session && this.guestFailed(g), this.o.offerTimeoutMs ?? 30_000)
+    this.guestPeers.set(key, g)
+    this.publish()
+    this.announceGuests()
+    return true
+  }
+
+  /** A guest closed their page, or the link ended. */
+  guestLeft(nick: string): void {
+    const g = this.guestPeers.get(nick.toLowerCase())
+    if (!g) return
+    this.dropGuest(g)
+    this.publish()
+    this.announceGuests()
+  }
+
+  /** An offer or goodbye from a guest. Returns true if it was for one of this room's guests. */
+  handleGuestSignal(nick: string, sid: string, s: Signal): boolean {
+    const g = this.guestPeers.get(nick.toLowerCase())
+    if (!g) return false
+    if (s.t === 'offer' && typeof s.sdp === 'string' && s.sdp) void this.answerGuest(g, sid, s.sdp)
+    else if (s.t === 'bye' && sid === g.sid) this.guestLeft(nick)
+    return true
+  }
+
+  private ensureMixer(): RoomMixer | null {
+    if (this.mixer) return this.mixer
+    const m = this.o.mixer?.() ?? null
+    if (!m) return null
+    this.mixer = m
+    m.setMic(this.local)
+    for (const p of this.peers.values()) if (p.stream) m.setPeer(p.nick.toLowerCase(), p.stream)
+    // Connections made before the first guest sent the bare microphone; from here they send the mix.
+    const track = m.outbound.getAudioTracks()[0]
+    if (track) for (const p of this.peers.values()) void p.session?.replaceAudio(track)
+    return m
+  }
+
+  private async answerGuest(g: GuestPeer, sid: string, sdp: string): Promise<void> {
+    const key = g.nick.toLowerCase()
+    g.sid = sid
+    clearTimeout(g.timer)
+    g.session?.close()
+    g.session = null
+    g.state = 'connecting'
+    this.publish()
+    try {
+      const servers = await this.servers()
+      const mixer = this.mixer
+      if (!mixer || this.guestPeers.get(key) !== g || g.sid !== sid || this.view.state !== 'active') return
+      const session: PeerSession = new PeerSession({
+        iceServers: servers,
+        createConnection: this.o.createConnection,
+        stream: mixer.addGuest(key),
+        receiveAudio: true,
+        send: (d) => this.guestPeers.get(key) === g && g.sid === sid && this.o.sendSignal(g.nick, sid, { k: 'voice', t: d.t, sdp: d.sdp }),
+        onTrack: (s) => this.guestPeers.get(key) === g && this.gotGuestStream(g, s),
+        onState: (s) => {
+          if (g.session !== session) return
+          if (s === 'connected') {
+            clearTimeout(g.timer)
+            g.state = 'connected'
+            const fp = session.fingerprints
+            g.code = safetyCode(fp.local, fp.remote)
+            this.publish()
+          } else if (s === 'failed' || s === 'closed') this.guestFailed(g)
+        },
+      })
+      g.session = session
+      g.timer = setTimeout(() => g.state === 'connecting' && this.guestFailed(g), 45_000)
+      await session.accept(sdp)
+    } catch {
+      if (this.guestPeers.get(key) === g && g.sid === sid) this.guestFailed(g)
+    }
+  }
+
+  private gotGuestStream(g: GuestPeer, stream: MediaStream): void {
+    g.stream = stream
+    g.meter?.close()
+    g.meter = (this.o.createMeter ?? audioMeter)(stream)
+    this.mixer?.setGuestSource(g.nick.toLowerCase(), stream)
+    this.publish()
+  }
+
+  private guestFailed(g: GuestPeer): void {
+    if (g.state === 'failed') return
+    clearTimeout(g.timer)
+    g.state = 'failed'
+    g.isSpeaking = false
+    g.meter?.close()
+    g.meter = null
+    this.mixer?.removeGuest(g.nick.toLowerCase())
+    const session = g.session
+    g.session = null
+    session?.close()
+    this.publish()
+  }
+
+  private dropGuest(g: GuestPeer): void {
+    clearTimeout(g.timer)
+    g.meter?.close()
+    const session = g.session
+    g.session = null
+    session?.close()
+    this.mixer?.removeGuest(g.nick.toLowerCase())
+    this.guestPeers.delete(g.nick.toLowerCase())
+  }
+
+  /** Tells the channel who we brought, so everyone in the room sees them. */
+  private announceGuests(): void {
+    if (this.view.state === 'active') this.o.sendPresence(this.o.channel, formatPresence({ t: 'guests', names: this.guestNames }))
+  }
+
+  /** Tells one person who we brought, as they arrive. */
+  private tellGuests(to: string): void {
+    if (this.guestPeers.size) this.o.sendPresence(to, formatPresence({ t: 'guests', names: this.guestNames }))
+  }
+
+  /** What the room should send: the microphone, or the mix once guests are in. */
+  private outgoing(): MediaStream | null {
+    return this.mixer?.outbound ?? this.local
+  }
+
   // --- controls ---
 
   setMuted(muted: boolean): void {
@@ -295,7 +476,7 @@ export class VoiceRoom {
   }
 
   setVolume(nick: string, volume: number): void {
-    const p = this.peers.get(nick.toLowerCase())
+    const p = this.peers.get(nick.toLowerCase()) ?? this.guestPeers.get(nick.toLowerCase())
     if (!p) return
     p.volume = Math.min(1, Math.max(0, volume))
     this.publish()
@@ -309,7 +490,7 @@ export class VoiceRoom {
 
   /** People we hold or are making a connection to. One whose connection failed does not take up room. */
   private live(): number {
-    let n = 0
+    let n = this.guestPeers.size
     for (const p of this.peers.values()) if (p.state !== 'failed') n++
     return n
   }
@@ -352,7 +533,7 @@ export class VoiceRoom {
     const session: PeerSession = new PeerSession({
       iceServers: servers,
       createConnection: this.o.createConnection,
-      stream: this.local ?? undefined,
+      stream: this.outgoing() ?? undefined,
       receiveAudio: true,
       send: (d) => this.peers.get(peer.nick.toLowerCase()) === peer && this.o.sendSignal(peer.nick, peer.sid, { k: 'voice', t: d.t, room: this.o.channel, sdp: d.sdp }),
       onTrack: (s) => this.peers.get(peer.nick.toLowerCase()) === peer && this.gotStream(peer, s),
@@ -403,6 +584,7 @@ export class VoiceRoom {
 
   private gotStream(peer: Peer, stream: MediaStream): void {
     peer.stream = stream
+    this.mixer?.setPeer(peer.nick.toLowerCase(), stream)
     peer.meter?.close()
     peer.meter = (this.o.createMeter ?? audioMeter)(stream)
     this.publish()
@@ -410,6 +592,7 @@ export class VoiceRoom {
 
   private markFailed(peer: Peer): void {
     if (peer.state === 'failed') return
+    this.mixer?.setPeer(peer.nick.toLowerCase(), null)
     clearTimeout(peer.timer)
     peer.state = 'failed'
     peer.isSpeaking = false
@@ -421,11 +604,14 @@ export class VoiceRoom {
 
   /** Removes someone from the room and closes their connection. */
   private forget(nick: string): void {
+    this.brought.delete(nick.toLowerCase())
     const peer = this.peers.get(nick.toLowerCase())
     if (peer) this.dropPeer(peer, true)
+    else this.publish()
   }
 
   private dropPeer(peer: Peer, publish: boolean): void {
+    this.mixer?.setPeer(peer.nick.toLowerCase(), null)
     clearTimeout(peer.timer)
     peer.meter?.close()
     // Detached before closing: closing reports back, and the report must not mark them failed.
@@ -451,14 +637,28 @@ export class VoiceRoom {
         changed = true
       }
     }
+    for (const g of this.guestPeers.values()) {
+      const s = g.state === 'connected' && g.speaking.update(g.meter?.level() ?? 0, now)
+      if (s !== g.isSpeaking) {
+        g.isSpeaking = s
+        changed = true
+      }
+    }
     if (changed) this.publish()
   }
 
   private publish(): void {
-    const participants = [...this.peers.values()]
+    const people = [...this.peers.values()]
       .sort((a, b) => a.nick.localeCompare(b.nick, undefined, { sensitivity: 'base' }))
-      .map((p): Participant => ({ nick: p.nick, state: p.state, speaking: p.isSpeaking, volume: p.volume, stream: p.stream, code: p.code }))
-    this.update({ participants })
+      .map((p): Participant => ({ nick: p.nick, label: p.nick, guest: false, via: '', state: p.state, speaking: p.isSpeaking, volume: p.volume, stream: p.stream, code: p.code }))
+    const mine = [...this.guestPeers.values()]
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+      .map((g): Participant => ({ nick: g.nick, label: g.name, guest: true, via: '', state: g.state, speaking: g.isSpeaking, volume: g.volume, stream: g.stream, code: g.code }))
+    // Guests of other people have no connection to us. They are listed so everyone sees who is in the room.
+    const others = [...this.brought.values()].flatMap(({ from, names }) =>
+      names.map((name): Participant => ({ nick: `guest:${from}:${name}`, label: name, guest: true, via: from, state: 'connected', speaking: false, volume: 1, stream: null, code: '' })),
+    )
+    this.update({ participants: [...people, ...mine, ...others] })
   }
 
   private update(patch: Partial<RoomView>): void {

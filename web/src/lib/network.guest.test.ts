@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { parseRoster } from './guest/protocol'
 import { GuestSession } from './guest/session.svelte'
 import { parse } from './irc/message'
 import { NetworkState, type NetworkHooks } from './network.svelte'
 import { FakeNet } from './p2p/fakepc'
 import { settings } from './settings.svelte'
+import { VoiceSlot } from './voice/active'
+import type { RoomMixer } from './voice/mixer'
 
 class Mem {
   data = new Map<string, string>()
@@ -187,7 +190,7 @@ describe('a guest and the host', () => {
 
 describe('reaching someone who may not use Gestalt', () => {
   it('sends a link when their client does not confirm the request', async () => {
-    const guestLink = vi.fn().mockResolvedValue('https://irc.example/guest/abcdef123456')
+    const guestLink = vi.fn().mockResolvedValue({ url: 'https://irc.example/guest/abcdef123456', id: 'inv999' })
     const { net, sent } = host({ guestLink })
     net.openDirect('bob')
     await settle(7000)
@@ -201,7 +204,7 @@ describe('reaching someone who may not use Gestalt', () => {
   })
 
   it('does not send one when their client confirmed, even if they have not answered', async () => {
-    const guestLink = vi.fn().mockResolvedValue('https://irc.example/guest/abcdef123456')
+    const guestLink = vi.fn().mockResolvedValue({ url: 'https://irc.example/guest/abcdef123456', id: 'inv999' })
     const { net, signals } = host({ guestLink })
     net.openDirect('bob')
     await settle(100)
@@ -214,7 +217,7 @@ describe('reaching someone who may not use Gestalt', () => {
   })
 
   it('sends a link at once on a network that cannot carry the request, and only once in a while', async () => {
-    const guestLink = vi.fn().mockResolvedValue('https://irc.example/guest/abcdef123456')
+    const guestLink = vi.fn().mockResolvedValue({ url: 'https://irc.example/guest/abcdef123456', id: 'inv999' })
     const { net, sent } = host({ guestLink })
     net.setCaps(new Set())
     net.openDirect('bob')
@@ -244,3 +247,141 @@ function ackValue(sid: string): string {
   const payload = btoa(JSON.stringify({ k: 'chat', t: 'ack' })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
   return `${sid}.0.1.${payload}`
 }
+
+class FakeTrack {
+  enabled = true
+  kind = 'audio'
+  stop() {}
+}
+class FakeStream {
+  tracks = [new FakeTrack()]
+  getTracks() {
+    return this.tracks
+  }
+  getAudioTracks() {
+    return this.tracks
+  }
+}
+
+const mixerStub = () =>
+  ({
+    outbound: new FakeStream(),
+    setMic() {},
+    setPeer() {},
+    addGuest: () => new FakeStream(),
+    setGuestSource() {},
+    removeGuest() {},
+    close() {},
+  }) as unknown as RoomMixer
+
+/** A host in #lounge with the voice machinery, and a place to read what it sent. */
+function voiceHost(over: Partial<NetworkHooks> = {}) {
+  const sent: string[] = []
+  const net = new NetworkState('matt', 'matt/libera', 'matt', (line) => sent.push(line), {
+    onMention: () => {},
+    iceServers: async () => [],
+    createConnection: fake.create,
+    getMedia: async () => new FakeStream() as unknown as MediaStream,
+    voiceSlot: new VoiceSlot(),
+    mixer: mixerStub,
+    ...over,
+  })
+  net.nick = 'matt'
+  net.viewing = true
+  net.setCaps(new Set(['message-tags']))
+  net.handleMessage(parse(':matt!u@h JOIN #lounge')!)
+  net.handleMessage(parse(':s 353 matt = #lounge :matt alice')!)
+  net.handleMessage(parse(':s 366 matt #lounge :End')!)
+  return { net, sent, buf: net.find('#lounge')! }
+}
+
+describe('a voice room link', () => {
+  const made = { url: 'https://irc.example/guest/roomtoken123456', id: 'room42' }
+
+  it('is made when the user joins voice, announced in the channel, and ended when they leave', async () => {
+    const guestLink = vi.fn().mockResolvedValue(made)
+    const guestRevoke = vi.fn()
+    const { net, sent, buf } = voiceHost({ guestLink, guestRevoke })
+    settings.announceVoice = true
+    net.joinVoice(buf)
+    await settle()
+    expect(guestLink).toHaveBeenCalledWith({ network: 'libera', kind: 'room', target: '#lounge' })
+    expect(buf.guestLink).toBe(made.url)
+    const line = sent.find((l) => l.startsWith('PRIVMSG #lounge :\x01ACTION'))!
+    expect(line).toContain('has entered voice chat')
+    expect(line).toContain(made.url)
+    net.leaveVoice(buf)
+    await settle()
+    expect(guestRevoke).toHaveBeenCalledWith('room42')
+    expect(buf.guestLink).toBe('')
+  })
+
+  it('is kept quiet when the user does not want it announced, and not made for a listener', async () => {
+    const guestLink = vi.fn().mockResolvedValue(made)
+    const { net, sent, buf } = voiceHost({ guestLink })
+    settings.announceVoice = false
+    net.joinVoice(buf)
+    await settle()
+    expect(buf.guestLink).toBe(made.url)
+    expect(sent.some((l) => l.includes('ACTION'))).toBe(false)
+    net.leaveVoice(buf)
+    await settle()
+    settings.announceVoice = true
+    guestLink.mockClear()
+    net.joinVoice(buf, true)
+    await settle()
+    expect(guestLink).not.toHaveBeenCalled()
+  })
+
+  it('is ended at once if the user left while it was being made', async () => {
+    let finish!: (v: typeof made) => void
+    const guestLink = vi.fn().mockReturnValue(new Promise((r) => (finish = r)))
+    const guestRevoke = vi.fn()
+    const { net, buf } = voiceHost({ guestLink, guestRevoke })
+    net.joinVoice(buf)
+    await settle()
+    net.leaveVoice(buf)
+    finish(made)
+    await settle()
+    expect(guestRevoke).toHaveBeenCalledWith('room42')
+    expect(buf.guestLink).toBe('')
+  })
+
+  it('does nothing when guests are not allowed', async () => {
+    const { net, sent, buf } = voiceHost()
+    net.joinVoice(buf)
+    await settle()
+    expect(buf.guestLink).toBe('')
+    expect(sent.some((l) => l.includes('ACTION'))).toBe(false)
+  })
+
+  it('puts a guest who comes by it in the room, and tells them who is there', async () => {
+    const invites = new Map([['room42', { kind: 'room' as const, target: '#lounge' }]])
+    const { net, sent, buf } = voiceHost({ guestLink: vi.fn().mockResolvedValue(made), guestInvite: (id) => invites.get(id) })
+    net.joinVoice(buf)
+    await settle()
+    net.handleMessage(parse('@+gestalt/guest=join.room42.Sam :g-Sam!guest@guest.invalid TAGMSG matt')!)
+    await settle()
+    expect(buf.voice!.participants.find((p) => p.guest)).toMatchObject({ label: 'Sam', guest: true })
+
+    const roster = sent.filter((l) => l.includes('TAGMSG g-Sam') && l.includes('+gestalt/roster=')).at(-1)!
+    const value = /\+gestalt\/roster=(\S+) TAGMSG/.exec(roster)![1]!
+    expect(parseRoster(value)).toEqual(expect.arrayContaining([
+      { name: 'matt', guest: false, host: true, speaking: false },
+      { name: 'Sam', guest: true, host: false, speaking: false },
+    ]))
+
+    net.handleMessage(parse('@+gestalt/guest=leave.room42 :g-Sam!guest@guest.invalid TAGMSG matt')!)
+    await settle()
+    expect(buf.voice!.participants.some((p) => p.guest)).toBe(false)
+  })
+
+  it('says so when a guest cannot be put in the room, because the user is not in it', async () => {
+    const invites = new Map([['room42', { kind: 'room' as const, target: '#lounge' }]])
+    const { net, buf } = voiceHost({ guestInvite: (id) => invites.get(id) })
+    net.handleMessage(parse('@+gestalt/guest=join.room42.Sam :g-Sam!guest@guest.invalid TAGMSG matt')!)
+    await settle()
+    expect(net.active.messages.map((m) => m.text).join('\n')).toContain('could not be put in the voice room')
+    expect(buf.voice?.participants.some((p) => p.guest) ?? false).toBe(false)
+  })
+})

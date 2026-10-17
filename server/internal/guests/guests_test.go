@@ -205,6 +205,7 @@ func TestGuestJoinsSignalsBothWaysAndLeaves(t *testing.T) {
 	// Tags a guest may not use are not passed on.
 	c.send(map[string]string{"t": "tag", "key": "+draft/reply", "value": "x"})
 	c.send(map[string]string{"t": "tag", "key": GuestTag, "value": "join.zzz.evil"})
+	c.send(map[string]string{"t": "tag", "key": "+gestalt/roster", "value": "evil"})
 	c.send(map[string]string{"t": "tag", "key": "+gestalt/p2p", "value": "after"})
 	r.host.waitFor(t, "+gestalt/p2p=after")
 	for _, l := range r.host.lines() {

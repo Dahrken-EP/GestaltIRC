@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { formatPresence, isRoomName, parsePresence } from './presence'
+import { formatPresence, isRoomName, parsePresence, type Presence } from './presence'
 import { Speaking } from './meter'
 
 describe('presence', () => {
   it('round-trips', () => {
-    for (const p of [{ t: 'join' }, { t: 'leave' }, { t: 'hello' }, { t: 'here', room: '#chat' }] as const) {
+    for (const p of [{ t: 'join' }, { t: 'leave' }, { t: 'hello' }, { t: 'here', room: '#chat' }, { t: 'guests', names: [] }, { t: 'guests', names: ['Sam', 'Pat Lee'] }] as Presence[]) {
       expect(parsePresence(formatPresence(p))).toEqual(p)
     }
   })
   it.each(['', 'JOIN', 'join ', 'here', 'here:', 'here:chat', 'here:#a b', 'here:#a,b', `here:#${'x'.repeat(100)}`, 'leave:#x', '\x00'])('rejects %j', (v) => {
+    expect(parsePresence(v)).toBeNull()
+  })
+  it.each(['guests:a b ', 'guests: x', 'guests:<b>', 'guests:a,b,c,d,e,f,g,h,i', `guests:${'x'.repeat(30)}`, 'guests:a\x00'])('rejects the guest list %j', (v) => {
     expect(parsePresence(v)).toBeNull()
   })
   it('accepts the usual channel prefixes only', () => {

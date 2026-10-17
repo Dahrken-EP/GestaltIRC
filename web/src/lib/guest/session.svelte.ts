@@ -8,11 +8,11 @@ import { NetworkState } from '../network.svelte'
 import { SIGNAL_TAG } from '../p2p/hub'
 import { microphone } from '../voice/media'
 import { GuestConnection, guestTokenFrom, type GuestEvents, type Welcome } from './connection'
+import { parseRoster, ROSTER_TAG, type RosterEntry } from './protocol'
 
 export type GuestPhase = 'name' | 'joining' | 'joined' | 'ended'
 
 /** The tags that cross between a guest and the host. */
-export const ROSTER_TAG = '+gestalt/roster'
 const TAGS = new Set([SIGNAL_TAG, ROSTER_TAG])
 const VALUE_RE = /^[A-Za-z0-9._:-]{1,2000}$/
 
@@ -29,6 +29,8 @@ export class GuestSession {
   message = $state('')
   welcome = $state.raw<Welcome | null>(null)
   net = $state.raw<NetworkState | null>(null)
+  /** Who is in the room, as the host last said, for a link to a voice room. */
+  roster = $state.raw<RosterEntry[]>([])
 
   private conn: GuestConnection
   private nameTried = ''
@@ -120,6 +122,10 @@ export class GuestSession {
   private fromHost(key: string, value: string): void {
     const w = this.welcome
     if (!w || !this.net || !TAGS.has(key) || !VALUE_RE.test(value)) return
+    if (key === ROSTER_TAG) {
+      this.roster = parseRoster(value)
+      return
+    }
     // The line it would have been on IRC, from the host to this guest.
     const m = parse(format({ tags: { [key]: value }, prefix: `${w.host}!${w.host}@gestalt`, command: 'TAGMSG', params: [w.nick] }))
     if (m) this.net.handleMessage(m)

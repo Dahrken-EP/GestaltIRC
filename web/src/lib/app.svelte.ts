@@ -10,6 +10,8 @@ import { pageUnfocused, showNotification } from './notify'
 import { plugins } from './plugins/manager.svelte'
 import { disablePush } from './push'
 import { microphone } from './voice/media'
+import { audioContext } from './voice/meter'
+import { RoomMixer } from './voice/mixer'
 import { settings } from './settings.svelte'
 
 export interface SwitcherEntry {
@@ -159,15 +161,22 @@ class App {
   }
 
   /** A link someone can open in a browser to reach us, or null if guests are not allowed. */
-  private async makeGuestLink(req: { network: string; kind: 'room' | 'direct'; target: string }): Promise<string | null> {
+  private async makeGuestLink(req: { network: string; kind: 'room' | 'direct'; target: string }): Promise<{ url: string; id: string } | null> {
     if (!this.guests.enabled) return null
     try {
       const inv = await api.createGuestInvite(req)
       this.guestInvites = [...this.guestInvites, inv]
-      return location.origin + inv.path
+      return { url: location.origin + inv.path, id: inv.id }
     } catch {
       return null
     }
+  }
+
+  private endGuestLink(id: string): void {
+    this.guestInvites = this.guestInvites.filter((i) => i.id !== id)
+    api.revokeGuestInvite(id).catch(() => {
+      // already gone, or it will run out by itself
+    })
   }
 
   /**
@@ -271,6 +280,12 @@ class App {
       getMedia: microphone,
       plugins,
       guestLink: (req) => this.makeGuestLink(req),
+      guestRevoke: (id) => this.endGuestLink(id),
+      guestInvite: (id) => this.guestInvites.find((i) => i.id === id),
+      mixer: () => {
+        const ctx = audioContext()
+        return ctx ? new RoomMixer(ctx) : null
+      },
     })
     conn = new Connection({
       url: websocketUrl(),

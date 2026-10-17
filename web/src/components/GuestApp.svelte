@@ -75,6 +75,44 @@
       <p class="dim">The link may only work once, or only while the person who sent it is here. Ask them for a new one.</p>
     </div>
   </main>
+{:else if net && buf && session.welcome?.kind === 'room'}
+  {@const call = buf.call}
+  {@const calling = !call || call.state === 'calling' || call.state === 'connecting' || call.state === 'incoming'}
+  <div class="chat" data-testid="guest-room">
+    <header>
+      <h1>🎙 {session.welcome.target}</h1>
+      <span class="dim">Voice chat through {host} · you are in as {session.welcome.name}, a guest</span>
+      <span class="grow"></span>
+      <button class="btn" onclick={() => session.leave()}>Leave</button>
+    </header>
+    <section class="room">
+      <div class="row">
+        {#if calling}
+          <span data-testid="guest-room-state" data-state="connecting">Connecting to the room…</span>
+        {:else if call?.state === 'connected'}
+          <span data-testid="guest-room-state" data-state="connected" class:speaking={call.speaking}>You are in the voice chat.</span>
+          <button class="btn" aria-pressed={call.muted} onclick={() => net.callFor(host).setMuted(!call.muted)}>{call.muted ? 'Unmute' : 'Mute'}</button>
+        {:else}
+          <span data-testid="guest-room-state" data-state="ended">{call?.reason || 'The voice chat ended.'}</span>
+          <button class="btn primary" onclick={() => net.callNick(host)}>Connect again</button>
+        {/if}
+      </div>
+      <ul class="people" data-testid="guest-roster">
+        {#each session.roster as p (p.name + (p.guest ? '/g' : ''))}
+          <li class:speaking={p.speaking}>
+            <span class="dot" aria-hidden="true"></span>
+            <span>{p.name}</span>
+            {#if p.guest}<span class="tag">guest{p.name === session.welcome.name ? ', you' : ''}</span>{/if}
+            {#if p.host}<span class="tag">host</span>{/if}
+          </li>
+        {/each}
+      </ul>
+      <p class="dim">
+        Your voice goes to {host}, who passes it on to everyone in the room. What you hear is the room, through them.
+      </p>
+    </section>
+  </div>
+  <VoiceAudio nets={[net]} />
 {:else if net && buf}
   <div class="chat">
     <header>
@@ -154,6 +192,50 @@
   }
   .grow {
     flex: 1;
+  }
+  .room {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .people {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .people li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--border);
+  }
+  .speaking .dot,
+  .speaking {
+    --speak: var(--ok);
+  }
+  li.speaking .dot {
+    background: var(--ok);
+  }
+  .tag {
+    font-size: 0.75em;
+    padding: 0 5px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--fg-dim);
   }
   .messages {
     flex: 1;
