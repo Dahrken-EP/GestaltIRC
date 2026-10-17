@@ -2,3 +2,6 @@ server/bin/
 *.db
 *.db-wal
 *.db-shm
+server/bouncer
+server/data/
+server/bouncer.yaml

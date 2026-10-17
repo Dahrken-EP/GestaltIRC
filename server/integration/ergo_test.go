@@ -157,12 +157,12 @@ func dialLines(t *testing.T, srv ergoServer, transport string) irc.LineConn {
 
 // connectRetry registers as the account's nick. It retries briefly, because
 // the server may still hold the nick from a connection that just closed.
-func connectRetry(t *testing.T, srv ergoServer, transport string, sasl irc.SASLMechanism) (*upstream.Client, error) {
+func connectRetry(t *testing.T, srv ergoServer, transport, nick string, sasl irc.SASLMechanism) (*upstream.Client, error) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		client, err := upstream.Connect(dialLines(t, srv, transport), upstream.Config{
-			Nick: account, User: account, RealName: "Alice", SASL: sasl,
+			Nick: nick, User: nick, RealName: nick, SASL: sasl,
 		})
 		if err == nil || !errors.Is(err, upstream.ErrNickInUse) || time.Now().After(deadline) {
 			return client, err
@@ -171,16 +171,22 @@ func connectRetry(t *testing.T, srv ergoServer, transport string, sasl irc.SASLM
 	}
 }
 
-// registerAccount creates the test account with NickServ over a plain connection.
+// registerAccount creates the test account "alice" with NickServ.
 func registerAccount(t *testing.T, srv ergoServer) {
 	t.Helper()
-	client, err := connectRetry(t, srv, "tcp", nil)
+	registerNick(t, srv, account, password)
+}
+
+// registerNick registers nick as an account with the given password.
+func registerNick(t *testing.T, srv ergoServer, nick, pass string) {
+	t.Helper()
+	client, err := connectRetry(t, srv, "tcp", nick, nil)
 	if err != nil {
 		t.Fatalf("connect for registration: %v", err)
 	}
 	defer client.Close()
 
-	if err := client.Send(irc.New("PRIVMSG", "NickServ", "REGISTER "+password)); err != nil {
+	if err := client.Send(irc.New("PRIVMSG", "NickServ", "REGISTER "+pass)); err != nil {
 		t.Fatal(err)
 	}
 	timeout := time.After(10 * time.Second)
@@ -231,7 +237,7 @@ func TestSASLAndEcho(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client, err := connectRetry(t, srv, tt.transport, tt.sasl(password))
+			client, err := connectRetry(t, srv, tt.transport, account, tt.sasl(password))
 			if err != nil {
 				t.Fatalf("connect: %v", err)
 			}
@@ -295,7 +301,7 @@ func TestWrongPasswordIsRejected(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client, err := connectRetry(t, srv, tt.transport, tt.sasl)
+			client, err := connectRetry(t, srv, tt.transport, account, tt.sasl)
 			if err == nil {
 				client.Close()
 				t.Fatal("connected with a wrong password")

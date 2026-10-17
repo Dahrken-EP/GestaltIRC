@@ -1,0 +1,617 @@
+// Package bouncer keeps IRC connections alive for one user, records history,
+// and serves client sessions over WebSocket.
+package bouncer
+
+import (
+	"context"
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"log"
+	"net"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"irc-webclient/server/internal/config"
+	"irc-webclient/server/internal/irc"
+	"irc-webclient/server/internal/store"
+	"irc-webclient/server/internal/upstream"
+)
+
+const (
+	registrationTimeout = 60 * time.Second
+	maxBackoff          = 60 * time.Second
+	// bouncerPrefix is the source of messages the bouncer generates itself.
+	bouncerPrefix = "bouncer"
+)
+
+// ErrNotConnected is returned when a client sends a command while the network is down.
+var ErrNotConnected = errors.New("bouncer: not connected to network")
+
+// channelState is what the bouncer remembers about a channel it is in. It is
+// replayed to a client when that client attaches.
+type channelState struct {
+	name     string // display name as the server sent it
+	topic    string // empty if none
+	hasTopic bool
+	names    []string // nicks with their prefix characters, as sent in NAMES
+}
+
+// Network is one upstream IRC connection, kept alive for the user.
+type Network struct {
+	cfg   config.NetworkConfig
+	name  string // key for the store
+	store *store.Store
+	limit int // history cap per buffer
+	// replayLimit caps the messages per buffer sent on attach.
+	replayLimit int
+
+	mu        sync.Mutex
+	client    *upstream.Client
+	nick      string
+	selfPfx   string // our full prefix nick!user@host, from our own JOIN
+	caps      map[string]string
+	isupport  [][]string // params of upstream 005 lines
+	channels  map[string]*channelState
+	wanted    map[string]string // channels to rejoin on reconnect, lower -> display
+	pending   map[string][]string
+	sessions  map[*Session]struct{}
+	connected bool
+	lastRecv  int64 // time of the last message from the network, in ms
+}
+
+// NewNetwork builds an upstream connection manager. Call Run to start it.
+func NewNetwork(cfg config.NetworkConfig, st *store.Store, historyLimit, replayLimit int) *Network {
+	n := &Network{
+		cfg:         cfg,
+		name:        cfg.Name,
+		store:       st,
+		limit:       historyLimit,
+		replayLimit: replayLimit,
+		nick:        cfg.Nick,
+		caps:        map[string]string{},
+		channels:    map[string]*channelState{},
+		wanted:      map[string]string{},
+		pending:     map[string][]string{},
+		sessions:    map[*Session]struct{}{},
+	}
+	for _, ch := range cfg.Join {
+		n.wanted[strings.ToLower(ch)] = ch
+	}
+	return n
+}
+
+// Run keeps the upstream connection up until ctx is cancelled, reconnecting
+// with exponential backoff.
+func (n *Network) Run(ctx context.Context) {
+	go func() {
+		<-ctx.Done()
+		n.mu.Lock()
+		c := n.client
+		n.mu.Unlock()
+		if c != nil {
+			c.Close()
+		}
+	}()
+
+	backoff := time.Second
+	for ctx.Err() == nil {
+		client, err := n.connect(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			msg := fmt.Sprintf("Could not connect to %s: %v. Retrying in %s.", n.name, err, backoff)
+			log.Print(msg)
+			n.notifyAll(msg)
+			sleepCtx(ctx, backoff)
+			backoff = min(backoff*2, maxBackoff)
+			continue
+		}
+		backoff = time.Second
+		n.attachUpstream(client)
+		done := make(chan struct{})
+		go n.watchdog(client, done)
+		for m := range client.Events() {
+			n.handleUpstream(m)
+		}
+		close(done)
+		n.detachUpstream(client.Err())
+		if ctx.Err() == nil {
+			sleepCtx(ctx, time.Second)
+		}
+	}
+}
+
+// Watchdog timings. A connection that has been silent for pingAfter gets a
+// PING. One that stays silent for dropAfter is closed, so a dead TCP
+// connection does not stall the bouncer until the OS gives up on it.
+const (
+	watchdogEvery = 15 * time.Second
+	pingAfter     = 90 * time.Second
+	dropAfter     = 180 * time.Second
+)
+
+// watchdog pings a quiet connection and drops one that stops answering.
+func (n *Network) watchdog(c *upstream.Client, done <-chan struct{}) {
+	ticker := time.NewTicker(watchdogEvery)
+	defer ticker.Stop()
+	pinged := false
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+		}
+		n.mu.Lock()
+		silent := time.Duration(nowMS()-n.lastRecv) * time.Millisecond
+		n.mu.Unlock()
+		switch {
+		case silent >= dropAfter:
+			log.Printf("no traffic from %s for %s; reconnecting", n.name, silent)
+			c.Close()
+			return
+		case silent >= pingAfter && !pinged:
+			pinged = true
+			c.Send(irc.New("PING", bouncerPrefix))
+		case silent < pingAfter:
+			pinged = false
+		}
+	}
+}
+
+// connect dials the network and registers. Registration runs under a deadline.
+func (n *Network) connect(ctx context.Context) (*upstream.Client, error) {
+	conn, err := dialUpstream(ctx, n.cfg)
+	if err != nil {
+		return nil, err
+	}
+	conn.SetDeadline(time.Now().Add(registrationTimeout))
+
+	var sasl irc.SASLMechanism
+	switch strings.ToUpper(n.cfg.SASL.Mechanism) {
+	case "PLAIN":
+		sasl = &irc.PlainMechanism{Username: n.cfg.SASL.Username, Password: n.cfg.SASL.Password}
+	case "SCRAM-SHA-256":
+		sasl = &irc.ScramSHA256Mechanism{Username: n.cfg.SASL.Username, Password: n.cfg.SASL.Password}
+	}
+
+	client, err := upstream.Connect(irc.NewNetConn(conn), upstream.Config{
+		Nick:     n.cfg.Nick,
+		User:     n.cfg.User,
+		RealName: n.cfg.RealName,
+		Password: n.cfg.Password,
+		SASL:     sasl,
+	})
+	if err != nil {
+		return nil, err
+	}
+	conn.SetDeadline(time.Time{})
+	return client, nil
+}
+
+func dialUpstream(ctx context.Context, nc config.NetworkConfig) (net.Conn, error) {
+	d := &net.Dialer{Timeout: 20 * time.Second}
+	raw, err := d.DialContext(ctx, "tcp", net.JoinHostPort(nc.Host, strconv.Itoa(nc.Port)))
+	if err != nil {
+		return nil, err
+	}
+	if !nc.TLS {
+		return raw, nil
+	}
+	tc := tls.Client(raw, &tls.Config{ServerName: nc.Host, MinVersion: tls.VersionTLS12})
+	if err := tc.HandshakeContext(ctx); err != nil {
+		raw.Close()
+		return nil, err
+	}
+	return tc, nil
+}
+
+// attachUpstream makes client the live connection and rejoins saved channels.
+func (n *Network) attachUpstream(c *upstream.Client) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.client = c
+	n.connected = true
+	n.nick = c.Nick()
+	n.caps = c.Caps()
+	n.lastRecv = nowMS()
+	n.isupport = nil
+	n.channels = map[string]*channelState{}
+	n.pending = map[string][]string{}
+
+	for _, display := range n.wanted {
+		if err := c.Send(irc.New("JOIN", display)); err != nil {
+			log.Printf("rejoin %s: %v", display, err)
+		}
+	}
+	n.broadcastLocked(notice(n.nick, fmt.Sprintf("Connected to %s as %s.", n.name, n.nick)))
+}
+
+// detachUpstream clears the live connection. Channel membership is rebuilt when we rejoin.
+func (n *Network) detachUpstream(err error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.client = nil
+	n.connected = false
+	n.channels = map[string]*channelState{}
+	n.pending = map[string][]string{}
+	reason := "connection closed"
+	if err != nil {
+		reason = err.Error()
+	}
+	msg := fmt.Sprintf("Disconnected from %s: %s.", n.name, reason)
+	log.Print(msg)
+	n.broadcastLocked(notice(n.nick, msg))
+}
+
+// Forward sends a client's message to the network. Echoes for PRIVMSG and
+// NOTICE are synthesised when the network does not echo them.
+func (n *Network) Forward(m *irc.Message) error {
+	n.mu.Lock()
+	c := n.client
+	if c == nil {
+		n.mu.Unlock()
+		return ErrNotConnected
+	}
+	upstreamHasTags := hasCap(n.caps, "message-tags")
+	echoes := hasCap(n.caps, "echo-message")
+	self := n.nick
+	selfPfx := n.selfPfx
+	n.mu.Unlock()
+
+	out := *m
+	if !upstreamHasTags {
+		out.Tags = nil
+	}
+	if err := c.Send(&out); err != nil {
+		return err
+	}
+
+	if !echoes && (m.Command == "PRIVMSG" || m.Command == "NOTICE") {
+		prefix := selfPfx
+		if prefix == "" {
+			prefix = self
+		}
+		echo := &irc.Message{Prefix: prefix, Command: m.Command, Params: m.Params}
+		n.handleUpstream(echo)
+	}
+	return nil
+}
+
+// Attach registers a session with the network. It sends the state a client
+// needs (channels, topics, members), then replays what it missed. The whole
+// step runs under the network lock, so no live message can slip in between.
+func (n *Network) Attach(s *Session) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	lastSeen, err := n.store.GetKV("last_seen:" + n.name)
+	if err != nil {
+		return err
+	}
+	missed, err := n.store.Missed(n.name, lastSeen, n.replayLimit)
+	if err != nil {
+		return err
+	}
+
+	n.sendWelcomeLocked(s)
+	n.sendStateLocked(s)
+	for _, t := range missed {
+		s.enqueueBatch("chathistory", t.Name, t.Lines, false)
+	}
+	n.sessions[s] = struct{}{}
+	return nil
+}
+
+// Detach removes a session. When the last session leaves, the current time
+// is recorded so the next attach knows what was missed.
+func (n *Network) Detach(s *Session) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.sessions, s)
+	if len(n.sessions) == 0 {
+		if err := n.store.SetKV("last_seen:"+n.name, nowMS()); err != nil {
+			log.Printf("record last seen: %v", err)
+		}
+	}
+}
+
+// Caps returns the upstream capabilities, or nil when disconnected.
+func (n *Network) Caps() map[string]string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if !n.connected {
+		return nil
+	}
+	out := make(map[string]string, len(n.caps))
+	for k, v := range n.caps {
+		out[k] = v
+	}
+	return out
+}
+
+// Nick returns the current upstream nickname.
+func (n *Network) Nick() string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.nick
+}
+
+// handleUpstream updates the bouncer's state for m, stores it if it is
+// history, and sends it to every attached session.
+func (n *Network) handleUpstream(m *irc.Message) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	n.lastRecv = nowMS()
+	if isBurst(m.Command) {
+		if m.Command == "005" && len(m.Params) > 2 {
+			n.isupport = append(n.isupport, append([]string(nil), m.Params[1:len(m.Params)-1]...))
+		}
+		return
+	}
+
+	n.applyStateLocked(m)
+	if target, ok := n.historyTarget(m); ok {
+		n.record(target, m)
+	}
+	n.broadcastLocked(m)
+}
+
+// applyStateLocked tracks channels, members, topics, and our own nick.
+func (n *Network) applyStateLocked(m *irc.Message) {
+	switch m.Command {
+	case "JOIN":
+		ch := m.Param(0)
+		if n.isSelf(m.Nick()) {
+			n.selfPfx = m.Prefix
+			n.channels[strings.ToLower(ch)] = &channelState{name: ch}
+			n.wanted[strings.ToLower(ch)] = ch
+			return
+		}
+		if cs := n.channels[strings.ToLower(ch)]; cs != nil {
+			cs.names = append(cs.names, m.Nick())
+		}
+	case "PART":
+		ch := strings.ToLower(m.Param(0))
+		if n.isSelf(m.Nick()) {
+			delete(n.channels, ch)
+			delete(n.wanted, ch)
+			return
+		}
+		if cs := n.channels[ch]; cs != nil {
+			cs.names = removeName(cs.names, m.Nick())
+		}
+	case "KICK":
+		ch := strings.ToLower(m.Param(0))
+		if n.isSelf(m.Param(1)) {
+			delete(n.channels, ch)
+			delete(n.wanted, ch)
+			return
+		}
+		if cs := n.channels[ch]; cs != nil {
+			cs.names = removeName(cs.names, m.Param(1))
+		}
+	case "QUIT":
+		for _, cs := range n.channels {
+			cs.names = removeName(cs.names, m.Nick())
+		}
+	case "NICK":
+		if n.isSelf(m.Nick()) {
+			n.nick = m.Param(0)
+		}
+		for _, cs := range n.channels {
+			for i, name := range cs.names {
+				if nickOf(name) == m.Nick() {
+					cs.names[i] = prefixOf(name) + m.Param(0)
+				}
+			}
+		}
+	case "TOPIC":
+		if cs := n.channels[strings.ToLower(m.Param(0))]; cs != nil {
+			cs.topic, cs.hasTopic = m.Param(1), true
+		}
+	case "332": // RPL_TOPIC
+		if cs := n.channels[strings.ToLower(m.Param(1))]; cs != nil {
+			cs.topic, cs.hasTopic = m.Param(2), true
+		}
+	case "353": // RPL_NAMREPLY
+		key := strings.ToLower(m.Param(2))
+		n.pending[key] = append(n.pending[key], strings.Fields(m.Param(3))...)
+	case "366": // RPL_ENDOFNAMES
+		key := strings.ToLower(m.Param(1))
+		if cs := n.channels[key]; cs != nil {
+			cs.names = n.pending[key]
+		}
+		delete(n.pending, key)
+	}
+}
+
+// historyTarget reports which buffer a message belongs to. Only user messages
+// are stored: PRIVMSG and NOTICE. Membership events are rebuilt from state on attach.
+func (n *Network) historyTarget(m *irc.Message) (string, bool) {
+	if m.Command != "PRIVMSG" && m.Command != "NOTICE" {
+		return "", false
+	}
+	if !strings.Contains(m.Prefix, "!") {
+		return "", false // server notices are not stored
+	}
+	to := m.Param(0)
+	if isChannel(to) {
+		return strings.ToLower(to), true
+	}
+	// A private message is filed under the other party's nick.
+	if n.isSelf(m.Nick()) {
+		return strings.ToLower(to), true
+	}
+	return strings.ToLower(m.Nick()), true
+}
+
+func (n *Network) record(target string, m *irc.Message) {
+	now := nowMS()
+	ts := now
+	if v, ok := m.Tag("time"); ok {
+		if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+			ts = t.UnixMilli()
+		}
+	}
+	msgid, _ := m.Tag("msgid")
+	err := n.store.Append(store.Record{
+		Network: n.name,
+		Target:  target,
+		TimeMS:  ts,
+		RecvMS:  now,
+		MsgID:   msgid,
+		Line:    m.Format(),
+	}, n.limit)
+	if err != nil {
+		log.Printf("store message in %s: %v", target, err)
+	}
+}
+
+// broadcastLocked sends m to every attached session. Caller holds n.mu.
+func (n *Network) broadcastLocked(m *irc.Message) {
+	for s := range n.sessions {
+		s.enqueueMessage(m, n.nick, false)
+	}
+}
+
+// notifyAll sends a bouncer notice to every session.
+func (n *Network) notifyAll(text string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.broadcastLocked(notice(n.nick, text))
+}
+
+func (n *Network) isSelf(nick string) bool {
+	return strings.EqualFold(nick, n.nick)
+}
+
+// sendWelcomeLocked sends the registration numerics. Caller holds n.mu.
+func (n *Network) sendWelcomeLocked(s *Session) {
+	nick := n.nick
+	s.enqueueLine(fmt.Sprintf(":%s 001 %s :Welcome to the %s bouncer, %s", bouncerPrefix, nick, n.name, nick))
+	s.enqueueLine(fmt.Sprintf(":%s 002 %s :Your host is %s, running irc-webclient", bouncerPrefix, nick, bouncerPrefix))
+	s.enqueueLine(fmt.Sprintf(":%s 003 %s :This server was created for this bouncer", bouncerPrefix, nick))
+	s.enqueueLine(fmt.Sprintf(":%s 004 %s %s irc-webclient i ntimsk", bouncerPrefix, nick, bouncerPrefix))
+	for _, params := range n.isupport {
+		m := &irc.Message{Prefix: bouncerPrefix, Command: "005", Params: append([]string{nick}, params...)}
+		m.Params = append(m.Params, "are supported by this server")
+		s.enqueueLine(m.Format())
+	}
+	if len(n.isupport) == 0 {
+		s.enqueueLine(fmt.Sprintf(":%s 005 %s NETWORK=%s CHANTYPES=#& PREFIX=(ov)@+ :are supported by this server",
+			bouncerPrefix, nick, n.name))
+	}
+	s.enqueueLine(fmt.Sprintf(":%s 422 %s :MOTD is not available", bouncerPrefix, nick))
+	if !n.connected {
+		s.enqueueLine(fmt.Sprintf(":%s NOTICE %s :Not connected to %s yet. Reconnecting in the background.", bouncerPrefix, nick, n.name))
+	}
+}
+
+// sendStateLocked replays joined channels: JOIN, topic, and members. Caller holds n.mu.
+func (n *Network) sendStateLocked(s *Session) {
+	nick := n.nick
+	keys := make([]string, 0, len(n.channels))
+	for k := range n.channels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	prefix := n.selfPfx
+	if prefix == "" {
+		prefix = nick
+	}
+	for _, k := range keys {
+		cs := n.channels[k]
+		s.enqueueLine(fmt.Sprintf(":%s JOIN %s", prefix, cs.name))
+		if cs.hasTopic {
+			s.enqueueLine((&irc.Message{Prefix: bouncerPrefix, Command: "332", Params: []string{nick, cs.name, cs.topic}}).Format())
+		}
+		for _, chunk := range chunkNames(cs.names, 400) {
+			s.enqueueLine((&irc.Message{Prefix: bouncerPrefix, Command: "353", Params: []string{nick, "=", cs.name, chunk}}).Format())
+		}
+		s.enqueueLine((&irc.Message{Prefix: bouncerPrefix, Command: "366", Params: []string{nick, cs.name, "End of /NAMES list"}}).Format())
+	}
+}
+
+// isBurst reports numerics that belong to the registration handshake. They
+// are consumed here and never forwarded, because the bouncer sends its own.
+func isBurst(cmd string) bool {
+	switch cmd {
+	case "002", "003", "004", "005", "251", "252", "253", "254", "255", "265", "266", "372", "375", "376", "422":
+		return true
+	}
+	return false
+}
+
+func isChannel(s string) bool {
+	return strings.HasPrefix(s, "#") || strings.HasPrefix(s, "&")
+}
+
+func hasCap(caps map[string]string, name string) bool {
+	_, ok := caps[name]
+	return ok
+}
+
+func notice(nick, text string) *irc.Message {
+	return &irc.Message{Prefix: bouncerPrefix, Command: "NOTICE", Params: []string{nick, text}}
+}
+
+// removeName drops the entry for nick, ignoring prefix characters.
+func removeName(names []string, nick string) []string {
+	out := names[:0]
+	for _, n := range names {
+		if !strings.EqualFold(nickOf(n), nick) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+const prefixChars = "~&@%+"
+
+func nickOf(name string) string {
+	return strings.TrimLeft(name, prefixChars)
+}
+
+func prefixOf(name string) string {
+	return name[:len(name)-len(nickOf(name))]
+}
+
+// chunkNames groups names into space-separated strings no longer than max bytes.
+func chunkNames(names []string, max int) []string {
+	var out []string
+	var b strings.Builder
+	for _, n := range names {
+		if b.Len() > 0 && b.Len()+1+len(n) > max {
+			out = append(out, b.String())
+			b.Reset()
+		}
+		if b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteString(n)
+	}
+	if b.Len() > 0 || len(out) == 0 {
+		out = append(out, b.String())
+	}
+	return out
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+	case <-t.C:
+	}
+}
+
+func nowMS() int64 {
+	return time.Now().UnixMilli()
+}
