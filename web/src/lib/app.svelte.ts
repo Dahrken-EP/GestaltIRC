@@ -2,20 +2,15 @@
 // which buffer is on screen. Each network is one WebSocket, logged in with the
 // session cookie, so no password is kept in the page after the login form.
 
-import { api, websocketUrl, type NetworkInfo, type SessionInfo } from './api'
+import { api, websocketUrl, type GuestInvite, type GuestSettings, type NetworkInfo, type SessionInfo } from './api'
 import { formFromNetwork, toRequest } from './networkform'
 import { Connection } from './irc/connection'
 import { NetworkState, type Buffer, type ChatMessage } from './network.svelte'
 import { pageUnfocused, showNotification } from './notify'
 import { plugins } from './plugins/manager.svelte'
 import { disablePush } from './push'
+import { microphone } from './voice/media'
 import { settings } from './settings.svelte'
-
-/** Asks for the microphone. The browser's own echo cancellation and noise suppression do the clean-up. */
-function microphone(): Promise<MediaStream> {
-  if (!navigator.mediaDevices?.getUserMedia) return Promise.reject(new Error('the microphone needs a secure (https) page'))
-  return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
-}
 
 export interface SwitcherEntry {
   netId: string
@@ -35,6 +30,10 @@ class App {
   networks = $state.raw<NetworkState[]>([])
   activeId = $state('')
   showSettings = $state(false)
+  /** Whether people without Gestalt may be sent links to join a chat, which each account chooses. */
+  guests = $state<GuestSettings>({ available: false, enabled: false })
+  /** The links this account has open. */
+  guestInvites = $state.raw<GuestInvite[]>([])
   /** The quick switcher (Ctrl+K) is open. */
   showSwitcher = $state(false)
   /** Every network the account has, including the ones switched off, which have no connection. */
@@ -119,6 +118,7 @@ class App {
     })
     this.phase = 'ready'
     this.configured = session.networks
+    void this.loadGuests()
     for (const n of session.networks) if (n.enabled) this.start(n)
     plugins.init(
       session.user,
@@ -134,6 +134,40 @@ class App {
     const first = this.networks[0]
     if (open) this.gotoBuffer(open.network, open.buffer)
     else if (first) this.activate(first.id)
+  }
+
+  /** Reads the guest switch and the open links again, as when Settings opens: another browser may have made some. */
+  async loadGuests(): Promise<void> {
+    try {
+      this.guests = await api.getGuests()
+      this.guestInvites = this.guests.enabled ? (await api.listGuestInvites()).invites : []
+    } catch {
+      // an older bouncer, or it cannot be reached: no guest links
+      this.guests = { available: false, enabled: false }
+    }
+  }
+
+  /** Switches guest links on or off for this account. Switching them off ends the open ones. */
+  async setGuests(on: boolean): Promise<void> {
+    this.guests = await api.putGuests(on)
+    this.guestInvites = on ? (await api.listGuestInvites()).invites : []
+  }
+
+  async revokeGuestInvite(id: string): Promise<void> {
+    await api.revokeGuestInvite(id)
+    this.guestInvites = this.guestInvites.filter((i) => i.id !== id)
+  }
+
+  /** A link someone can open in a browser to reach us, or null if guests are not allowed. */
+  private async makeGuestLink(req: { network: string; kind: 'room' | 'direct'; target: string }): Promise<string | null> {
+    if (!this.guests.enabled) return null
+    try {
+      const inv = await api.createGuestInvite(req)
+      this.guestInvites = [...this.guestInvites, inv]
+      return location.origin + inv.path
+    } catch {
+      return null
+    }
   }
 
   /**
@@ -216,6 +250,8 @@ class App {
     this.showSettings = false
     this.showSwitcher = false
     this.configured = []
+    this.guests = { available: false, enabled: false }
+    this.guestInvites = []
     this.serverDialog = null
     this.serverMenu = null
     settings.disconnectRemote()
@@ -234,6 +270,7 @@ class App {
       iceServers: () => api.ice().then((r) => r.iceServers),
       getMedia: microphone,
       plugins,
+      guestLink: (req) => this.makeGuestLink(req),
     })
     conn = new Connection({
       url: websocketUrl(),
