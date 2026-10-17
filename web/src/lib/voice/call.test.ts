@@ -27,15 +27,15 @@ interface Side {
   mic: FakeStream
   mics: number
   sent: Array<Record<string, unknown>>
+  history: CallView[]
   level: { value: number }
 }
 
-function pair(opts: { micFails?: boolean; slotA?: VoiceSlot; slotB?: VoiceSlot } = {}) {
+function pair(opts: { micFails?: boolean; micFailsB?: boolean; slotA?: VoiceSlot; slotB?: VoiceSlot } = {}) {
   const net = new FakeNet()
   const make = (name: string, other: () => Side, wins: boolean, slot?: VoiceSlot): Side => {
-    const side: Side = { call: undefined as unknown as VoiceCall, view: undefined as unknown as CallView, mic: new FakeStream(), mics: 0, sent: [], level: { value: 0 } }
+    const side: Side = { call: undefined as unknown as VoiceCall, view: undefined as unknown as CallView, mic: new FakeStream(), mics: 0, sent: [], history: [], level: { value: 0 } }
     side.call = new VoiceCall({
-      peer: name,
       wins: () => wins,
       slot: slot ?? new VoiceSlot(),
       sendSignal: (sid, payload) => {
@@ -45,10 +45,13 @@ function pair(opts: { micFails?: boolean; slotA?: VoiceSlot; slotB?: VoiceSlot }
       iceServers: async () => [],
       getMedia: async () => {
         side.mics++
-        if (opts.micFails) throw new Error('denied')
+        if (opts.micFails || (opts.micFailsB && name === 'alice')) throw new Error('denied')
         return side.mic as unknown as MediaStream
       },
-      onChange: (v) => (side.view = v),
+      onChange: (v) => {
+        side.view = v
+        side.history.push(v)
+      },
       createConnection: net.create,
       createMeter: () => ({ level: () => side.level.value, close() {} }),
       ringMs: 5000,
@@ -212,6 +215,57 @@ describe('VoiceCall', () => {
     await settle(800)
     expect(p.a.view.state).toBe('connected')
     expect(p.b.view.state).toBe('connected')
+  })
+
+  it('tells the other side and lets go of everything when the window is closed mid-call', async () => {
+    const p = pair()
+    await connect(p)
+    p.b.call.dispose()
+    await settle()
+    expect(p.a.view).toMatchObject({ state: 'ended', reason: 'They ended the call.' })
+    expect(p.b.mic.tracks[0]!.stopped).toBe(true)
+  })
+
+  it('does not come alive when the window is closed while the microphone prompt is open', async () => {
+    let grant!: (s: MediaStream) => void
+    const mic = new FakeStream()
+    const sent: unknown[] = []
+    const changes: string[] = []
+    const call = new VoiceCall({
+      wins: () => true, slot: new VoiceSlot(), sendSignal: (_s, payload) => void sent.push(payload),
+      iceServers: async () => [], getMedia: () => new Promise<MediaStream>((r) => (grant = r)),
+      onChange: (v) => void changes.push(v.state), createMeter: () => ({ level: () => 0, close() {} }),
+    })
+    void call.invite()
+    call.dispose()
+    const before = changes.length
+    sent.length = 0
+    grant(mic as unknown as MediaStream)
+    await settle()
+    expect(mic.tracks[0]!.stopped).toBe(true)
+    expect(sent).toEqual([])
+    expect(changes.length).toBe(before)
+    expect(call.state).toBe('idle')
+  })
+
+  it('records one ending, with the real reason, when the other side hangs up', async () => {
+    const p = pair()
+    await connect(p)
+    p.b.call.hangUp()
+    await settle()
+    // Closing the connection reports back; that must not add a second, wrong ending.
+    expect(p.a.history.filter((v) => v.state === 'ended').map((v) => v.reason)).toEqual(['They ended the call.'])
+    expect(p.b.history.filter((v) => v.state === 'ended').map((v) => v.reason)).toEqual(['You ended the call.'])
+  })
+
+  it('tells the caller when the callee cannot take the call', async () => {
+    const p = pair({ micFailsB: true })
+    void p.a.call.invite()
+    await settle()
+    void p.b.call.accept()
+    await settle()
+    expect(p.b.view.state).toBe('ended')
+    expect(p.a.view).toMatchObject({ state: 'ended', reason: 'They declined.' })
   })
 
   it('ignores a room\'s messages and junk', async () => {

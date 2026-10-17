@@ -6,7 +6,7 @@ import { PeerSession, safetyCode, type PeerState } from '../p2p/peer'
 import { newSessionId, type Signal } from '../p2p/signal'
 import { voiceSlot, type VoiceSlot } from './active'
 import { audioMeter, primeAudio, Speaking, type Meter, type MeterFactory } from './meter'
-import { stopStream } from './room'
+import { stopStream } from './media'
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'connecting' | 'connected' | 'ended'
 
@@ -24,7 +24,6 @@ export interface CallView {
 }
 
 export interface CallOptions {
-  peer: string
   sendSignal: (sid: string, payload: object) => void
   iceServers: () => Promise<RTCIceServer[]>
   getMedia: () => Promise<MediaStream>
@@ -98,7 +97,11 @@ export class VoiceCall {
       const session = await this.makeSession(sid)
       await session.accept(offer)
     } catch (e) {
-      if (this.sid === sid && this.state === 'connecting') this.end(e instanceof Error && e.message !== 'superseded' ? `Could not take the call: ${e.message}` : 'Could not take the call.')
+      if (this.sid === sid && this.state === 'connecting') {
+        // The caller is waiting for an answer that will not come.
+        this.o.sendSignal(sid, { k: 'voice', t: 'reject' })
+        this.end(e instanceof Error && e.message !== 'superseded' ? `Could not take the call: ${e.message}` : 'Could not take the call.')
+      }
     }
   }
 
@@ -118,9 +121,16 @@ export class VoiceCall {
     this.end('You ended the call.')
   }
 
+  /** The window is going away: end the call, tell the other person, and ignore anything still on its way. */
   dispose(): void {
+    const st = this.view.state
+    if (st === 'incoming') this.o.sendSignal(this.sid, { k: 'voice', t: 'reject' })
+    else if (st === 'calling' || st === 'connecting' || st === 'connected') this.o.sendSignal(this.sid, { k: 'voice', t: 'bye' })
     clearTimeout(this.timer)
+    // With no id, a microphone prompt that is answered later finds nothing to attach to.
+    this.sid = ''
     this.teardown()
+    this.view = { ...this.view, state: 'idle' }
   }
 
   setMuted(muted: boolean): void {
@@ -248,8 +258,10 @@ export class VoiceCall {
   private teardown(): void {
     clearInterval(this.ticker)
     this.ticker = undefined
-    this.session?.close()
+    // Detached before closing: closing reports back, and the report must not end the call a second time.
+    const session = this.session
     this.session = null
+    session?.close()
     this.meters.local?.close()
     this.meters.remote?.close()
     this.meters = { local: null, remote: null }

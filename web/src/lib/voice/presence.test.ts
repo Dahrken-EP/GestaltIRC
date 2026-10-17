@@ -4,7 +4,7 @@ import { Speaking } from './meter'
 
 describe('presence', () => {
   it('round-trips', () => {
-    for (const p of [{ t: 'join' }, { t: 'leave' }, { t: 'here', room: '#chat' }] as const) {
+    for (const p of [{ t: 'join' }, { t: 'leave' }, { t: 'hello' }, { t: 'here', room: '#chat' }] as const) {
       expect(parsePresence(formatPresence(p))).toEqual(p)
     }
   })

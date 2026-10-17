@@ -35,7 +35,7 @@ class FakeStream {
 }
 
 /** A channel and a wire between people. Messages arrive a moment after they are sent. */
-function lounge(nicks: string[], opts: { max?: number; micFails?: boolean; slot?: VoiceSlot; own?: boolean } = {}) {
+function lounge(nicks: string[], opts: { max?: number; micFails?: boolean; slot?: VoiceSlot; own?: boolean; iceCalls?: { n: number } } = {}) {
   const net = new FakeNet()
   const members = new Map<string, Member>()
   const rooms = new Set<string>() // everyone in the channel
@@ -59,7 +59,10 @@ function lounge(nicks: string[], opts: { max?: number; micFails?: boolean; slot?
         m.signals.push({ peer, payload: payload as Record<string, unknown> })
         setTimeout(() => members.get(peer)?.room.handleSignal(nick, sid, payload as never), 1)
       },
-      iceServers: async () => [],
+      iceServers: async () => {
+        if (opts.iceCalls) opts.iceCalls.n++
+        return []
+      },
       getMedia: async () => {
         if (opts.micFails) throw new Error('permission denied')
         return m.mic as unknown as MediaStream
@@ -200,6 +203,65 @@ describe('VoiceRoom', () => {
     expect(l.get('alice').signals.filter((s) => s.payload.t === 'offer').length).toBe(2)
     expect(l.get('alice').view.participants.map((p) => [p.nick, p.state])).toEqual([['bob', 'connected']])
     expect(l.get('bob').view.participants.map((p) => [p.nick, p.state])).toEqual([['alice', 'connected']])
+  })
+
+  it('asks for the STUN and TURN servers once for everyone it connects to', async () => {
+    const iceCalls = { n: 0 }
+    const l = lounge(['alice', 'bob', 'carol', 'dave'], { iceCalls })
+    await joinAll(l, ['bob', 'carol', 'dave'])
+    iceCalls.n = 0
+    await joinAll(l, ['alice'])
+    // alice connects to three people, and each of the three connects to her; each side asks once.
+    expect(l.get('alice').view.participants.length).toBe(3)
+    expect(iceCalls.n).toBeLessThanOrEqual(4)
+  })
+
+  it('follows someone who changes nick', async () => {
+    const l = lounge(['alice', 'bob'])
+    await joinAll(l, ['alice', 'bob'])
+    l.get('alice').room.rename('bob', 'bobby')
+    expect(l.get('alice').view.participants.map((p) => [p.nick, p.state])).toEqual([['bobby', 'connected']])
+    // Their goodbye arrives under the new name and finds them.
+    l.get('alice').room.handlePresence('bobby', 'leave')
+    expect(l.get('alice').view.participants).toEqual([])
+  })
+
+  it('welcomes back someone who lost touch, but leaves live connections alone', async () => {
+    const l = lounge(['alice', 'bob', 'carol'])
+    await joinAll(l, ['alice', 'bob'])
+    const offersBefore = l.get('alice').signals.filter((s) => s.payload.t === 'offer').length
+    // bob says hello while alice is still connected to him: nothing changes.
+    l.get('alice').room.handlePresence('bob', 'hello')
+    await settle()
+    expect(l.get('alice').signals.filter((s) => s.payload.t === 'offer').length).toBe(offersBefore)
+    expect(l.get('alice').view.participants[0]!.state).toBe('connected')
+    // carol joined while alice was cut off, so alice does not know her; her hello brings the two together.
+    void l.get('carol').room.join()
+    await settle(50)
+    l.get('alice').room.handlePresence('carol', 'hello')
+    await settle(800)
+    expect(l.get('alice').view.participants.map((p) => p.nick)).toEqual(['bob', 'carol'])
+  })
+
+  it('announces itself again after the IRC connection came back', async () => {
+    const l = lounge(['alice', 'bob'])
+    await joinAll(l, ['alice'])
+    l.get('alice').room.reannounce()
+    expect(l.get('alice').presence.at(-1)).toEqual({ target: CHANNEL, value: 'hello' })
+    l.get('bob').room.reannounce() // not in the room: says nothing
+    expect(l.get('bob').presence).toEqual([])
+  })
+
+  it('does not count a failed connection against the room', async () => {
+    const l = lounge(['alice', 'bob', 'carol'], { max: 2 })
+    await joinAll(l, ['alice', 'bob'])
+    ;[...l.net.byFingerprint.values()][0]!.fail()
+    await settle()
+    expect(l.get('alice').view.participants[0]!.state).toBe('failed')
+    // alice is "full" with bob counted, but his connection is dead, so carol can be met.
+    l.get('alice').room.handlePresence('carol', 'join')
+    await settle()
+    expect(l.get('alice').view.participants.map((p) => p.nick)).toContain('carol')
   })
 
   it('reports a refused microphone and does not join', async () => {

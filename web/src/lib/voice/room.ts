@@ -8,6 +8,7 @@
 import { PeerSession, safetyCode } from '../p2p/peer'
 import { newSessionId, type Signal } from '../p2p/signal'
 import { voiceSlot, type VoiceSlot } from './active'
+import { stopStream } from './media'
 import { audioMeter, primeAudio, Speaking, type Meter, type MeterFactory } from './meter'
 import { formatPresence, MAX_VOICE, parsePresence } from './presence'
 
@@ -48,7 +49,7 @@ export interface RoomOptions {
   max?: number
   /** How long to wait for someone's offer before giving up on them. */
   offerTimeoutMs?: number
-  /** Replaces setInterval and Date.now in tests. */
+  /** How often speaking is checked, in milliseconds. */
   tickMs?: number
 }
 
@@ -78,6 +79,8 @@ export class VoiceRoom {
   private epoch = 0
   /** Everyone who has answered our join, to tell when the room was already full. */
   private answered = new Set<string>()
+  /** STUN and TURN servers, fetched once for all the connections of a join rather than once per person. */
+  private ice: { at: number; servers: Promise<RTCIceServer[]> } | null = null
 
   constructor(private o: RoomOptions) {}
 
@@ -117,6 +120,7 @@ export class VoiceRoom {
     }
     this.local = stream
     this.answered.clear()
+    this.ice = null
     this.localMeter = (this.o.createMeter ?? audioMeter)(stream)
     this.update({ state: 'active', muted: false })
     this.ticker = setInterval(() => this.tick(), this.o.tickMs ?? 50)
@@ -172,6 +176,13 @@ export class VoiceRoom {
         this.forget(from)
         this.meet(from)
         return
+      case 'hello':
+        // Someone who lost touch. If we are still connected to them there is nothing to do.
+        if (this.peers.get(from.toLowerCase())?.state === 'connected') return
+        this.o.sendPresence(from, formatPresence({ t: 'here', room: this.o.channel }))
+        this.forget(from)
+        this.meet(from)
+        return
       case 'here':
         if (p.room.toLowerCase() !== this.o.channel.toLowerCase()) return
         this.answered.add(from.toLowerCase())
@@ -196,7 +207,7 @@ export class VoiceRoom {
       case 'offer': {
         if (typeof s.sdp !== 'string' || !s.sdp) return
         // A new person when we are full is turned away. A known person's fresh offer replaces the old connection.
-        if (!peer && this.peers.size >= this.max() - 1) {
+        if (!peer && this.live() >= this.max() - 1) {
           this.o.sendSignal(from, sid, { k: 'voice', t: 'bye', room: this.o.channel })
           return
         }
@@ -207,6 +218,7 @@ export class VoiceRoom {
       case 'answer':
         if (peer?.offerer && peer.sid === sid && peer.state === 'connecting' && typeof s.sdp === 'string') {
           clearTimeout(peer.timer)
+          peer.timer = setTimeout(() => peer.state === 'connecting' && this.markFailed(peer), 45_000)
           peer.session?.applyAnswer(s.sdp).catch(() => this.markFailed(peer))
         }
         return
@@ -219,6 +231,21 @@ export class VoiceRoom {
   /** Someone left the channel or the network. */
   memberGone(nick: string): void {
     this.forget(nick)
+  }
+
+  /** Someone in the room changed nick. Their connection carries on under the new name. */
+  rename(from: string, to: string): void {
+    const peer = this.peers.get(from.toLowerCase())
+    if (!peer || this.peers.has(to.toLowerCase())) return
+    this.peers.delete(from.toLowerCase())
+    peer.nick = to
+    this.peers.set(to.toLowerCase(), peer)
+    this.publish()
+  }
+
+  /** Our IRC connection dropped and came back, so we may have missed people joining and leaving. */
+  reannounce(): void {
+    if (this.view.state === 'active') this.o.sendPresence(this.o.channel, formatPresence({ t: 'hello' }))
   }
 
   // --- controls ---
@@ -241,6 +268,13 @@ export class VoiceRoom {
     return this.o.max ?? MAX_VOICE
   }
 
+  /** People we hold or are making a connection to. One whose connection failed does not take up room. */
+  private live(): number {
+    let n = 0
+    for (const p of this.peers.values()) if (p.state !== 'failed') n++
+    return n
+  }
+
   private same(a: string, b: string): boolean {
     return a.toLowerCase() === b.toLowerCase()
   }
@@ -251,7 +285,7 @@ export class VoiceRoom {
     const existing = this.peers.get(key)
     if (existing && existing.state !== 'failed') return
     if (existing) this.dropPeer(existing, true)
-    if (this.peers.size >= this.max() - 1) return
+    if (this.live() >= this.max() - 1) return
     const offerer = this.o.ownNick().toLowerCase() < key
     const peer = this.addPeer(nick, (this.o.newSid ?? newSessionId)(), offerer)
     if (offerer) void this.offer(peer)
@@ -274,7 +308,7 @@ export class VoiceRoom {
   }
 
   private async session(peer: Peer): Promise<PeerSession> {
-    const servers = await this.o.iceServers().catch(() => [] as RTCIceServer[])
+    const servers = await this.servers()
     if (this.peers.get(peer.nick.toLowerCase()) !== peer || !this.local) throw new Error('superseded')
     const session: PeerSession = new PeerSession({
       iceServers: servers,
@@ -295,6 +329,15 @@ export class VoiceRoom {
     })
     peer.session = session
     return session
+  }
+
+  /** One request serves everyone who connects in the next few minutes. Later ones ask again, since credentials expire. */
+  private servers(): Promise<RTCIceServer[]> {
+    const now = Date.now()
+    if (!this.ice || now - this.ice.at > 5 * 60_000) {
+      this.ice = { at: now, servers: this.o.iceServers().catch(() => [] as RTCIceServer[]) }
+    }
+    return this.ice.servers
   }
 
   private async offer(peer: Peer): Promise<void> {
@@ -345,7 +388,10 @@ export class VoiceRoom {
   private dropPeer(peer: Peer, publish: boolean): void {
     clearTimeout(peer.timer)
     peer.meter?.close()
-    peer.session?.close()
+    // Detached before closing: closing reports back, and the report must not mark them failed.
+    const session = peer.session
+    peer.session = null
+    session?.close()
     this.peers.delete(peer.nick.toLowerCase())
     if (publish) this.publish()
   }
@@ -381,6 +427,3 @@ export class VoiceRoom {
   }
 }
 
-export function stopStream(stream: MediaStream): void {
-  for (const t of stream.getTracks()) t.stop()
-}

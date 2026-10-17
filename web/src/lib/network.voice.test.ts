@@ -162,4 +162,58 @@ describe('voice in a network', () => {
     n.alice!.net.handleMessage(parse(`@${VOICE_TAG}=join :bob!u@h TAGMSG #unknown`)!)
     expect(a.voiceMembers).toEqual([])
   })
+
+  it('does not answer an offer from someone who is not in the channel', async () => {
+    const n = lounge(['alice', 'bob'])
+    const a = n.alice!.net.find('#lounge')!
+    n.alice!.net.joinVoice(a)
+    await settle()
+    const sentBefore = n.alice!.sent.length
+    // mallory is not in #lounge, and sends an offer for its room and a private "here".
+    const offer = btoa(JSON.stringify({ k: 'voice', t: 'offer', room: '#lounge', sdp: 'v=0' })).replace(/=+$/, '')
+    n.alice!.net.handleMessage(parse(`@+irc-webclient/p2p=abcdef12.0.1.${offer} :mallory!u@h TAGMSG alice`)!)
+    n.alice!.net.handleMessage(parse(`@${VOICE_TAG}=here:#lounge :mallory!u@h TAGMSG alice`)!)
+    await settle()
+    expect(a.voice!.participants).toEqual([])
+    expect(n.alice!.sent.length).toBe(sentBefore)
+  })
+
+  it('limits how many strangers can be ringing at once', async () => {
+    const n = lounge(['alice'])
+    const offer = btoa(JSON.stringify({ k: 'voice', t: 'offer', sdp: 'v=0' })).replace(/=+$/, '')
+    for (let i = 0; i < 12; i++) {
+      n.alice!.net.handleMessage(parse(`@+irc-webclient/p2p=zz${String(i).padStart(2, '0')}abcd.0.1.${offer} :stranger${i}!u@h TAGMSG alice`)!)
+    }
+    await settle(2000)
+    expect(n.alice!.net.buffers.filter((b) => b.kind === 'p2p').length).toBe(8)
+  })
+
+  it('keeps a participant who changes nick, and shows the new name', async () => {
+    const n = lounge(['alice', 'bob'])
+    for (const w of ['alice', 'bob']) n[w]!.net.joinVoice(n[w]!.net.find('#lounge')!)
+    await settle(1500)
+    const a = n.alice!.net.find('#lounge')!
+    n.alice!.net.handleMessage(parse(':bob!u@h NICK bobby')!)
+    expect(a.voice!.participants.map((p) => p.nick)).toEqual(['bobby'])
+    expect(a.voiceMembers).toEqual(['bobby'])
+  })
+
+  it('announces itself again when the connection to the bouncer comes back', async () => {
+    const n = lounge(['alice', 'bob'])
+    n.alice!.net.joinVoice(n.alice!.net.find('#lounge')!)
+    await settle()
+    n.alice!.sent.length = 0
+    n.alice!.net.connectionLost()
+    n.alice!.net.setCaps(new Set(['message-tags']))
+    expect(n.alice!.sent.some((l) => l.includes(`${VOICE_TAG}=hello`))).toBe(true)
+  })
+
+  it('says why a call or direct chat cannot start', () => {
+    const n = lounge(['alice'])
+    n.alice!.net.callNick('#lounge')
+    expect(n.alice!.net.active.messages.at(-1)!.text).toContain('not a nick')
+    n.alice!.net.setCaps(new Set())
+    n.alice!.net.callNick('bob')
+    expect(n.alice!.net.active.messages.at(-1)!.text).toContain('call needs')
+  })
 })

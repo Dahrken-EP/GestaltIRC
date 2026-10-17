@@ -114,10 +114,14 @@ async def handle(reader, writer):
                 send(f':fake PONG fake {rest}')
             elif cmd == 'JOIN':
                 ch = rest.split(' ')[0]
-                channels.setdefault(ch.lower(), {})[n.lower()] = send
+                others = {k: v for k, v in channels.setdefault(ch.lower(), {}).items() if k != n.lower()}
+                channels[ch.lower()][n.lower()] = send
+                for other in others.values():
+                    other(f'{tags(msgid=False)}:{n}!u@h JOIN {ch}')
                 send(f'{tags(msgid=False)}:{n}!u@h JOIN {ch}')
                 send(f':fake 332 {n} {ch} :Welcome! Docs at https://example.com/docs and #other')
-                send(f':fake 353 {n} = {ch} :@op +carol alice {n}')
+                present = ' '.join(k for k in others)
+                send(f':fake 353 {n} = {ch} :@op +carol alice {n}' + (' ' + present if present else ''))
                 send(f':fake 366 {n} {ch} :End of /NAMES list')
                 if ch == '#bulk':
                     # A long history, one message a second, ending a few seconds ago.

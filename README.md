@@ -82,8 +82,9 @@ suppression are the browser's own; use headphones.
 
 Voice limits to know about: who is "in voice" is only what your browser has seen since it
 connected (people who joined before that appear when you join, because they answer you), so the
-list on an idle channel is a hint. Someone who changes nick while in the room stays listed
-until their connection ends. The same account in two browsers should not join the same room
+list on an idle channel is a hint. Someone who changes nick while in a room keeps their place under the new name; a call or direct chat
+keeps working but still goes by the nick it started with, so its goodbye may not reach the other side.
+Only people who are in the channel can be in its voice room. The same account in two browsers should not join the same room
 from both. A room is a mesh, so 10 people means nine connections each. `VOICE_LOAD=1 test/e2e/run.sh`
 puts ten real Chromium instances in one room (all connected to all, in about 10 s, each playing
 nine streams) and checks an eleventh is turned away. On the 4-core test machine, with a fake

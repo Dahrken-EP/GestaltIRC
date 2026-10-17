@@ -7,7 +7,8 @@
   let { net, buf }: { net: NetworkState; buf: Buffer } = $props()
 
   const v = $derived(buf.voice)
-  const room = $derived(net.voiceRoom(buf))
+  // Made when first used: most channels never have voice, and a room holds timers and streams.
+  const room = () => net.voiceRoom(buf)
   const active = $derived(v?.state === 'active')
   const joining = $derived(v?.state === 'joining')
   const hint = $derived(buf.voiceMembers.filter((n) => !v?.participants.some((p) => p.nick.toLowerCase() === n.toLowerCase())))
@@ -22,7 +23,7 @@
         <span class="me" class:speaking={v?.speaking} data-testid="me-speaking" title="You">
           <span class="dot" aria-hidden="true"></span>You{v?.muted ? ' (muted)' : ''}
         </span>
-        <button class="btn" aria-pressed={v?.muted} onclick={() => room.setMuted(!v?.muted)}>{v?.muted ? 'Unmute' : 'Mute'}</button>
+        <button class="btn" aria-pressed={v?.muted} onclick={() => room().setMuted(!v?.muted)}>{v?.muted ? 'Unmute' : 'Mute'}</button>
         <button class="btn" onclick={() => net.leaveVoice(buf)}>Leave voice</button>
         <button class="link" aria-expanded={showCodes} onclick={() => (showCodes = !showCodes)}>{showCodes ? 'Hide codes' : 'Safety codes'}</button>
       {:else if joining}
@@ -52,7 +53,7 @@
             {#if p.state === 'connected'}
               <label class="vol">
                 <span class="visually-hidden">Volume for {p.nick}</span>
-                <input type="range" min="0" max="1" step="0.05" value={p.volume} oninput={(e) => room.setVolume(p.nick, Number(e.currentTarget.value))} />
+                <input type="range" min="0" max="1" step="0.05" value={p.volume} oninput={(e) => room().setVolume(p.nick, Number(e.currentTarget.value))} />
               </label>
               {#if showCodes}<code title="Compare with {p.nick} out loud">{p.code}</code>{/if}
             {/if}

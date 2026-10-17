@@ -67,6 +67,9 @@ const TYPING_SEND_GAP_MS = 3000
 /** Numerics sent while logging in or reading the MOTD. They go to the status buffer. */
 const STATUS_NUMERICS: ReadonlySet<number> = new Set([900, 901, 903, 251, 252, 253, 254, 255, 265, 266, 372, 375, 376, 422])
 
+/** Rings from people we have no call with yet, at most this many unanswered at once. */
+const MAX_RINGING = 8
+
 const COUNTS_AS_UNREAD: ReadonlySet<Kind> = new Set(['msg', 'action', 'notice'])
 
 let nextId = 1
@@ -309,7 +312,7 @@ export class NetworkState {
     this.hub = new P2pHub({
       ownNick: () => this.nick,
       iceServers: () => this.hooks.iceServers?.() ?? Promise.resolve([]),
-      sendSignalLine: (peer, value) => this.send(format({ tags: { [SIGNAL_TAG]: value }, command: 'TAGMSG', params: [peer] })),
+      sendSignalLine: (peer, value) => this.tagmsg(peer, SIGNAL_TAG, value),
       createConnection: hooks.createConnection,
       onSignal: (from, sid, payload) => this.onVoiceSignal(from, sid, payload),
       onView: (peer, view) => this.onDirectView(peer, view),
@@ -341,6 +344,8 @@ export class NetworkState {
   /** Records what the bouncer agreed to, once the connection is up. */
   setCaps(caps: ReadonlySet<string>): void {
     this.caps = new Set(caps)
+    // A reconnect: we may have missed people joining and leaving the voice rooms we are in.
+    for (const room of this.rooms.values()) room.reannounce()
   }
 
   find(key: string): Buffer | undefined {
@@ -430,7 +435,6 @@ export class NetworkState {
     let call = this.calls.get(key)
     if (!call) {
       call = new VoiceCall({
-        peer: nick,
         wins: () => this.nick.toLowerCase() < key,
         sendSignal: (sid, payload) => this.hub.send(nick, sid, payload),
         iceServers: () => this.hooks.iceServers?.() ?? Promise.resolve([]),
@@ -446,7 +450,11 @@ export class NetworkState {
 
   /** Opens the direct chat window with `nick` and rings them. */
   callNick(nick: string): void {
-    if (!this.canVoice) return
+    const problem = this.directProblem(nick)
+    if (problem) {
+      this.local(this.active, 'error', problem.replace('direct chat', 'call'))
+      return
+    }
     const buf = this.directBuffer(nick)
     this.select(buf.key)
     void this.callFor(nick).invite()
@@ -475,13 +483,19 @@ export class NetworkState {
   private onVoiceSignal(from: string, sid: string, payload: Signal): void {
     if (payload.k !== 'voice') return
     if (typeof payload.room === 'string' && payload.room) {
-      this.rooms.get(payload.room.toLowerCase())?.handleSignal(from, sid, payload)
+      // Only someone in the channel can be in its voice room. Anyone else sending an offer would otherwise
+      // be answered with our microphone.
+      if (this.inChannel(payload.room, from)) this.rooms.get(payload.room.toLowerCase())?.handleSignal(from, sid, payload)
       return
     }
     // A call, which has no room. Only an offer can start one.
     const existing = this.calls.get(from.toLowerCase())
     if (existing) existing.handleSignal(sid, payload)
-    else if (payload.t === 'offer') this.callFor(from).handleSignal(sid, payload)
+    else if (payload.t === 'offer') {
+      // Strangers' rings are limited like their chat requests, so many nicks cannot flood the window list.
+      const ringing = [...this.calls.values()].filter((c) => c.state === 'incoming').length
+      if (ringing < MAX_RINGING) this.callFor(from).handleSignal(sid, payload)
+    }
   }
 
   /** Someone's voice presence tag, sent to a channel (join, leave) or to us (here). */
@@ -495,9 +509,13 @@ export class NetworkState {
       if (p.t === 'join') buf.voiceMembers = [...others, from]
       else if (p.t === 'leave') buf.voiceMembers = others
       this.rooms.get(buf.key)?.handlePresence(from, value)
-    } else if (p.t === 'here') {
+    } else if (p.t === 'here' && this.inChannel(p.room, from)) {
       this.rooms.get(p.room.toLowerCase())?.handlePresence(from, value)
     }
+  }
+
+  private inChannel(channel: string, nick: string): boolean {
+    return !!this.find(channel)?.members.has(nick.toLowerCase())
   }
 
   private voiceGone(nick: string, buf?: Buffer): void {
@@ -624,6 +642,7 @@ export class NetworkState {
     for (const b of this.buffers) {
       b.typing = []
       if (b.kind !== 'channel') continue
+      b.voiceMembers = [] // what we saw before may no longer be true; the next tags rebuild it
       b.joined = false
       b.members.clear()
       b.namesFresh = true
@@ -1134,6 +1153,14 @@ export class NetworkState {
     const old = nickOf(m.prefix)
     const next = m.params[0] ?? ''
     if (this.isSelf(old)) this.nick = next
+    else {
+      for (const room of this.rooms.values()) room.rename(old, next)
+      for (const b of this.buffers) {
+        if (b.voiceMembers.some((n) => n.toLowerCase() === old.toLowerCase())) {
+          b.voiceMembers = b.voiceMembers.map((n) => (n.toLowerCase() === old.toLowerCase() ? next : n))
+        }
+      }
+    }
     for (const buf of this.buffers) {
       const entry = buf.members.get(old.toLowerCase())
       if (buf.kind === 'channel' && entry) {
