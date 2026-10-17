@@ -58,6 +58,9 @@ export interface Member {
 /** Messages kept in memory per buffer. Older ones are fetched again with CHATHISTORY. */
 export const MAX_MESSAGES = 1500
 const HISTORY_PAGE = 100
+/** Private conversations fetched at start: those with a message in this many days, at most this many. */
+const CONVERSATION_DAYS = 90
+const MAX_CONVERSATIONS = 25
 /** How long "is typing" lasts without another update. Clients refresh it every few seconds. */
 const TYPING_TTL_MS = 8000
 /** Read markers are sent this long after the last change, so reading a busy channel is one message. */
@@ -863,7 +866,27 @@ export class NetworkState {
     this.send(`CHATHISTORY BEFORE ${buf.name} ${at ? 'timestamp=' + at : '*'} ${HISTORY_PAGE}`)
   }
 
+  /**
+   * Private conversations are not joined, so nothing else tells this page they exist after a reload. The bouncer
+   * lists the buffers that had a message lately, and handleBatch asks for the latest of each.
+   */
+  private askForConversations(): void {
+    if (!this.caps.has('chathistory') && !this.caps.has('draft/chathistory')) return
+    const now = Date.now()
+    this.send(`CHATHISTORY TARGETS timestamp=${new Date(now - CONVERSATION_DAYS * 86_400_000).toISOString()} timestamp=${new Date(now + 86_400_000).toISOString()} ${MAX_CONVERSATIONS}`)
+  }
+
   handleBatch(b: Batch): void {
+    if (b.type === 'draft/chathistory-targets' || b.type === 'chathistory-targets') {
+      const names: string[] = []
+      for (const m of b.messages) {
+        const name = m.command === 'CHATHISTORY' && m.params[0]?.toUpperCase() === 'TARGETS' ? (m.params[1] ?? '') : ''
+        if (name && !this.isChannel(name) && name !== '*') names.push(name)
+      }
+      // Newest last, so the newest are the ones kept if there are many.
+      for (const name of names.slice(-MAX_CONVERSATIONS)) this.send(`CHATHISTORY LATEST ${name} * ${HISTORY_PAGE}`)
+      return
+    }
     if (b.type !== 'chathistory') {
       for (const m of b.messages) this.handleMessage(m)
       return
@@ -902,6 +925,7 @@ export class NetworkState {
       case '001':
         this.nick = m.params[0] ?? this.nick
         this.local(this.statusBuffer, 'info', m.params[1] ?? 'Connected')
+        this.askForConversations()
         break
       case '005':
         this.parseIsupport(m.params.slice(1, -1))

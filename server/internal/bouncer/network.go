@@ -600,6 +600,12 @@ func (n *Network) handleUpstream(m *irc.Message) {
 		}
 	}
 	if target, ok := n.historyTarget(m); ok {
+		// A network that sends no server-time leaves the message without a time. It gets the time it arrived, here,
+		// so the line that is stored and the one every client sees now carry the same one, and a replay later
+		// shows when it was said instead of when it was replayed.
+		if _, has := m.Tag("time"); !has {
+			m.SetTag("time", markTime(nowMS()))
+		}
 		n.record(target, m)
 	}
 	if n.alert != nil && len(n.sessions) == 0 {

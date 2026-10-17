@@ -426,6 +426,10 @@ func (s *Session) maybeRegister() {
 // handleCHATHISTORY answers LATEST, BEFORE and AFTER requests with a chathistory batch.
 func (s *Session) handleCHATHISTORY(m *irc.Message) {
 	sub := strings.ToUpper(m.Param(0))
+	if sub == "TARGETS" {
+		s.handleCHATHISTORYTargets(m)
+		return
+	}
 	target := m.Param(1)
 	selector := m.Param(2)
 	if sub != "LATEST" && sub != "BEFORE" && sub != "AFTER" {
@@ -490,6 +494,55 @@ func (s *Session) handleCHATHISTORY(m *irc.Message) {
 		return
 	}
 	s.enqueueBatch("chathistory", target, lines, true)
+}
+
+// handleCHATHISTORYTargets answers TARGETS: which buffers (channels and private conversations) have had a message
+// between two times, so a client that has just started can ask for the latest of each, including the private
+// conversations it has no other way to know about.
+func (s *Session) handleCHATHISTORYTargets(m *irc.Message) {
+	bound := func(v string) (int64, bool) {
+		t, err := time.Parse(time.RFC3339Nano, strings.TrimPrefix(v, "timestamp="))
+		return t.UnixMilli(), err == nil && strings.HasPrefix(v, "timestamp=")
+	}
+	from, ok1 := bound(m.Param(1))
+	to, ok2 := bound(m.Param(2))
+	if !ok1 || !ok2 {
+		s.sendFail("CHATHISTORY", "INVALID_PARAMS", "TARGETS", "Bad timestamp")
+		return
+	}
+	if from > to {
+		from, to = to, from
+	}
+	limit, err := strconv.Atoi(m.Param(3))
+	if err != nil || limit < 1 {
+		limit = 50
+	}
+	limit = min(limit, s.target.limit)
+	found, err := s.b.store.Targets(s.target.id, from, to, limit)
+	if err != nil {
+		s.sendFail("CHATHISTORY", "UNKNOWN_ERROR", "TARGETS", "History lookup failed")
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	useBatch := s.caps["batch"]
+	var id string
+	if useBatch {
+		s.batchSeq++
+		id = "b" + strconv.Itoa(s.batchSeq)
+		s.enqueueLocked((&irc.Message{Prefix: bouncerPrefix, Command: "BATCH", Params: []string{"+" + id, "draft/chathistory-targets"}}).Format())
+	}
+	for _, t := range found {
+		line := &irc.Message{Prefix: bouncerPrefix, Command: "CHATHISTORY", Params: []string{"TARGETS", t.Name, markTime(t.TimeMS)}}
+		if useBatch {
+			line.SetTag("batch", id)
+		}
+		s.enqueueLocked(line.Format())
+	}
+	if useBatch {
+		s.enqueueLocked((&irc.Message{Prefix: bouncerPrefix, Command: "BATCH", Params: []string{"-" + id}}).Format())
+	}
 }
 
 // --- MARKREAD (draft/read-marker) ---

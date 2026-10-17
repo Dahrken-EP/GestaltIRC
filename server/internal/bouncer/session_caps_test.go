@@ -200,3 +200,24 @@ func TestWebSocketWriteReplacesInvalidUTF8(t *testing.T) {
 		t.Errorf("line = %q, want the bad byte replaced with U+FFFD", got)
 	}
 }
+
+func TestMessageWithoutServerTimeIsStoredWithTheTimeItArrived(t *testing.T) {
+	r := newRig(t)
+	n := r.b.running[firstNetworkID(t, r)].net
+	live := r.attach(t, "server-time", "message-tags")
+
+	n.handleUpstream(parse(t, ":bob!u@h PRIVMSG matt :hello"))
+	got := live.waitFor("PRIVMSG matt")
+	if !strings.Contains(got, "time=") {
+		t.Fatalf("the live line has no time: %s", got)
+	}
+	lines, _ := r.b.store.Latest(n.id, "bob", 10)
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "@time=") {
+		t.Fatalf("the stored line has no time: %q", lines)
+	}
+	// The stored line and the live one say the same time, so a replay is recognised as the same message.
+	stamp := strings.TrimPrefix(strings.SplitN(lines[0], " ", 2)[0], "@time=")
+	if !strings.Contains(got, stamp) {
+		t.Errorf("live line %q and stored line %q disagree about the time", got, lines[0])
+	}
+}
