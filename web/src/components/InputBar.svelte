@@ -1,5 +1,6 @@
 <script lang="ts">
   import { applyCompletion, findCompletions, type Completion } from '../lib/complete'
+  import { emojiIfLoaded, expandShortcodes, loadEmoji, matchShortcodes, shortcodeQueryAt } from '../lib/emoji'
   import type { Buffer, ChatMessage, NetworkState } from '../lib/network.svelte'
   import EmojiPicker from './EmojiPicker.svelte'
 
@@ -20,6 +21,11 @@
   let text = $state('')
   let picking = $state(false)
   let el: HTMLTextAreaElement
+  // :shortcode: completion. The emoji list is fetched the first time a colon is typed.
+  let codes = $state<Map<string, string> | null>(emojiIfLoaded()?.byCode ?? null)
+  let caret = $state(0)
+  let picked = $state(0)
+  let dismissed = $state('')
   const history: string[] = []
   let histIdx = -1
   let draft = ''
@@ -43,8 +49,36 @@
     el?.focus()
   })
 
+  const suggestions = $derived.by(() => {
+    if (!codes) return null
+    const at = shortcodeQueryAt(text, caret)
+    if (!at || dismissed === `${at.start}:${at.query}`) return null
+    const matches = matchShortcodes(codes, at.query)
+    return matches.length ? { at, matches } : null
+  })
+
+  function updateCaret() {
+    caret = el?.selectionStart ?? text.length
+    picked = 0
+  }
+
+  /** Puts the chosen emoji where the half-typed :shortcode was. */
+  function accept(i: number) {
+    const s = suggestions
+    if (!s) return
+    const char = s.matches[i]!.char
+    text = text.slice(0, s.at.start) + char + text.slice(caret)
+    const to = s.at.start + char.length
+    caret = to
+    queueMicrotask(() => {
+      el.focus()
+      el.setSelectionRange(to, to)
+    })
+  }
+
   function send() {
-    const value = text.replace(/\s+$/, '')
+    let value = text.replace(/\s+$/, '')
+    if (codes && !/^\/raw\s/i.test(value)) value = expandShortcodes(codes, value)
     if (!value) return
     if (history[history.length - 1] !== value) history.push(value)
     if (history.length > 100) history.shift()
@@ -56,6 +90,19 @@
 
   // Tell the channel we are typing, unless this is a command or the box was emptied.
   function oninput() {
+    updateCaret()
+    if (text.includes(':') && !codes) void loadEmoji().then((d) => (codes = d.byCode))
+    // A closing colon turns :name: into the emoji.
+    if (codes && text[caret - 1] === ':') {
+      const head = expandShortcodes(codes, text.slice(0, caret))
+      if (head !== text.slice(0, caret)) {
+        const rest = text.slice(caret)
+        text = head + rest
+        const to = head.length
+        caret = to
+        queueMicrotask(() => el.setSelectionRange(to, to))
+      }
+    }
     if (!text.trim()) net.sendTyping(buf, 'done')
     else if (!text.startsWith('/')) net.sendTyping(buf, 'active')
   }
@@ -93,6 +140,25 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
+    const s = suggestions
+    if (s && !e.isComposing && !e.ctrlKey && !e.altKey) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        const n = s.matches.length
+        picked = (picked + (e.key === 'ArrowDown' ? 1 : -1) + n) % n
+        return
+      }
+      if ((e.key === 'Tab' && !e.shiftKey) || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault()
+        accept(picked)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        dismissed = `${s.at.start}:${s.at.query}`
+        return
+      }
+    }
     if (e.key === 'e' && e.ctrlKey && !e.altKey && !e.shiftKey) {
       e.preventDefault()
       picking = !picking
@@ -155,6 +221,17 @@
   {#if picking}
     <EmojiPicker onpick={insert} onclose={() => { picking = false; el?.focus() }} />
   {/if}
+  {#if suggestions}
+    <ul class="suggest" id="emoji-suggest" role="listbox" aria-label="Emoji" data-testid="emoji-suggest">
+      {#each suggestions.matches as m, i (m.code)}
+        <li id="emoji-suggest-{i}" role="option" aria-selected={i === picked} class:on={i === picked}>
+          <button type="button" tabindex="-1" onmousedown={(e) => (e.preventDefault(), accept(i))}>
+            <span class="char">{m.char}</span> :{m.code}:
+          </button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
   <label class="visually-hidden" for="msg-input">Message</label>
   <div class="field">
   <textarea
@@ -163,6 +240,11 @@
     bind:value={text}
     {onkeydown}
     {oninput}
+    onkeyup={updateCaret}
+    onclick={updateCaret}
+    aria-controls={suggestions ? 'emoji-suggest' : undefined}
+    aria-autocomplete="list"
+    aria-activedescendant={suggestions ? `emoji-suggest-${picked}` : undefined}
     {placeholder}
     rows="1"
     spellcheck="true"
@@ -211,6 +293,36 @@
   }
   textarea:disabled {
     opacity: 0.6;
+  }
+  .suggest {
+    position: absolute;
+    bottom: calc(100% - 4px);
+    left: 10px;
+    z-index: 20;
+    min-width: 200px;
+    max-width: calc(100% - 20px);
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+  }
+  .suggest button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 3px 8px;
+    border-radius: 5px;
+  }
+  .suggest li.on button,
+  .suggest button:hover {
+    background: var(--bg-active);
+  }
+  .suggest .char {
+    display: inline-block;
+    width: 1.6em;
   }
   .typing {
     min-height: 1.3em;

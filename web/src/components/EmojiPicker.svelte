@@ -1,15 +1,26 @@
 <script lang="ts">
-  import { EMOJI, GROUPS, loadRecent, rememberEmoji, searchEmoji, type Emoji } from '../lib/emoji'
+  import { loadEmoji, loadRecent, rememberEmoji, searchEmoji, type Emoji } from '../lib/emoji'
 
   let { onpick, onclose }: { onpick: (char: string) => void; onclose: () => void } = $props()
 
   let query = $state('')
-  let group = $state(GROUPS[0]!)
+  let all = $state<Emoji[]>([])
+  let groups = $state<string[]>([])
+  let group = $state('')
+  let ready = $state(false)
   let recent = $state(loadRecent())
   let search: HTMLInputElement
 
-  const shown = $derived<Emoji[]>(query.trim() ? searchEmoji(query) : EMOJI.filter((e) => e.group === group))
-  const nameOf = (c: string) => EMOJI.find((e) => e.char === c)?.name ?? c
+  const shown = $derived<Emoji[]>(query.trim() ? searchEmoji(all, query) : all.filter((e) => e.group === group))
+  const nameOf = (c: string) => all.find((e) => e.char === c)?.name ?? c
+
+  // The list is a separate download, fetched the first time the picker (or a :shortcode:) needs it.
+  void loadEmoji().then((d) => {
+    all = d.list
+    groups = d.groups
+    group = d.groups[0]!
+    ready = true
+  })
 
   $effect(() => search?.focus())
 
@@ -45,8 +56,8 @@
       </div>
     {/if}
     <div class="tabs" role="tablist">
-      {#each GROUPS as g (g)}
-        <button role="tab" aria-selected={g === group} class:on={g === group} onclick={() => (group = g)}>{g}</button>
+      {#each groups as g (g)}
+        <button role="tab" aria-selected={g === group} class:on={g === group} title={g} onclick={() => (group = g)}>{g.split(' ')[0]}</button>
       {/each}
     </div>
   {/if}
@@ -55,7 +66,7 @@
     {#each shown as e (e.char)}
       <button class="e" title={e.name} aria-label={e.name} onclick={(ev) => pick(e.char, ev.shiftKey)}>{e.char}</button>
     {:else}
-      <p class="none">Nothing matches “{query}”.</p>
+      <p class="none">{ready ? `Nothing matches “${query}”.` : 'Loading…'}</p>
     {/each}
   </div>
   <div class="hint">Enter picks the first. Shift keeps this open to pick several.</div>
@@ -111,6 +122,7 @@
   }
   .body {
     max-height: 190px;
+    min-height: 60px;
     overflow-y: auto;
   }
   .e {

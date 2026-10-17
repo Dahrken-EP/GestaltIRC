@@ -89,7 +89,7 @@ The bouncer's own port, 8080, is never published. Already have Traefik, nginx or
 - **Commands.** Every IRC command works, and `/help` lists the built-in ones. Anything the client does not recognise is sent to the server as it is.
 - **Nick colours.** Automatic per nick, with overrides in Settings. Your nick and any highlight words colour the line and raise a badge.
 - **Themes.** Light, dark or follow the system, in compact or comfortable density.
-- **Emoji picker.** The smiley beside the input, or Ctrl+E: a search box, recently used, and groups.
+- **Emoji.** The smiley beside the input, or Ctrl+E, opens all 1,900 emoji with search, recently used and groups. Type `:tada:` and it becomes 🎉 when you close the colon; type `:tad` and a list offers matches (Up/Down to choose, Tab or Enter to take one, Esc to dismiss). Times like 10:30 and links are left alone. The emoji list is a separate download, fetched the first time it is needed.
 - **Keyboard.** Ctrl+K jumps to any channel on any network. Ctrl+F searches the messages of the channel you are in (`from:nick` narrows it to one person). Alt+A goes to the next unread, mentions first. Alt+Up and Alt+Down switch buffers. Tab completes nicks, channels and commands, and Up and Down recall what you typed. A button takes you back to the latest message when you have scrolled up.
 - **Installable.** A browser can install it as an app on a phone or desktop. It needs the bouncer, so there is no offline mode.
 
@@ -112,10 +112,7 @@ IRC text is never rendered as HTML, and the page has a strict content security p
 
 ## Roadmap
 Not built yet:
-- **Touch actions.** Reply, react and delete appear when you hover a message, so a touch screen cannot reach them yet.
-- **Voice extras.** Push-to-talk and joining a room listen-only.
 - **Plugin dialogs, and plugins that run on the server.**
-- **Typing `:smile:` shortcodes** in the emoji picker, and a fuller emoji set than the ~380 in it.
 - **Multiline messages** (`draft/multiline`).
 - **DCC.** Direct chat and file transfer use WebRTC, so people on other IRC clients cannot be sent files this way.
 

@@ -355,6 +355,22 @@ async function send(page, text) {
   await page.fill('#msg-input', '')
   await page.keyboard.press('Escape')
 
+  // :shortcode: completion and expansion
+  await page.focus('#msg-input')
+  await page.keyboard.type('party :tad')
+  await page.waitForSelector('[data-testid=emoji-suggest]')
+  await page.keyboard.press('Tab')
+  ok((await page.inputValue('#msg-input')) === 'party 🎉', 'Tab accepts the :shortcode: suggestion')
+  await page.keyboard.type(' and :+1:')
+  ok(/^party 🎉 and 👍/u.test(await page.inputValue('#msg-input')), 'a closing colon turns :name: into the emoji')
+  await page.fill('#msg-input', '')
+  await page.keyboard.type('time 10:30 :smi')
+  await page.waitForSelector('[data-testid=emoji-suggest]')
+  await page.keyboard.press('Escape')
+  await page.waitForSelector('[data-testid=emoji-suggest]', { state: 'detached' })
+  ok((await page.inputValue('#msg-input')) === 'time 10:30 :smi', 'Escape dismisses the suggestions and keeps the text')
+  await page.fill('#msg-input', '')
+
   // ---------- I. mobile layout ----------
   await page.setViewportSize({ width: 390, height: 760 })
   await page.waitForTimeout(200)
