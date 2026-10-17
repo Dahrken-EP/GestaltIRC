@@ -41,6 +41,19 @@ type Config struct {
 	// notification, so they can reach the operator. Apple's service rejects a
 	// contact that is not a plausible address. Defaults to mailto:admin@localhost.
 	PushContact string `yaml:"push_contact"`
+	// StunURIs and TurnURIs are the servers browsers use to connect peer to peer through
+	// NAT, for direct chat, file transfer and voice. coturn serves both, so the same host
+	// usually fills both lists, for example "stun:turn.example.org:3478" and
+	// "turn:turn.example.org:3478?transport=udp". Leave them empty to use only direct paths.
+	StunURIs []string `yaml:"stun_uris"`
+	TurnURIs []string `yaml:"turn_uris"`
+	// TurnSecret is the shared secret of coturn's use-auth-secret. It never leaves the
+	// bouncer: browsers are given credentials that expire. TurnSecretFile reads it from a
+	// file instead, which keeps it out of this one.
+	TurnSecret     string `yaml:"turn_secret"`
+	TurnSecretFile string `yaml:"turn_secret_file"`
+	// TurnTTL is how many seconds issued TURN credentials stay valid. Default 86400 (a day): a relayed call cannot renew its credential, so it ends when this does.
+	TurnTTL int `yaml:"turn_ttl"`
 	// DataDir holds the SQLite database and, by default, the secret key.
 	DataDir string `yaml:"data_dir"`
 	// SecretKeyFile holds the key that encrypts network passwords. Defaults to
@@ -66,6 +79,13 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	c.setDefaults()
+	if c.TurnSecretFile != "" {
+		raw, err := os.ReadFile(c.TurnSecretFile)
+		if err != nil {
+			return nil, fmt.Errorf("turn_secret_file: %w", err)
+		}
+		c.TurnSecret = strings.TrimSpace(string(raw))
+	}
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -84,6 +104,9 @@ func (c *Config) setDefaults() {
 	}
 	if c.CookieSecure == "" {
 		c.CookieSecure = "auto"
+	}
+	if c.TurnTTL == 0 {
+		c.TurnTTL = 86400
 	}
 	if c.PushContact == "" {
 		c.PushContact = "mailto:admin@localhost"
@@ -106,6 +129,22 @@ func (c *Config) Validate() error {
 	case "auto", "always", "never":
 	default:
 		errs = append(errs, errors.New(`cookie_secure must be "auto", "always" or "never"`))
+	}
+	for _, u := range c.StunURIs {
+		if !strings.HasPrefix(u, "stun:") && !strings.HasPrefix(u, "stuns:") {
+			errs = append(errs, fmt.Errorf("stun_uris: %q must start with stun: or stuns:", u))
+		}
+	}
+	for _, u := range c.TurnURIs {
+		if !strings.HasPrefix(u, "turn:") && !strings.HasPrefix(u, "turns:") {
+			errs = append(errs, fmt.Errorf("turn_uris: %q must start with turn: or turns:", u))
+		}
+	}
+	if len(c.TurnURIs) > 0 && c.TurnSecret == "" {
+		errs = append(errs, errors.New("turn_uris needs turn_secret or turn_secret_file, the secret coturn shares"))
+	}
+	if c.TurnTTL < 60 {
+		errs = append(errs, errors.New("turn_ttl must be at least 60 seconds"))
 	}
 	if !strings.HasPrefix(c.PushContact, "mailto:") && !strings.HasPrefix(c.PushContact, "https://") {
 		errs = append(errs, errors.New("push_contact must start with mailto: or https://"))

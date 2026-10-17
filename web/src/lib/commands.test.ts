@@ -12,6 +12,12 @@ describe('parseInput', () => {
     expect(raws('hello', status)).toEqual(['ERR'])
   })
 
+  it('opens a direct chat', () => {
+    expect(parseInput('/direct bob', chan)).toEqual([{ type: 'direct', target: 'bob' }])
+    expect(parseInput('/dm bob extra', status)).toEqual([{ type: 'direct', target: 'bob' }])
+    expect(raws('/direct')).toEqual(['ERR'])
+  })
+
   it('treats // as a literal slash', () => {
     expect(raws('//shrug')).toEqual(['PRIVMSG #c :/shrug'])
   })

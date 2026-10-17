@@ -3,6 +3,9 @@
   import { app } from './lib/app.svelte'
   import { settings } from './lib/settings.svelte'
   import BufferList from './components/BufferList.svelte'
+  import DirectPanel from './components/DirectPanel.svelte'
+  import VoiceAudio from './components/VoiceAudio.svelte'
+  import VoicePanel from './components/VoicePanel.svelte'
   import Header from './components/Header.svelte'
   import InputBar from './components/InputBar.svelte'
   import Login from './components/Login.svelte'
@@ -78,6 +81,12 @@
     <div class="nav"><BufferList {net} onpick={() => (navOpen = false)} /></div>
     <main>
       <Header {net} {buf} onmenu={() => (navOpen = !navOpen)} onchannel={openChannel} />
+      {#if buf.kind === 'channel'}
+        {#key net.id + '/' + buf.key}<VoicePanel {net} {buf} />{/key}
+      {/if}
+      {#if buf.kind === 'p2p'}
+        {#key net.id + '/' + buf.key}<DirectPanel {net} {buf} />{/key}
+      {/if}
       <div class="body">
         <div class="messages">
           {#key net.id + '/' + buf.key}
@@ -94,6 +103,8 @@
     <main class="blank"><p>This account has no networks yet. Ask the administrator to add one.</p></main>
   {/if}
 </div>
+
+<VoiceAudio />
 
 {#if app.showSettings}<SettingsDialog />{/if}
 {/if}

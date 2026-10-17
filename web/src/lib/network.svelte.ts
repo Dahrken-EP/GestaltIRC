@@ -6,6 +6,13 @@ import { parseInput, HELP, type Action } from './commands'
 import type { Batch, Status } from './irc/connection'
 import { format, isServerPrefix, nickOf, timeOf, type Message } from './irc/message'
 import { pageUnfocused } from './notify'
+import type { ChatLine, ChatView } from './p2p/chat'
+import { P2pHub, SIGNAL_TAG } from './p2p/hub'
+import type { Signal } from './p2p/signal'
+import type { VoiceSlot } from './voice/active'
+import { VoiceCall, type CallView } from './voice/call'
+import { formatPresence, parsePresence, VOICE_TAG } from './voice/presence'
+import { VoiceRoom, type RoomView } from './voice/room'
 import { mentions } from './render'
 import { settings } from './settings.svelte'
 
@@ -60,6 +67,9 @@ const TYPING_SEND_GAP_MS = 3000
 /** Numerics sent while logging in or reading the MOTD. They go to the status buffer. */
 const STATUS_NUMERICS: ReadonlySet<number> = new Set([900, 901, 903, 251, 252, 253, 254, 255, 265, 266, 372, 375, 376, 422])
 
+/** Rings from people we have no call with yet, at most this many unanswered at once. */
+const MAX_RINGING = 8
+
 const COUNTS_AS_UNREAD: ReadonlySet<Kind> = new Set(['msg', 'action', 'notice'])
 
 let nextId = 1
@@ -67,7 +77,7 @@ let nextId = 1
 export class Buffer {
   readonly name: string
   readonly key: string
-  readonly kind: 'status' | 'channel' | 'query'
+  readonly kind: 'status' | 'channel' | 'query' | 'p2p'
 
   messages = $state.raw<ChatMessage[]>([])
   topic = $state('')
@@ -82,6 +92,15 @@ export class Buffer {
   typing = $state.raw<string[]>([])
   /** Bumped whenever `members` changes. Read it to depend on the map. */
   membersRev = $state(0)
+
+  /** For a direct chat: the state of the connection, files and all. Null for other buffers. */
+  p2p = $state.raw<ChatView | null>(null)
+  /** For a channel: the voice room as we have it, once we have joined it. */
+  voice = $state.raw<RoomView | null>(null)
+  /** For a channel: nicks seen joining its voice room since we connected. A hint, not a roll call. */
+  voiceMembers = $state.raw<string[]>([])
+  /** For a direct chat: the voice call with that person. */
+  call = $state.raw<CallView | null>(null)
 
   /** Lowercase nick -> member. */
   members = new Map<string, Member>()
@@ -99,9 +118,15 @@ export class Buffer {
 
   constructor(name: string, kind: Buffer['kind'], lastRead: number) {
     this.name = name
-    this.key = kind === 'status' ? '' : name.toLowerCase()
+    // A direct chat's key has a prefix, which no nick can contain, so it never collides with a query.
+    this.key = kind === 'status' ? '' : kind === 'p2p' ? 'p2p:' + name.toLowerCase() : name.toLowerCase()
     this.kind = kind
     this.lastRead = lastRead
+  }
+
+  /** True for buffers that exist on the IRC network, as opposed to the status buffer and direct chats. */
+  get onNetwork(): boolean {
+    return this.kind === 'channel' || this.kind === 'query'
   }
 
   /** Adds a message in time order. Returns false when it is a duplicate. */
@@ -224,6 +249,14 @@ export class Buffer {
 export interface NetworkHooks {
   /** A mention or private message arrived live and the user may not be looking. */
   onMention(net: NetworkState, buf: Buffer, msg: ChatMessage): void
+  /** STUN and TURN servers for a direct connection. */
+  iceServers?(): Promise<RTCIceServer[]>
+  /** Makes peer connections for direct chats. Tests pass a fake. */
+  createConnection?: (config: RTCConfiguration) => RTCPeerConnection
+  /** The microphone, for voice rooms and calls. */
+  getMedia?: () => Promise<MediaStream>
+  /** Which voice chat holds the microphone. One for the whole page unless a test says otherwise. */
+  voiceSlot?: VoiceSlot
 }
 
 export class NetworkState {
@@ -263,6 +296,9 @@ export class NetworkState {
   private activateOnJoin = new Set<string>()
   private send: (line: string) => void
   private hooks: NetworkHooks
+  private hub: P2pHub
+  private rooms = new Map<string, VoiceRoom>()
+  private calls = new Map<string, VoiceCall>()
 
   constructor(id: string, login: string, nick: string, send: (line: string) => void, hooks: NetworkHooks) {
     this.id = id
@@ -273,6 +309,15 @@ export class NetworkState {
     this.hooks = hooks
     this.readStore = loadReadStore(login)
     this.buffers = [new Buffer(this.label, 'status', 0)]
+    this.hub = new P2pHub({
+      ownNick: () => this.nick,
+      iceServers: () => this.hooks.iceServers?.() ?? Promise.resolve([]),
+      sendSignalLine: (peer, value) => this.tagmsg(peer, SIGNAL_TAG, value),
+      createConnection: hooks.createConnection,
+      onSignal: (from, sid, payload) => this.onVoiceSignal(from, sid, payload),
+      onView: (peer, view) => this.onDirectView(peer, view),
+      onLine: (peer, line) => this.onDirectLine(peer, line),
+    })
   }
 
   get statusBuffer(): Buffer {
@@ -299,6 +344,8 @@ export class NetworkState {
   /** Records what the bouncer agreed to, once the connection is up. */
   setCaps(caps: ReadonlySet<string>): void {
     this.caps = new Set(caps)
+    // A reconnect: we may have missed people joining and leaving the voice rooms we are in.
+    for (const room of this.rooms.values()) room.reannounce()
   }
 
   find(key: string): Buffer | undefined {
@@ -336,6 +383,218 @@ export class NetworkState {
     return buf
   }
 
+  // --- voice ---
+
+  get canVoice(): boolean {
+    return this.caps.has('message-tags')
+  }
+
+  private tagmsg(target: string, tag: string, value: string): void {
+    this.send(format({ tags: { [tag]: value }, command: 'TAGMSG', params: [target] }))
+  }
+
+  private roomFor(buf: Buffer): VoiceRoom {
+    let room = this.rooms.get(buf.key)
+    if (!room) {
+      room = new VoiceRoom({
+        channel: buf.name,
+        ownNick: () => this.nick,
+        sendPresence: (target, value) => this.tagmsg(target, VOICE_TAG, value),
+        sendSignal: (peer, sid, payload) => this.hub.send(peer, sid, payload),
+        iceServers: () => this.hooks.iceServers?.() ?? Promise.resolve([]),
+        getMedia: () => this.getMedia(),
+        createConnection: this.hooks.createConnection,
+        slot: this.hooks.voiceSlot,
+        onChange: (v) => (buf.voice = v),
+      })
+      this.rooms.set(buf.key, room)
+    }
+    return room
+  }
+
+  private getMedia(): Promise<MediaStream> {
+    if (!this.hooks.getMedia) return Promise.reject(new Error('this browser cannot record audio'))
+    return this.hooks.getMedia()
+  }
+
+  voiceRoom(buf: Buffer): VoiceRoom {
+    return this.roomFor(buf)
+  }
+
+  joinVoice(buf: Buffer): void {
+    if (buf.kind === 'channel' && buf.joined && this.canVoice) void this.roomFor(buf).join()
+  }
+
+  leaveVoice(buf: Buffer): void {
+    this.rooms.get(buf.key)?.leave()
+  }
+
+  /** Voice calls are with one person, from their direct chat window. */
+  callFor(nick: string): VoiceCall {
+    const key = nick.toLowerCase()
+    let call = this.calls.get(key)
+    if (!call) {
+      call = new VoiceCall({
+        wins: () => this.nick.toLowerCase() < key,
+        sendSignal: (sid, payload) => this.hub.send(nick, sid, payload),
+        iceServers: () => this.hooks.iceServers?.() ?? Promise.resolve([]),
+        getMedia: () => this.getMedia(),
+        createConnection: this.hooks.createConnection,
+        slot: this.hooks.voiceSlot,
+        onChange: (v) => this.onCallView(nick, v),
+      })
+      this.calls.set(key, call)
+    }
+    return call
+  }
+
+  /** Opens the direct chat window with `nick` and rings them. */
+  callNick(nick: string): void {
+    const problem = this.directProblem(nick)
+    if (problem) {
+      this.local(this.active, 'error', problem.replace('direct chat', 'call'))
+      return
+    }
+    const buf = this.directBuffer(nick)
+    this.select(buf.key)
+    void this.callFor(nick).invite()
+  }
+
+  private onCallView(peer: string, view: CallView): void {
+    const buf = this.directBuffer(peer)
+    const before = buf.call?.state
+    buf.call = view
+    if (before === view.state) return
+    if (view.state === 'incoming') {
+      this.local(buf, 'info', `${peer} is calling. Your microphone stays off until you answer.`)
+      if (this.activeKey !== buf.key || !this.viewing || pageUnfocused()) {
+        buf.unread++
+        buf.mentionCount++
+        this.hooks.onMention(this, buf, {
+          id: nextId++, key: 'call-incoming', time: Date.now(), kind: 'msg', nick: peer,
+          text: 'is calling you', self: false, mention: true,
+        })
+      }
+    } else if (view.state === 'ended') {
+      this.local(buf, 'info', view.reason ? `Call ended. ${view.reason}` : 'Call ended.')
+    }
+  }
+
+  private onVoiceSignal(from: string, sid: string, payload: Signal): void {
+    if (payload.k !== 'voice') return
+    if (typeof payload.room === 'string' && payload.room) {
+      // Only someone in the channel can be in its voice room. Anyone else sending an offer would otherwise
+      // be answered with our microphone.
+      if (this.inChannel(payload.room, from)) this.rooms.get(payload.room.toLowerCase())?.handleSignal(from, sid, payload)
+      return
+    }
+    // A call, which has no room. Only an offer can start one.
+    const existing = this.calls.get(from.toLowerCase())
+    if (existing) existing.handleSignal(sid, payload)
+    else if (payload.t === 'offer') {
+      // Strangers' rings are limited like their chat requests, so many nicks cannot flood the window list.
+      const ringing = [...this.calls.values()].filter((c) => c.state === 'incoming').length
+      if (ringing < MAX_RINGING) this.callFor(from).handleSignal(sid, payload)
+    }
+  }
+
+  /** Someone's voice presence tag, sent to a channel (join, leave) or to us (here). */
+  private onVoicePresence(from: string, target: string, value: string): void {
+    const p = parsePresence(value)
+    if (!p) return
+    if (this.isChannel(target)) {
+      const buf = this.find(target)
+      if (!buf) return
+      const others = buf.voiceMembers.filter((n) => n.toLowerCase() !== from.toLowerCase())
+      if (p.t === 'join') buf.voiceMembers = [...others, from]
+      else if (p.t === 'leave') buf.voiceMembers = others
+      this.rooms.get(buf.key)?.handlePresence(from, value)
+    } else if (p.t === 'here' && this.inChannel(p.room, from)) {
+      this.rooms.get(p.room.toLowerCase())?.handlePresence(from, value)
+    }
+  }
+
+  private inChannel(channel: string, nick: string): boolean {
+    return !!this.find(channel)?.members.has(nick.toLowerCase())
+  }
+
+  private voiceGone(nick: string, buf?: Buffer): void {
+    for (const b of buf ? [buf] : this.buffers) {
+      if (b.kind !== 'channel') continue
+      b.voiceMembers = b.voiceMembers.filter((n) => n.toLowerCase() !== nick.toLowerCase())
+      this.rooms.get(b.key)?.memberGone(nick)
+    }
+  }
+
+  /** Opens a direct chat with `nick` and asks them to connect. */
+  openDirect(nick: string, invite = true): void {
+    const problem = this.directProblem(nick)
+    if (problem) {
+      this.local(this.active, 'error', problem)
+      return
+    }
+    const buf = this.directBuffer(nick)
+    this.select(buf.key)
+    if (invite && buf.p2p?.state !== 'connected') void this.hub.chat(nick).invite()
+  }
+
+  /** Why a direct chat with `nick` cannot be started, or '' when it can. Checked before anything is sent: the offer carries the sender's network address. */
+  private directProblem(nick: string): string {
+    if (!/^[A-Za-z\[\]\\`_^{|}][A-Za-z0-9\[\]\\`_^{|}-]{0,63}$/.test(nick)) return `"${nick}" is not a nick. A direct chat is with one person.`
+    if (this.isSelf(nick)) return 'You cannot start a direct chat with yourself.'
+    if (!this.caps.has('message-tags')) return 'This network does not support message tags, which direct chat needs to set up the connection.'
+    return ''
+  }
+
+  private directBuffer(nick: string): Buffer {
+    const key = 'p2p:' + nick.toLowerCase()
+    const existing = this.find(key)
+    if (existing) return existing
+    const buf = new Buffer(nick, 'p2p', Date.now())
+    this.buffers = [...this.buffers, buf].sort((a, b) => (a.kind === 'status' ? -1 : b.kind === 'status' ? 1 : bufferOrder(a, b)))
+    return buf
+  }
+
+  /** Who the direct chat is with, and what it can do right now, for the page. */
+  directChat(buf: Buffer) {
+    return this.hub.chat(buf.name)
+  }
+
+  private onDirectView(peer: string, view: ChatView): void {
+    const buf = this.directBuffer(peer)
+    const before = buf.p2p?.state
+    buf.p2p = view
+    if (before === view.state) return
+    switch (view.state) {
+      case 'incoming':
+        this.local(buf, 'info', `${peer} wants to start a direct chat. Nothing is connected until you accept.`)
+        if (this.activeKey !== buf.key || !this.viewing || pageUnfocused()) {
+          buf.unread++
+          buf.mentionCount++
+          this.hooks.onMention(this, buf, {
+            id: nextId++, key: 'p2p-incoming', time: Date.now(), kind: 'msg', nick: peer,
+            text: 'wants to start a direct chat', self: false, mention: true,
+          })
+        }
+        break
+      case 'connected':
+        this.local(buf, 'info', 'Connected directly. Messages and files go straight between the two browsers.')
+        break
+      case 'ended':
+        this.local(buf, 'info', view.reason ? `Direct chat ended. ${view.reason}` : 'Direct chat ended.')
+        break
+    }
+  }
+
+  private onDirectLine(peer: string, line: ChatLine): void {
+    const buf = this.directBuffer(peer)
+    this.push(
+      buf,
+      { kind: 'msg', nick: line.self ? this.nick : peer, text: line.text, time: line.time, self: line.self, mention: !line.self, key: 'p2p|' + line.id },
+      false,
+    )
+  }
+
   select(key: string): void {
     this.activeKey = key.toLowerCase()
     this.markActiveRead()
@@ -351,6 +610,15 @@ export class NetworkState {
 
   removeBuffer(buf: Buffer): void {
     if (buf.kind === 'status') return
+    if (buf.kind === 'p2p') {
+      this.hub.close(buf.name)
+      this.calls.get(buf.name.toLowerCase())?.dispose()
+      this.calls.delete(buf.name.toLowerCase())
+    }
+    if (buf.kind === 'channel') {
+      this.rooms.get(buf.key)?.dispose()
+      this.rooms.delete(buf.key)
+    }
     buf.dispose()
     this.buffers = this.buffers.filter((b) => b !== buf)
     if (this.activeKey === buf.key) this.activeKey = ''
@@ -374,6 +642,7 @@ export class NetworkState {
     for (const b of this.buffers) {
       b.typing = []
       if (b.kind !== 'channel') continue
+      b.voiceMembers = [] // what we saw before may no longer be true; the next tags rebuild it
       b.joined = false
       b.members.clear()
       b.namesFresh = true
@@ -392,6 +661,10 @@ export class NetworkState {
     for (const line of input.split(/\r?\n/)) {
       if (!line.trim()) continue
       const buf = this.active
+      if (buf.kind === 'p2p') {
+        this.submitDirect(buf, line)
+        continue
+      }
       const inBuffer = buf.kind !== 'status'
       for (const a of parseInput(line, { target: inBuffer ? buf.name : '', inBuffer, chanTypes: this.chanTypes })) {
         this.run(a, buf, replyTo)
@@ -399,6 +672,15 @@ export class NetworkState {
     }
     // Sending ends any typing notice for this buffer.
     this.sendTyping(this.active, 'done')
+  }
+
+  private submitDirect(buf: Buffer, line: string): void {
+    const text = line.startsWith('//') ? line.slice(1) : line
+    if (text.startsWith('/')) {
+      this.local(buf, 'error', 'Commands do not work in a direct chat. Use the buttons above, or open the channel or status window.')
+      return
+    }
+    if (!this.hub.chat(buf.name).sendChat(text)) this.local(buf, 'error', 'Not connected, so that was not sent.')
   }
 
   private run(a: Action, buf: Buffer, replyTo?: string): void {
@@ -417,6 +699,18 @@ export class NetworkState {
       }
       case 'open':
         this.openQuery(a.target)
+        break
+      case 'direct':
+        this.openDirect(a.target)
+        break
+      case 'call':
+        this.callNick(a.target)
+        break
+      case 'voice':
+        if (buf.kind !== 'channel') this.local(buf, 'error', '/voice works in a channel.')
+        else if (!this.canVoice) this.local(buf, 'error', 'This network does not support message tags, which voice needs.')
+        else if (a.on) this.joinVoice(buf)
+        else this.leaveVoice(buf)
         break
       case 'clear':
         buf.clear()
@@ -446,7 +740,7 @@ export class NetworkState {
 
   /** Tells the channel whether we are typing. Throttled, and off unless the user opted in. */
   sendTyping(buf: Buffer, state: 'active' | 'done'): void {
-    if (buf.kind === 'status' || !settings.sendTyping || !this.caps.has('message-tags')) return
+    if (!buf.onNetwork || !settings.sendTyping || !this.caps.has('message-tags')) return
     const prev = this.typingSent.get(buf.key)
     const now = Date.now()
     if (state === 'active' && prev?.active && now - prev.at < TYPING_SEND_GAP_MS) return
@@ -457,7 +751,7 @@ export class NetworkState {
 
   /** Reacts to a message, or removes our reaction if we already made it. */
   react(buf: Buffer, msg: ChatMessage, emoji: string): void {
-    if (!msg.msgid || buf.kind === 'status' || !this.caps.has('message-tags')) return
+    if (!msg.msgid || !buf.onNetwork || !this.caps.has('message-tags')) return
     const removing = buf.hasReacted(msg.msgid, emoji, this.nick)
     const tags: Record<string, string> = removing
       ? { '+draft/unreact': emoji, '+draft/reply': msg.msgid }
@@ -485,7 +779,7 @@ export class NetworkState {
   }
 
   private queueMarker(buf: Buffer): void {
-    if (buf.kind === 'status' || !this.caps.has('draft/read-marker') || buf.lastRead <= 0) return
+    if (!buf.onNetwork || !this.caps.has('draft/read-marker') || buf.lastRead <= 0) return
     this.dirtyMarkers.add(buf.key)
     if (this.markerTimer) return
     this.markerTimer = setTimeout(() => this.flushMarkers(), MARKER_DELAY_MS)
@@ -515,7 +809,7 @@ export class NetworkState {
 
   /** Asks the bouncer for messages older than the oldest one shown. */
   loadOlder(buf: Buffer): void {
-    if (buf.kind === 'status' || buf.historyLoading || buf.historyExhausted) return
+    if (!buf.onNetwork || buf.historyLoading || buf.historyExhausted) return
     const oldest = buf.messages[0]
     const at = oldest ? new Date(oldest.time).toISOString() : null
     buf.historyLoading = true
@@ -726,6 +1020,17 @@ export class NetworkState {
   private onTagmsg(m: Message, history: boolean): void {
     if (history || isServerPrefix(m.prefix)) return
     const from = nickOf(m.prefix)
+    const signal = m.tags[SIGNAL_TAG]
+    if (signal !== undefined) {
+      // Only a message addressed to us, from someone else, can start or answer a direct chat.
+      if (!this.isChannel(m.params[0] ?? '') && !this.isSelf(from)) this.hub.receive(from, signal)
+      return
+    }
+    const voice = m.tags[VOICE_TAG]
+    if (voice !== undefined) {
+      if (!this.isSelf(from)) this.onVoicePresence(from, m.params[0] ?? '', voice)
+      return
+    }
     const buf = this.existingBufferFor(m.params[0] ?? '', from)
     if (!buf) return
     const self = this.isSelf(from)
@@ -806,6 +1111,7 @@ export class NetworkState {
     buf.members.delete(nick.toLowerCase())
     buf.setTyping(nick, false)
     buf.touchMembers()
+    this.voiceGone(nick, buf)
     this.push(buf, { kind: 'part', nick, text: m.params[1] ?? '', time: timeOf(m), self: false, mention: false }, false)
   }
 
@@ -817,9 +1123,12 @@ export class NetworkState {
       buf.joined = false
       buf.members.clear()
       buf.touchMembers()
+      this.rooms.get(buf.key)?.leave('You were removed from the channel.')
+      buf.voiceMembers = []
     } else {
       buf.members.delete(victim.toLowerCase())
       buf.touchMembers()
+      this.voiceGone(victim, buf)
     }
     this.push(
       buf,
@@ -830,6 +1139,7 @@ export class NetworkState {
 
   private onQuit(m: Message): void {
     const nick = nickOf(m.prefix)
+    this.voiceGone(nick)
     for (const buf of this.buffers) {
       if (buf.kind === 'channel' && buf.members.delete(nick.toLowerCase())) {
         buf.setTyping(nick, false)
@@ -843,6 +1153,14 @@ export class NetworkState {
     const old = nickOf(m.prefix)
     const next = m.params[0] ?? ''
     if (this.isSelf(old)) this.nick = next
+    else {
+      for (const room of this.rooms.values()) room.rename(old, next)
+      for (const b of this.buffers) {
+        if (b.voiceMembers.some((n) => n.toLowerCase() === old.toLowerCase())) {
+          b.voiceMembers = b.voiceMembers.map((n) => (n.toLowerCase() === old.toLowerCase() ? next : n))
+        }
+      }
+    }
     for (const buf of this.buffers) {
       const entry = buf.members.get(old.toLowerCase())
       if (buf.kind === 'channel' && entry) {
@@ -911,11 +1229,11 @@ export class NetworkState {
   // --- adding messages ---
 
   /** Adds a message. `history` lines came from the bouncer's store and never notify. */
-  private push(buf: Buffer, m: Omit<ChatMessage, 'id' | 'key'>, history: boolean): void {
+  private push(buf: Buffer, m: Omit<ChatMessage, 'id' | 'key'> & { key?: string }, history: boolean): void {
     const msg: ChatMessage = {
       ...m,
       id: nextId++,
-      key: m.msgid ?? `${m.time}|${m.nick}|${m.kind}|${m.text}`,
+      key: m.key ?? m.msgid ?? `${m.time}|${m.nick}|${m.kind}|${m.text}`,
     }
     // Lines with no sender (local lines) always show; they are never duplicates.
     if (!m.nick && !m.msgid) msg.key = `local|${msg.id}`
@@ -940,12 +1258,15 @@ export class NetworkState {
   private saveReadSoon(): void {
     clearTimeout(this.saveTimer)
     this.saveTimer = setTimeout(() => {
-      for (const b of this.buffers) if (b.kind !== 'status') this.readStore[b.key] = b.lastRead
+      for (const b of this.buffers) if (b.onNetwork) this.readStore[b.key] = b.lastRead
       saveReadStore(this.login, this.readStore)
     }, 1500)
   }
 
   dispose(): void {
+    for (const r of this.rooms.values()) r.dispose()
+    for (const c of this.calls.values()) c.dispose()
+    this.hub.dispose()
     clearTimeout(this.saveTimer)
     clearTimeout(this.markerTimer)
     for (const b of this.buffers) b.dispose()
@@ -954,7 +1275,8 @@ export class NetworkState {
 
 function bufferOrder(a: Buffer, b: Buffer): number {
   // Channels first, then queries, each alphabetically.
-  if (a.kind !== b.kind) return a.kind === 'channel' ? -1 : 1
+  const rank = (k: Buffer['kind']) => (k === 'channel' ? 0 : k === 'query' ? 1 : 2)
+  if (a.kind !== b.kind) return rank(a.kind) - rank(b.kind)
   return a.key.localeCompare(b.key)
 }
 

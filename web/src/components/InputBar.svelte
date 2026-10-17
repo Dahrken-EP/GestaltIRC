@@ -108,7 +108,13 @@
   }
 
   const placeholder = $derived(
-    buf.kind === 'status' ? 'Type a command, e.g. /join #channel' : `Message ${buf.name}`,
+    buf.kind === 'status'
+      ? 'Type a command, e.g. /join #channel'
+      : buf.kind === 'p2p'
+        ? buf.p2p?.state === 'connected'
+          ? `Message ${buf.name} directly`
+          : 'Connect first to send messages'
+        : `Message ${buf.name}`,
   )
 
   const typingText = $derived.by(() => {
@@ -139,7 +145,7 @@
     spellcheck="true"
     autocomplete="off"
     autocapitalize="off"
-    disabled={net.status !== 'connected'}
+    disabled={buf.kind === 'p2p' ? buf.p2p?.state !== 'connected' : net.status !== 'connected'}
   ></textarea>
   <div class="typing" aria-live="polite">{typingText}</div>
 </form>

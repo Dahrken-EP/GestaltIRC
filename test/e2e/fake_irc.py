@@ -8,6 +8,10 @@ sent in a channel or private message.
 import asyncio, datetime, itertools, os, re
 
 mid = itertools.count(1)
+# Real clients that have registered, by lower-case nick, so they can talk to each other.
+clients = {}
+# Who is in each channel: lower-case channel -> {lower-case nick: send function}.
+channels = {}
 CAPS = "server-time message-tags echo-message batch message-ids away-notify multi-prefix draft/message-redaction"
 
 
@@ -58,6 +62,7 @@ async def handle(reader, writer):
             return
         st['reg'] = True
         n = st['nick']
+        clients[n.lower()] = send
         send(f':fake 001 {n} :Welcome to FakeNet {n}')
         send(f':fake 005 {n} NETWORK=FakeNet CHANTYPES=# PREFIX=(ov)@+ CHANMODES=beI,k,l,imnpst :are supported')
         send(f':fake 422 {n} :MOTD missing')
@@ -109,9 +114,14 @@ async def handle(reader, writer):
                 send(f':fake PONG fake {rest}')
             elif cmd == 'JOIN':
                 ch = rest.split(' ')[0]
+                others = {k: v for k, v in channels.setdefault(ch.lower(), {}).items() if k != n.lower()}
+                channels[ch.lower()][n.lower()] = send
+                for other in others.values():
+                    other(f'{tags(msgid=False)}:{n}!u@h JOIN {ch}')
                 send(f'{tags(msgid=False)}:{n}!u@h JOIN {ch}')
                 send(f':fake 332 {n} {ch} :Welcome! Docs at https://example.com/docs and #other')
-                send(f':fake 353 {n} = {ch} :@op +carol alice {n}')
+                present = ' '.join(k for k in others)
+                send(f':fake 353 {n} = {ch} :@op +carol alice {n}' + (' ' + present if present else ''))
                 send(f':fake 366 {n} {ch} :End of /NAMES list')
                 if ch == '#bulk':
                     # A long history, one message a second, ending a few seconds ago.
@@ -123,6 +133,7 @@ async def handle(reader, writer):
                     bot_say(ch, 'alice', 'see https://example.com/page and <b>not bold</b>', 0.7)
             elif cmd == 'PART':
                 ch = rest.split(' ')[0]
+                channels.get(ch.lower(), {}).pop(n.lower(), None)
                 send(f'{tags(msgid=False)}:{n}!u@h PART {ch}')
             elif cmd == 'PRIVMSG':
                 target, text = rest.split(' ', 1)
@@ -130,7 +141,10 @@ async def handle(reader, writer):
                 # Echo it back with the client-only tags it carried, plus a fresh msgid.
                 client = {k: v for k, v in ctags.items() if k.startswith('+')}
                 send(f'{tags({k: esc(v) for k, v in client.items()})}:{n}!u@h PRIVMSG {target} :{text}')
-                if text.startswith('!'):
+                peer = clients.get(target.lower())
+                if peer and target.lower() != n.lower():
+                    peer(f'{tags({k: esc(v) for k, v in client.items()})}:{n}!u@h PRIVMSG {target} :{text}')
+                elif text.startswith('!'):
                     command(target, text, n)
                 elif text.startswith('ping alice'):
                     bot_say(target, 'alice', f'{n}: pong', 0.2)
@@ -139,7 +153,16 @@ async def handle(reader, writer):
             elif cmd == 'TAGMSG':
                 target = rest.strip()
                 client = {k: v for k, v in ctags.items() if k.startswith('+')}
-                send(f'@{";".join(k + "=" + esc(v) for k, v in client.items())} :{n}!u@h TAGMSG {target}')
+                line_out = f'@{";".join(k + "=" + esc(v) for k, v in client.items())} :{n}!u@h TAGMSG {target}'
+                send(line_out)
+                if target.startswith('#'):
+                    # Everyone else in the channel sees it.
+                    for who, other in list(channels.get(target.lower(), {}).items()):
+                        if who != n.lower():
+                            other(line_out)
+                peer = clients.get(target.lower())
+                if peer and target.lower() != n.lower():
+                    peer(line_out)
             elif cmd == 'REDACT':
                 target, msgid = rest.split(' ')[:2]
                 send(f':{n}!u@h REDACT {target} {msgid}')
@@ -152,6 +175,10 @@ async def handle(reader, writer):
     except ConnectionError:
         pass
     finally:
+        if st['reg'] and clients.get(st['nick'].lower()) is send:
+            del clients[st['nick'].lower()]
+        for members in channels.values():
+            members.pop(st['nick'].lower(), None)
         writer.close()
 
 

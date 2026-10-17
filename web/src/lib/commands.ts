@@ -5,6 +5,9 @@
 export type Action =
   | { type: 'raw'; line: string }
   | { type: 'open'; target: string }
+  | { type: 'direct'; target: string }
+  | { type: 'voice'; on: boolean }
+  | { type: 'call'; target: string }
   | { type: 'clear' }
   | { type: 'help' }
   | { type: 'error'; text: string }
@@ -76,6 +79,8 @@ export const HELP = [
   'Channels: /join #chan [key], /part [#chan] [reason], /topic [text], /names [#chan], /list [mask], /invite NICK [#chan]',
   'Moderation: /kick NICK [reason], /ban NICK, /unban NICK, /mode [target] [modes]',
   'Info: /whois NICK, /whowas NICK, /who MASK, /time, /version, /motd, /stats, /links, /ping NICK',
+  'Voice: /voice joins or leaves the voice room of this channel (up to 10 people). /call NICK rings one person privately',
+  'Direct: /direct NICK opens a private chat that goes straight between your browser and theirs, and can send files',
   'Other: /nick NEW, /away [reason], /back, /quit [reason], /clear, /raw LINE',
   'Any other /command is sent to the server as it is. Start a line with // to send a literal "/".',
 ].join('\n')
@@ -102,6 +107,20 @@ export function parseInput(input: string, ctx: CommandContext): Action[] {
       return [{ type: 'help' }]
     case 'clear':
       return [{ type: 'clear' }]
+    case 'voice':
+      if (args && args !== 'on' && args !== 'off' && args !== 'join' && args !== 'leave') return [{ type: 'error', text: 'Usage: /voice [join|leave]. Joins or leaves the voice room of the channel.' }]
+      return [{ type: 'voice', on: args !== 'off' && args !== 'leave' }]
+    case 'call': {
+      const nick = args.split(' ')[0] ?? ''
+      if (!nick) return [{ type: 'error', text: 'Usage: /call NICK. Rings them for a private voice call.' }]
+      return [{ type: 'call', target: nick }]
+    }
+    case 'direct':
+    case 'dm': {
+      const nick = args.split(' ')[0] ?? ''
+      if (!nick) return [{ type: 'error', text: 'Usage: /direct NICK. Opens a direct browser-to-browser chat.' }]
+      return [{ type: 'direct', target: nick }]
+    }
     case 'raw':
     case 'quote':
       return args ? [{ type: 'raw', line: args }] : []

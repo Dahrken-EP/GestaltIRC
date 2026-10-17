@@ -16,13 +16,21 @@
 
 <header class="bar">
   <button class="icon menu" title="Show channels" aria-label="Show channels" onclick={onmenu}>☰</button>
-  <h1>{buf.kind === 'status' ? net.label : buf.name}</h1>
+  <h1>{buf.kind === 'status' ? net.label : buf.kind === 'p2p' ? `⚡ ${buf.name}` : buf.name}</h1>
   {#if buf.kind === 'channel' && buf.topic}
     <span class="topic" title={buf.topic}><TokenText tokens={topic} {onchannel} /></span>
+  {:else if buf.kind === 'p2p'}
+    <span class="topic">Direct chat, browser to browser</span>
   {:else if buf.kind === 'status'}
     <span class="topic">{net.status === 'connected' ? `Connected as ${net.nick}` : net.statusDetail || net.status}</span>
   {/if}
   <span class="grow"></span>
+  {#if buf.kind === 'query'}
+    <button class="btn" title="Chat straight between your browser and theirs" onclick={() => net.openDirect(buf.name)}>⚡ Direct chat</button>
+    {#if net.canVoice}
+      <button class="btn" title="Ring them for a private voice call" onclick={() => net.callNick(buf.name)}>📞 Call</button>
+    {/if}
+  {/if}
   {#if buf.kind === 'channel'}
     <button
       class="icon"
