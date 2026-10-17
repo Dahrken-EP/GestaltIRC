@@ -145,6 +145,24 @@ describe('DirectChat connection', () => {
     expect(p.b.view.state).toBe('ended')
   })
 
+  it('turns away offers beyond a dozen a minute, and takes them again later', async () => {
+    const p = pair()
+    await connect(p)
+    const tiny = (n: string) => new File([new Uint8Array(10)], n)
+    for (let i = 0; i < 20; i++) {
+      const id = p.a.chat.offerFile(tiny('f' + i))!
+      await settle(5)
+      p.b.chat.declineFile(id) // keep the pending count low, so only the rate matters
+    }
+    await settle(50)
+    expect(p.b.view.transfers.length).toBe(12)
+    expect(p.a.view.transfers.filter((t) => t.state === 'declined').length).toBe(20)
+    await settle(61_000)
+    p.a.chat.offerFile(tiny('later'))
+    await settle(50)
+    expect(p.b.view.transfers.some((t) => t.name === 'later')).toBe(true)
+  })
+
   it('keeps a file offer waiting when too many transfers are running', async () => {
     const p = pair()
     await connect(p)

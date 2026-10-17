@@ -17,6 +17,9 @@ import (
 
 // Config is the bouncer's own settings.
 type Config struct {
+	// Warnings are things worth telling the operator that are not errors. Load fills them in.
+	Warnings []string `yaml:"-"`
+
 	// Listen is the address for the HTTP server. The WebSocket endpoint is at /ws.
 	// TLS is expected to be terminated by a reverse proxy.
 	Listen string `yaml:"listen"`
@@ -61,6 +64,10 @@ type Config struct {
 	SecretKeyFile string `yaml:"secret_key_file"`
 	// HistoryLimit is the number of messages kept per buffer.
 	HistoryLimit int `yaml:"history_limit"`
+	// CommandBurst and CommandRate limit how many lines one client may send: up to CommandBurst at once,
+	// then CommandRate a second. A client over the limit has lines dropped and, if it keeps on, is disconnected.
+	CommandBurst int     `yaml:"command_burst"`
+	CommandRate  float64 `yaml:"command_rate"`
 	// ReplayLimit caps how many messages per buffer are replayed to a client on attach.
 	ReplayLimit int `yaml:"replay_limit"`
 }
@@ -79,6 +86,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	c.setDefaults()
+	if info, err := os.Stat(path); err == nil && info.Mode().Perm()&0o077 != 0 && c.TurnSecret != "" {
+		c.Warnings = append(c.Warnings, fmt.Sprintf("%s holds turn_secret and can be read by other users on this machine; use turn_secret_file, or chmod 600 it", path))
+	}
 	if c.TurnSecretFile != "" {
 		raw, err := os.ReadFile(c.TurnSecretFile)
 		if err != nil {
@@ -119,6 +129,12 @@ func (c *Config) setDefaults() {
 	}
 	if c.ReplayLimit == 0 {
 		c.ReplayLimit = 200
+	}
+	if c.CommandBurst == 0 {
+		c.CommandBurst = 30
+	}
+	if c.CommandRate == 0 {
+		c.CommandRate = 10
 	}
 }
 

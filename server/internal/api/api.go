@@ -94,12 +94,22 @@ func IdentityFrom(ctx context.Context) Identity {
 // context. The WebSocket handler uses it to log in a browser that already has a session.
 func (a *API) WithIdentity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := Identity{IP: a.ClientIP(r), Secure: r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")}
+		id := Identity{IP: a.ClientIP(r), Secure: a.IsSecure(r)}
 		if u, ok := a.userFor(r); ok {
 			id.User = u.Name
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, id)))
 	})
+}
+
+// IsSecure reports whether the request came over TLS. Behind a proxy that terminates TLS, the
+// proxy says so in X-Forwarded-Proto, which is believed only when trust_proxy is set: without it
+// any client could claim to be on HTTPS.
+func (a *API) IsSecure(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return a.Conf.TrustProxy && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 // ClientIP returns the caller's address. Behind a proxy it uses the last
@@ -323,7 +333,7 @@ func (a *API) cookie(r *http.Request, value string, maxAge int) *http.Cookie {
 	case "always":
 		secure = true
 	case "auto":
-		secure = r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+		secure = a.IsSecure(r)
 	}
 	return &http.Cookie{
 		Name:     CookieName,

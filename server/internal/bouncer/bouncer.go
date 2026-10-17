@@ -158,6 +158,10 @@ func (b *Bouncer) network(id int64) *Network {
 // Handler serves the client WebSocket at /ws, the HTTP API under /api/, and the
 // web client files when web_dir is set.
 func (b *Bouncer) Handler() http.Handler {
+	return b.api.WithSecurityHeaders(b.routes())
+}
+
+func (b *Bouncer) routes() http.Handler {
 	mux := http.NewServeMux()
 	wsHandler := ws.Handler(b.conf.AllowedOrigins, func(ctx context.Context, conn irc.LineConn) {
 		newSession(b, conn, api.IdentityFrom(ctx)).run(ctx)

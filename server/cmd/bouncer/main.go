@@ -68,6 +68,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	for _, w := range cfg.Warnings {
+		log.Printf("warning: %s", w)
+	}
 
 	switch args[0] {
 	case "init":
