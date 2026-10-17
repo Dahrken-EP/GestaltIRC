@@ -16,7 +16,7 @@ func userCommand(cfg *config.Config, args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: user add|passwd|list|remove")
 	}
-	st, acc, err := openApp(cfg, false)
+	st, acc, _, err := openApp(cfg, false)
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func networkCommand(cfg *config.Config, args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: network add|list|cert|remove")
 	}
-	st, acc, err := openApp(cfg, false)
+	st, acc, _, err := openApp(cfg, false)
 	if err != nil {
 		return err
 	}

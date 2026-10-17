@@ -121,6 +121,10 @@ type Network struct {
 	sessions  map[*Session]struct{}
 	connected bool
 	lastRecv  int64 // time of the last message from the network, in ms
+
+	// alert, if set, is told about messages that arrive while no client is
+	// attached, so the user can be notified another way. It must not block.
+	alert func(Alert)
 }
 
 // NewNetwork builds an upstream connection manager. Call Run to start it.
@@ -340,6 +344,11 @@ func (n *Network) Forward(m *irc.Message) error {
 	selfPfx := n.selfPfx
 	n.mu.Unlock()
 
+	// TAGMSG exists only to carry tags (typing, reactions). Without message-tags
+	// upstream it would arrive as a bare command the network does not know.
+	if m.Command == "TAGMSG" && !upstreamHasTags {
+		return nil
+	}
 	out := *m
 	out.Tags = nil
 	if upstreamHasTags {
@@ -354,7 +363,9 @@ func (n *Network) Forward(m *irc.Message) error {
 		if prefix == "" {
 			prefix = self
 		}
-		echo := &irc.Message{Prefix: prefix, Command: m.Command, Params: m.Params}
+		// The echo carries the tags that were sent, so the sender sees a reply or
+		// reaction the same way the other people in the channel will.
+		echo := &irc.Message{Tags: out.Tags, Prefix: prefix, Command: m.Command, Params: m.Params}
 		n.handleUpstream(echo)
 	}
 	return nil
@@ -472,6 +483,11 @@ func (n *Network) handleUpstream(m *irc.Message) {
 	}
 	if target, ok := n.historyTarget(m); ok {
 		n.record(target, m)
+	}
+	if n.alert != nil && len(n.sessions) == 0 {
+		if a, ok := n.alertFor(m); ok {
+			go n.alert(a)
+		}
 	}
 	n.broadcastLocked(m)
 }

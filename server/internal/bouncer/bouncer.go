@@ -14,6 +14,7 @@ import (
 	"irc-webclient/server/internal/api"
 	"irc-webclient/server/internal/config"
 	"irc-webclient/server/internal/irc"
+	"irc-webclient/server/internal/push"
 	"irc-webclient/server/internal/store"
 	"irc-webclient/server/internal/ws"
 )
@@ -34,6 +35,8 @@ type Bouncer struct {
 	store    *store.Store
 	accounts *accounts.Service
 	api      *api.API
+	push     *push.Service // nil until SetPush
+	keywords keywordCache
 
 	mu      sync.Mutex
 	ctx     context.Context

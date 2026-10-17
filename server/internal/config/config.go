@@ -7,8 +7,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -35,6 +37,10 @@ type Config struct {
 	STSDuration int `yaml:"sts_duration"`
 	// STSPort is the TLS port plain-text clients are told to reconnect on. Defaults to 443.
 	STSPort int `yaml:"sts_port"`
+	// PushContact is a mailto: or https: URL sent to push services with each
+	// notification, so they can reach the operator. Apple's service rejects a
+	// contact that is not a plausible address. Defaults to mailto:admin@localhost.
+	PushContact string `yaml:"push_contact"`
 	// DataDir holds the SQLite database and, by default, the secret key.
 	DataDir string `yaml:"data_dir"`
 	// SecretKeyFile holds the key that encrypts network passwords. Defaults to
@@ -55,7 +61,8 @@ func Load(path string) (*Config, error) {
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true)
-	if err := dec.Decode(&c); err != nil {
+	// An empty file is valid and means "all defaults".
+	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	c.setDefaults()
@@ -78,6 +85,9 @@ func (c *Config) setDefaults() {
 	if c.CookieSecure == "" {
 		c.CookieSecure = "auto"
 	}
+	if c.PushContact == "" {
+		c.PushContact = "mailto:admin@localhost"
+	}
 	if c.STSDuration > 0 && c.STSPort == 0 {
 		c.STSPort = 443
 	}
@@ -96,6 +106,9 @@ func (c *Config) Validate() error {
 	case "auto", "always", "never":
 	default:
 		errs = append(errs, errors.New(`cookie_secure must be "auto", "always" or "never"`))
+	}
+	if !strings.HasPrefix(c.PushContact, "mailto:") && !strings.HasPrefix(c.PushContact, "https://") {
+		errs = append(errs, errors.New("push_contact must start with mailto: or https://"))
 	}
 	if c.STSDuration < 0 {
 		errs = append(errs, errors.New("sts_duration must not be negative"))
