@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { app } from './lib/app.svelte'
+  import { layout, MEMBERS, NAV } from './lib/layout.svelte'
   import { settings } from './lib/settings.svelte'
   import BufferList from './components/BufferList.svelte'
   import DirectPanel from './components/DirectPanel.svelte'
@@ -13,6 +14,7 @@
   import MessagePane from './components/MessagePane.svelte'
   import NetworkRail from './components/NetworkRail.svelte'
   import PluginDialog from './components/PluginDialog.svelte'
+  import Splitter from './components/Splitter.svelte'
   import QuickSwitcher from './components/QuickSwitcher.svelte'
   import SearchBar from './components/SearchBar.svelte'
   import ServerDialog from './components/ServerDialog.svelte'
@@ -104,10 +106,29 @@
 {:else if app.phase === 'login'}
   <Login />
 {:else}
-<div class="app" class:nav-open={navOpen}>
-  <NetworkRail />
+<div
+  class="app"
+  class:nav-open={navOpen}
+  class:solo={!(net && buf)}
+  style:--rail-col={layout.railHidden ? '14px' : 'auto'}
+  style:--nav-w="{layout.nav}px"
+  style:--members-w="{layout.members}px"
+>
+  {#if layout.railHidden}
+    <button class="railtab" title="Show the server bar" aria-label="Show the server bar" onclick={() => layout.setRailHidden(false)}>›</button>
+  {:else}
+    <NetworkRail />
+  {/if}
   {#if net && buf}
     <div class="nav"><BufferList {net} onpick={() => (navOpen = false)} /></div>
+    <Splitter
+      label="Resize the channel list"
+      value={layout.nav}
+      min={NAV.min}
+      max={NAV.max}
+      onchange={(v) => layout.setNav(v)}
+      onreset={() => layout.setNav(NAV.initial)}
+    />
     <main>
       <Header {net} {buf} onmenu={() => (navOpen = !navOpen)} onchannel={openChannel} onsearch={() => (searching = true)} />
       {#if searching}<SearchBar bind:value={search} onclose={closeSearch} />{/if}
@@ -124,6 +145,15 @@
           {/key}
         </div>
         {#if buf.kind === 'channel' && settings.showMembers}
+          <Splitter
+            label="Resize the member list"
+            value={layout.members}
+            min={MEMBERS.min}
+            max={MEMBERS.max}
+            grows={-1}
+            onchange={(v) => layout.setMembers(v)}
+            onreset={() => layout.setMembers(MEMBERS.initial)}
+          />
           <div class="members"><MemberList {net} {buf} onnick={openNick} /></div>
         {/if}
       </div>
@@ -157,12 +187,28 @@
 <style>
   .app {
     display: grid;
-    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-columns: var(--rail-col) var(--nav-w) auto minmax(0, 1fr);
     /* One row exactly as tall as the app. With the default "auto" row, a long
        channel stretches the row to fit all its messages and pushes the input
        bar off the screen. */
     grid-template-rows: minmax(0, 1fr);
     height: 100%;
+  }
+  .app.solo {
+    grid-template-columns: var(--rail-col) minmax(0, 1fr);
+  }
+  .railtab {
+    width: 14px;
+    height: 100%;
+    padding: 0;
+    background: var(--bg-rail);
+    border-right: 1px solid var(--border);
+    color: var(--fg-dim);
+    border-radius: 0;
+  }
+  .railtab:hover {
+    background: var(--bg-hover);
+    color: var(--fg);
   }
   main {
     display: flex;
@@ -209,10 +255,15 @@
   .members {
     height: 100%;
   }
+  .members {
+    width: var(--members-w);
+    flex: none;
+  }
 
   @media (max-width: 720px) {
-    .app {
-      grid-template-columns: auto minmax(0, 1fr);
+    .app,
+    .app.solo {
+      grid-template-columns: var(--rail-col) minmax(0, 1fr);
     }
     .nav {
       display: none;
