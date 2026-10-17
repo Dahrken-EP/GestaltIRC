@@ -79,7 +79,7 @@ jobs:
       - run: |
           set -o pipefail
           test/e2e/run.sh 2>&1 | tee e2e.log || {
-            grep -E '^(FAIL|SCRIPT ERROR)|^    at ' e2e.log | head -8 | sed 's/^/::error::/'
+            grep -E '^(FAIL|SCRIPT ERROR|DIAGNOSTIC)|^    at ' e2e.log | head -8 | sed 's/^/::error::/'
             echo "::error::last lines: $(tail -n 14 e2e.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
             exit 1
           }
