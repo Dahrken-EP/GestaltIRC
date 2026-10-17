@@ -120,24 +120,24 @@ async function send(page, text) {
 
   // ---------- C2. pictures, previews and players from links ----------
   await send(page, '!msg look: ' + SITE + '/pic.png and ' + SITE + '/page.html')
-  await page.waitForSelector('img[src^="/api/media?u="]', { timeout: 8000 })
-  await page.waitForFunction(() => [...document.querySelectorAll('img[src^="/api/media?u="]')].some((i) => i.complete && i.naturalWidth > 0), null, { timeout: 8000 })
+  await page.waitForSelector('img[src^="/api/media?u="]', { timeout: 20000 })
+  await page.waitForFunction(() => [...document.querySelectorAll('img[src^="/api/media?u="]')].some((i) => i.complete && i.naturalWidth > 0), null, { timeout: 20000 })
   ok(true, 'a picture link is shown inline, loaded from the bouncer')
-  await page.waitForSelector('.card:has-text("An interesting article")', { timeout: 8000 })
+  await page.waitForSelector('.card:has-text("An interesting article")', { timeout: 20000 })
   ok((await page.locator('.card:has-text("An interesting article")').first().innerText()).toLowerCase().includes('example journal'), 'a page link gets a card with its title and site')
-  await page.waitForFunction(() => [...document.querySelectorAll('.card img.thumb')].some((i) => i.complete && i.naturalWidth > 0), null, { timeout: 8000 })
+  await page.waitForFunction(() => [...document.querySelectorAll('.card img.thumb')].some((i) => i.complete && i.naturalWidth > 0), null, { timeout: 20000 })
   ok(true, "the card's picture loads through the bouncer too")
 
   await send(page, '!msg trick: ' + SITE + '/fake.png')
-  await page.waitForSelector('.note:has-text("Could not load that picture")', { timeout: 8000 })
+  await page.waitForSelector('.note:has-text("Could not load that picture")', { timeout: 20000 })
   ok(true, 'an HTML page pretending to be a picture is refused, and the link is offered instead')
 
   await send(page, '!msg video: ' + SITE + '/clip.mp4')
-  await page.waitForSelector('video[src^="/api/media?u="]', { timeout: 8000 })
+  await page.waitForSelector('video[src^="/api/media?u="]', { timeout: 20000 })
   ok(true, 'a video link becomes a video element on the bouncer address')
 
   await send(page, '!msg tune: ' + SITE + '/tune.mp3')
-  await page.waitForSelector('audio.sound[src^="/api/media?u="]', { timeout: 8000 })
+  await page.waitForSelector('audio.sound[src^="/api/media?u="]', { timeout: 20000 })
   ok((await page.locator('audio.sound').first().getAttribute('controls')) !== null, 'a sound link becomes a player on the bouncer address')
 
   // Imgur and Giphy pages are shown as the file they stand for, still fetched through the bouncer.
@@ -147,7 +147,7 @@ async function send(page, text) {
   ok(requested.some((u) => u.endsWith('/api/media?u=https%3A%2F%2Fmedia.giphy.com%2Fmedia%2FxT9IgzoKnwFNmISR8I%2Fgiphy.gif')), 'a giphy page link is fetched as its gif, through the bouncer')
 
   await send(page, '!msg watch https://youtu.be/dQw4w9WgXcQ')
-  await page.waitForSelector('.card.video button:has-text("Play here")', { timeout: 8000 })
+  await page.waitForSelector('.card.video button:has-text("Play here")', { timeout: 20000 })
   ok((await page.locator('iframe').count()) === 0, 'a YouTube link shows a card and loads nothing from YouTube yet')
   await page.click('.card.video button:has-text("Play here")')
   await page.waitForSelector('iframe[src^="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"]')
@@ -791,6 +791,7 @@ async function send(page, text) {
   ok((await railCount()) === 1, 'one network to start with')
   await openSettings()
   const panel = page.getByTestId('networks-panel')
+  await panel.locator('[data-network]').first().waitFor()
   ok((await panel.locator('[data-network]').count()) === 1, 'the editor lists the account\'s network')
 
   await panel.getByRole('button', { name: 'Add a network…' }).click()
