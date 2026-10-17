@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { api, ApiError } from '../lib/api'
   import { app } from '../lib/app.svelte'
-  import { blankForm, checkForm, formFromNetwork, parseChannels, toRequest, type NetworkForm } from '../lib/networkform'
+  import { blankForm, checkForm, formFromNetwork, parseChannels, portForTls, toRequest, type NetworkForm } from '../lib/networkform'
   import { settings } from '../lib/settings.svelte'
 
   const editing = app.serverDialog?.edit ?? null
@@ -86,7 +86,7 @@
             <label class="grow">Address <input bind:this={hostInput} bind:value={form.host} placeholder="irc.libera.chat" autocomplete="off" spellcheck="false" /></label>
             <label class="port">Port <input bind:value={form.port} inputmode="numeric" autocomplete="off" /></label>
           </div>
-          <label class="check"><input type="checkbox" bind:checked={form.tls} /> Use TLS (encrypted)</label>
+          <label class="check"><input type="checkbox" bind:checked={form.tls} onchange={() => form && (form.port = portForTls(form.port, form.tls))} /> Use TLS (encrypted)</label>
           {#if form.tls}
             <label class="check">
               <input type="checkbox" bind:checked={form.tlsInsecure} />

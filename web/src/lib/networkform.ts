@@ -91,6 +91,13 @@ export function parsePerform(text: string): string[] {
 }
 
 /** What is wrong with the form, or '' when it can be sent. */
+/** The port a server usually listens on for the other kind of connection, when the one shown is a default. */
+export function portForTls(port: string, tls: boolean): string {
+  if (tls && port.trim() === '6667') return '6697'
+  if (!tls && port.trim() === '6697') return '6667'
+  return port
+}
+
 export function checkForm(f: NetworkForm): string {
   if (!f.editing && !/^[A-Za-z0-9_-]{1,32}$/.test(f.name)) return 'Give the network a short name: letters, digits, "-" or "_".'
   if (!f.host.trim()) return 'Enter the server address.'

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { NetworkDetail } from './api'
-import { blankForm, checkForm, formFromNetwork, parseChannels, toRequest } from './networkform'
+import { blankForm, checkForm, formFromNetwork, parseChannels, portForTls, toRequest } from './networkform'
 
 const saved: NetworkDetail = {
   name: 'libera', host: 'irc.libera.chat', port: 6697, tls: true, nick: 'matt', ident: 'matt', realname: 'matt',
@@ -141,3 +141,14 @@ describe('accepting an untrusted certificate', () => {
   })
 })
 
+
+describe('portForTls', () => {
+  it('moves between the two usual ports when TLS is switched', () => {
+    expect(portForTls('6697', false)).toBe('6667')
+    expect(portForTls('6667', true)).toBe('6697')
+  })
+  it('leaves any other port alone', () => {
+    expect(portForTls('7000', false)).toBe('7000')
+    expect(portForTls('6697', true)).toBe('6697')
+  })
+})
