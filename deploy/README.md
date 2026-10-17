@@ -50,6 +50,7 @@ echo 'a-long-password' | docker compose -f docker-compose.yml -f docker-compose.
 |---|---|---|
 | `TRAEFIK_NETWORK` | the Docker network Traefik watches (`docker network ls`; it must already exist) | `traefik` |
 | `TRAEFIK_ENTRYPOINT` | its HTTPS entrypoint | `websecure` |
+| `TRAEFIK_HTTP_ENTRYPOINT` | its plain HTTP entrypoint, where a redirect to HTTPS is set up so that typing the bare name works | `web` |
 | `TRAEFIK_CERTRESOLVER` | the certificate resolver that gets the certificate; set it empty (`TRAEFIK_CERTRESOLVER=`) if a wildcard or default certificate already covers the name | `letsencrypt` |
 
 Things that matter with Traefik:
@@ -240,7 +241,7 @@ only when the request carries `X-Forwarded-Proto: https`. The nginx snippet abov
 
 The Traefik override was run against a real Traefik v3 (Docker provider, default self-signed certificate): the router
 found the bouncer, HTTPS served the client, a WebSocket upgrade returned 101, the session cookie was `Secure`, HSTS was
-sent, forged `X-Forwarded-For` headers did not get around the login limit, and another host name got Traefik's 404. Not
+sent, forged `X-Forwarded-For` headers did not get around the login limit, and another host name got Traefik's 404, and plain `http://` was redirected to `https://`. Not
 run: a certificate resolver getting a real certificate, Traefik v2, the file provider, and Traefik behind a CDN.
 
 **Not tested:** a real domain with a real certificate, Caddy renewing it, coturn relaying media between two real
