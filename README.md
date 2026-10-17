@@ -136,6 +136,49 @@ review what it asks for before it is installed. "Use the example" fills in a sma
   their data are kept in this browser, per account, and are not synced to your other devices. A plugin
   with `events` can read your channels, and with `send` can speak as you: only install code you trust.
 
+Phase 8 is hardening, measurement and the finishing touches. The security side is written up in
+[SECURITY.md](SECURITY.md). In short: every response carries a content security policy and the other
+protective headers; a client that sends faster than a burst of 30 lines and then 10 a second has lines
+dropped and is disconnected if it keeps on; the database files are private to the bouncer's user; password
+hashing is limited to four at a time so a burst of logins cannot exhaust memory; and the plugin sandbox,
+the media proxy and the network editor are each tested by trying to get out of them.
+
+Measured, on the 4-core test machine (`test/load/run.sh`, `test/load/web.sh`):
+
+| | measured | budget in DESIGN.md |
+|---|---|---|
+| bouncer, idle, one user | 18.5 MB | 25 MB |
+| 50 users, 2 networks, 20 channels of 100 messages each, nobody attached | 56.5 MB | |
+| the same with 100 clients attached | 65.3 MB | 300 MB |
+| web client, 10 channels with 2000 messages each (20,000) fully loaded | 16.4 MB JS heap | 60 MB |
+
+The web figure is taken after a garbage collection, with the oldest message of all ten channels reached
+(the script checks that). It is Chromium's heap only, not the whole tab. Hundreds of simultaneous clients
+and a long-running soak are not tested.
+
+Also in this phase, found by comparing with other web clients:
+
+- **Quick switcher and search.** Ctrl+K (or Cmd+K) opens a fuzzy switcher over every channel and query on
+  every network, with mentions and unread buffers first. Ctrl+F (or the magnifier) searches the messages
+  of the buffer on screen: every word must appear, and `from:nick` narrows it to one sender; "Load older
+  messages" reaches further back. Alt+A goes to the next buffer with unread messages, mentions first. A
+  "Jump to latest" button appears when you have scrolled up. These keys replace the browser's own
+  while the app is open.
+- **Emoji picker.** Ctrl+E or the button beside the input: a search box, recently used, and groups. It is a
+  curated set of about 380, not all of Unicode. Typing `:smile:`-style shortcodes is not built.
+- **More media.** Sound links (mp3, ogg, opus, wav, flac, m4a) become a player; the bouncer checks the
+  bytes and allows up to 60 MB, with seeking. Imgur and Giphy page links are shown as the picture they
+  stand for (an imgur album or gallery stays a plain link). Everything still goes through the bouncer.
+- **Network editor.** Settings, Networks: add, edit, switch off and remove your own networks, with
+  SASL PLAIN or SCRAM and a server password. Passwords are stored encrypted and never sent back to the
+  browser. Because this lets any account make the bouncer open connections, a network added or moved in the
+  editor may reach public addresses only (refused again at connect time, so a name that resolves to a private
+  address is turned away too) and ports from 1024 up, and an account can have ten. A bouncer on a home
+  network that needs to reach a server on it sets `allow_private_networks: true`. Networks added on the
+  command line are not restricted, and certificate logins (SASL EXTERNAL) are still set up there.
+- **Installable.** The page has a web app manifest and icons, so a browser can install it as an app. There is
+  no offline mode: it needs the bouncer.
+
 Message text is never inserted as HTML. Only `http` and `https` links are clickable.
 
 Limits to know about: replying, reacting and deleting appear when you hover a message, so a

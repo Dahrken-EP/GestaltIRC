@@ -22,3 +22,9 @@ turn_uris: []                   # e.g. ["turn:turn.example.org:3478?transport=ud
 turn_secret: ""                 # the same value as coturn's static-auth-secret
 turn_secret_file: ""            # or read it from a file, to keep it out of this one
 turn_ttl: 86400                 # seconds an issued TURN credential works for. A relayed call or transfer ends when its credential does
+
+# Let the web client's network editor add servers on private, loopback or link-local addresses. Off by
+# default: otherwise any user could make the bouncer connect to services on its own network. Turn it on
+# for a bouncer on a home network with its IRC server on the same network. Networks added with the
+# command line are never restricted.
+allow_private_networks: false

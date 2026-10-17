@@ -1,6 +1,7 @@
 # Gestalt: Design (an IRC bouncer and web client)
 
-Status: draft for review. Nothing is implemented yet.
+Status: phases 1 to 8 are built; see the README for what exists and how it was tested. The decisions below were
+made as proposed unless a section says otherwise. In particular the voice cap is 10 and DCC is not built.
 
 ## 1. Goals
 
