@@ -6,6 +6,7 @@
 # your other services. Set these in .env to match your Traefik (the defaults are the usual names):
 #   TRAEFIK_NETWORK       the Docker network Traefik watches                  (default: traefik)
 #   TRAEFIK_ENTRYPOINT    its HTTPS entrypoint                                 (default: websecure)
+#   TRAEFIK_HTTP_ENTRYPOINT its plain HTTP entrypoint, which redirects to HTTPS    (default: web)
 #   TRAEFIK_CERTRESOLVER  the certificate resolver; leave empty if a default
 #                         or wildcard certificate already covers the name      (default: letsencrypt)
 # coturn is unchanged and still needs its own ports open: Traefik does not carry it.
@@ -24,6 +25,11 @@ services:
       - traefik.http.routers.gestalt.tls=true
       - traefik.http.routers.gestalt.tls.certresolver=${TRAEFIK_CERTRESOLVER-letsencrypt}
       - traefik.http.services.gestalt.loadbalancer.server.port=8080
+      # Typing the name without https:// reaches port 80, which would otherwise answer 404.
+      - traefik.http.routers.gestalt-http.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.gestalt-http.entrypoints=${TRAEFIK_HTTP_ENTRYPOINT:-web}
+      - traefik.http.routers.gestalt-http.middlewares=gestalt-https-redirect
+      - traefik.http.middlewares.gestalt-https-redirect.redirectscheme.scheme=https
 
 networks:
   traefik:
