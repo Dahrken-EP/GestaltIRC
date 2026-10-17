@@ -37,7 +37,7 @@ const (
 	perUserVideos     = 2
 	globalVideos      = 12
 	sniffLen          = 512
-	userAgent         = "Gestalt-media-proxy/1 (+https://github.com/Dahrken-EP/Gestalt)"
+	userAgent         = "Gestalt-media-proxy/1 (+https://github.com/Dahrken-EP/GestaltIRC)"
 	maxRedirects      = 3
 	fetchTimeout      = 20 * time.Second
 	videoFetchTimeout = 10 * time.Minute
