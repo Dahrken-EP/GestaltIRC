@@ -95,6 +95,17 @@ export function splitFormatting(text: string): { text: string; style: Style }[] 
 }
 
 const URL_RE = /https?:\/\/[^\s<>"'\x00-\x1f]+/gi
+/**
+ * An address typed without http:// or https://, such as example.com or www.site.org/page. It must end in a well-known
+ * top-level domain, so that file names and abbreviations are left alone, and must not follow an @ (an email address) or
+ * part of a word or path.
+ */
+const TLDS =
+  'com|net|org|io|dev|app|co|info|biz|edu|gov|me|tv|gg|xyz|ai|ly|to|eu|us|uk|de|fr|nl|se|no|fi|dk|pl|es|it|ch|at|be|cz|ru|ua|jp|cn|kr|in|au|nz|ca|br|mx|ar|za|cc|ws|fm|im|so|sh|online|site|tech|club|cloud|social|chat|live|news|blog|wiki|page'
+const BARE_RE = new RegExp(
+  `(?<![\\w@./:%+-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+(?:${TLDS})(?![\\w@-])(?::\\d{1,5})?(?:[/?#][^\\s<>"'\\x00-\\x1f]*)?`,
+  'gi',
+)
 const CHANNEL_RE = /(?<![\w#&])[#&][^\s,\x07:]{1,50}/g
 
 function trimUrl(url: string): string {
@@ -136,6 +147,14 @@ export function tokenize(text: string, words: string[] = []): Token[] {
       const raw = trimUrl(m[0])
       const href = safeHref(raw)
       if (href) spans.push({ start: m.index, end: m.index + raw.length, token: { type: 'link', text: raw, href, ...part.style } })
+    }
+    for (const m of part.text.matchAll(BARE_RE)) {
+      const raw = trimUrl(m[0])
+      // A trailing dot or comma is sentence punctuation, which trimUrl took off; the address must still end in a domain.
+      const href = safeHref('https://' + raw)
+      if (href && raw.includes('.') && !overlaps(m.index, m.index + raw.length)) {
+        spans.push({ start: m.index, end: m.index + raw.length, token: { type: 'link', text: raw, href, ...part.style } })
+      }
     }
     for (const m of part.text.matchAll(CHANNEL_RE)) {
       if (!overlaps(m.index, m.index + m[0].length))

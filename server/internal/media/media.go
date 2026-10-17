@@ -211,6 +211,22 @@ func sniff(head []byte) (string, kind) {
 	return ct, kindNone
 }
 
+// Some picture hosts turn away a request that does not look like it came from a person's browser opening their own
+// page, which is not what this is, but is what the user would have done by clicking. Imgur answers 403 or 429 to
+// unknown agents, so for its pictures the request carries an ordinary browser's agent and the page it is shown on.
+const browserAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
+
+// setUpstreamHeaders sets what a request for media says about itself.
+func setUpstreamHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "image/*,video/*,audio/*")
+	host := strings.ToLower(req.URL.Hostname())
+	if host == "i.imgur.com" || host == "imgur.com" {
+		req.Header.Set("User-Agent", browserAgent)
+		req.Header.Set("Referer", "https://imgur.com/")
+	}
+}
+
 var rangeRe = regexp.MustCompile(`^bytes=(\d*)-\d*$`)
 
 func (p *Proxy) handleMedia(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -243,8 +259,7 @@ func (p *Proxy) handleMedia(w http.ResponseWriter, r *http.Request, user store.U
 		api.WriteError(w, http.StatusBadRequest, "not a web address")
 		return
 	}
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "image/*,video/*,audio/*")
+	setUpstreamHeaders(req)
 	// Neither the user's cookies nor where they came from go to the other site.
 	var known *sniffedType
 	if rg := r.Header.Get("Range"); rg != "" {
@@ -366,8 +381,7 @@ func (p *Proxy) typeOf(ctx context.Context, target *url.URL) (string, kind, erro
 	if err != nil {
 		return "", kindNone, err
 	}
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "image/*,video/*,audio/*")
+	setUpstreamHeaders(req)
 	req.Header.Set("Range", "bytes=0-"+strconv.Itoa(sniffLen-1))
 	resp, err := p.client.Do(req)
 	if err != nil {

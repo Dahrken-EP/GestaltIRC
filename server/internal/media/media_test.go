@@ -638,3 +638,23 @@ func TestASoundIsHeldToItsOwnSizeLimit(t *testing.T) {
 		t.Errorf("an over-long sound: status %d, want 413", resp.StatusCode)
 	}
 }
+
+func TestImgurRequestsLookLikeABrowserOpeningImgur(t *testing.T) {
+	imgur, _ := http.NewRequest(http.MethodGet, "https://i.imgur.com/AbCd123.jpg", nil)
+	setUpstreamHeaders(imgur)
+	if ua := imgur.Header.Get("User-Agent"); !strings.HasPrefix(ua, "Mozilla/5.0") {
+		t.Errorf("imgur User-Agent = %q", ua)
+	}
+	if ref := imgur.Header.Get("Referer"); ref != "https://imgur.com/" {
+		t.Errorf("imgur Referer = %q", ref)
+	}
+	// Every other site is told what this is, and nothing about where the user was.
+	other, _ := http.NewRequest(http.MethodGet, "https://example.com/a.png", nil)
+	setUpstreamHeaders(other)
+	if ua := other.Header.Get("User-Agent"); ua != userAgent {
+		t.Errorf("other User-Agent = %q", ua)
+	}
+	if other.Header.Get("Referer") != "" {
+		t.Errorf("another site was sent a Referer: %q", other.Header.Get("Referer"))
+	}
+}
