@@ -163,7 +163,7 @@ function toggleWindow() {
   else showWindow()
 }
 
-/** The menu of the app and of the tray icon, the same, so the way out of a hidden window is always the tray. */
+/** The menu of the tray icon, which is where it lives: the window has no menu bar of its own. */
 function menuTemplate() {
   return [
     { label: 'Show Gestalt', click: showWindow },
@@ -184,7 +184,9 @@ function menuTemplate() {
 }
 
 function refreshMenus() {
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'Gestalt', submenu: menuTemplate() }]))
+  // With a tray the menu is there and the window needs no bar across its top. Without one (a desktop with no
+  // tray) the bar is the only way to change server or quit, so it stays.
+  Menu.setApplicationMenu(tray ? null : Menu.buildFromTemplate([{ label: 'Gestalt', submenu: menuTemplate() }]))
   tray?.setContextMenu(Menu.buildFromTemplate(menuTemplate()))
 }
 
