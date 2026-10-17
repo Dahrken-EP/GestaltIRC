@@ -137,6 +137,10 @@ func (b *Bouncer) Handler() http.Handler {
 	mux.Handle("/ws", ws.Handler(b.conf.AllowedOrigins, func(ctx context.Context, conn irc.LineConn) {
 		newSession(b, conn).run(ctx)
 	}))
+	if b.conf.WebDir != "" {
+		mux.Handle("/", http.FileServer(http.Dir(b.conf.WebDir)))
+		return mux
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)

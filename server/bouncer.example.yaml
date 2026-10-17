@@ -3,6 +3,7 @@
 
 listen: "127.0.0.1:8080"        # serve plain HTTP here; terminate TLS in a reverse proxy
 allowed_origins: []             # extra WebSocket Origin patterns, if the web client is hosted elsewhere
+web_dir: ""                     # set to ../web/dist to serve the web client from the bouncer
 data_dir: "./data"              # bouncer.db lives here
 secret_key_file: "./data/secret.key"  # encrypts network passwords; back this up
 history_limit: 2000             # messages kept per buffer

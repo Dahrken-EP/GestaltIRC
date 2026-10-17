@@ -20,6 +20,9 @@ type Config struct {
 	Listen string `yaml:"listen"`
 	// AllowedOrigins are extra Origin patterns accepted for WebSocket upgrades.
 	AllowedOrigins []string `yaml:"allowed_origins"`
+	// WebDir is a directory of built web client files to serve at /. When empty,
+	// / answers with a one-line greeting and the client is hosted elsewhere.
+	WebDir string `yaml:"web_dir"`
 	// DataDir holds the SQLite database and, by default, the secret key.
 	DataDir string `yaml:"data_dir"`
 	// SecretKeyFile holds the key that encrypts network passwords. Defaults to

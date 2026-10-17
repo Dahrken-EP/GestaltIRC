@@ -17,6 +17,42 @@ and multi-network) is in place:
 - `server/internal/accounts`: user and network management, shared by the CLI and the bouncer.
 - `server/internal/secret`: the AES-GCM box and key file handling.
 
+The web client (DESIGN.md phase 3) is in `web/`. It is Svelte 5 and TypeScript, about
+34 KB gzipped. It logs in to the bouncer over WebSocket with SASL PLAIN, one connection
+per network, shown as icons in the left rail. It has:
+
+- channels, queries and a status buffer, with unread and mention badges
+- the full command set from the design (`/help` lists it), and any other `/command` is
+  sent to the server as it is
+- nick colours with per-nick overrides, mention and keyword highlighting, tab completion
+  for nicks, channels and commands, and input history on Up and Down
+- scrollback through `CHATHISTORY`, with replay on reconnect and de-duplication
+- light, dark and system themes and compact and comfortable density
+- desktop notifications for mentions and private messages while the page is open
+
+Message text is never inserted as HTML. Only `http` and `https` links are clickable.
+
+Not done yet, from the design's phase 3 list: preferences are kept in the browser, not on the
+bouncer, because the bouncer has no preferences API; the message list keeps the newest 1500
+messages per buffer and loads older ones on demand, but it is not virtualised; background push
+needs a service worker and a push endpoint on the bouncer. Inline media waits for the media
+proxy (phase 5). The login password is kept in `sessionStorage` so a reload reconnects, and is
+cleared when the tab closes. Session tokens from the bouncer would replace that.
+
+To run it:
+
+```bash
+cd web
+npm install
+npm run build                    # writes web/dist
+npm test                         # unit tests
+npm run check                    # type check
+```
+
+Set `web_dir: ../web/dist` in `bouncer.yaml` and the bouncer serves the client at `/` with the
+WebSocket at `/ws` on the same origin. For development, `npm run dev` serves the client on
+port 5173 and proxies `/ws` to a bouncer on `127.0.0.1:8080`. Log in as `user/network`.
+
 Phase 2 pieces, still in place:
 
 - `server/internal/bouncer`: networks kept alive in the background, with reconnect
