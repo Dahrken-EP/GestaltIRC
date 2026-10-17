@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.png">
+    <img alt="Gestalt" src="docs/assets/logo-light.png" width="420">
+  </picture>
+</p>
+
 # Gestalt
 
 A self-hosted IRC bouncer and compact web client, with direct chat, file transfer, voice and

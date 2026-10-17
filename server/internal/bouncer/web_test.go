@@ -1,6 +1,7 @@
 package bouncer
 
 import (
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -46,5 +47,11 @@ func TestHandlerWithoutWebDirGreets(t *testing.T) {
 	}
 	if code, _ := get(t, b, "/other"); code != http.StatusNotFound {
 		t.Errorf("/other = %d, want 404", code)
+	}
+}
+
+func TestTheWebAppManifestIsServedWithItsOwnType(t *testing.T) {
+	if got := mime.TypeByExtension(".webmanifest"); !strings.HasPrefix(got, "application/manifest+json") {
+		t.Errorf("a .webmanifest file would be served as %q, and browsers would not install the page", got)
 	}
 }

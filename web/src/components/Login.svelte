@@ -17,7 +17,7 @@
 
 <div class="backdrop">
   <form class="card" onsubmit={submit} aria-labelledby="login-title">
-    <p class="brand" aria-hidden="true">Gestalt</p>
+    <div class="brand"><img src="/mark.png" alt="" width="40" height="40" /><span>Gestalt</span></div>
     <h2 id="login-title">Log in</h2>
     <p class="hint">Use the account the bouncer's administrator created for you.</p>
 
@@ -59,6 +59,9 @@
     gap: 12px;
   }
   .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     margin: 0;
     font-size: 0.85em;
     font-weight: 700;

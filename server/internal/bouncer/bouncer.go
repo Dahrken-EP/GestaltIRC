@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"mime"
 	"net/http"
 	"strings"
 	"sync"
@@ -153,6 +154,12 @@ func (b *Bouncer) network(id int64) *Network {
 		return r.net
 	}
 	return nil
+}
+
+func init() {
+	// The web app manifest is not in Go's built-in table, and a browser will not install the page without
+	// the right type. A machine with a system mime.types may already know it; this makes sure of it.
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
 }
 
 // Handler serves the client WebSocket at /ws, the HTTP API under /api/, and the
