@@ -40,6 +40,23 @@ func (m *PlainMechanism) Step([]byte) ([]byte, error) {
 	return nil, errors.New("irc: PLAIN has no server challenges")
 }
 
+// ExternalMechanism implements SASL EXTERNAL (RFC 4422, appendix A). The server
+// identifies the client from its TLS client certificate, so there is nothing to
+// prove here: the response is only an optional authorization identity.
+type ExternalMechanism struct {
+	// Authzid is the identity to act as. Leave it empty to use the one the
+	// certificate maps to.
+	Authzid string
+}
+
+func (m *ExternalMechanism) Name() string { return "EXTERNAL" }
+
+func (m *ExternalMechanism) Start() ([]byte, error) { return []byte(m.Authzid), nil }
+
+func (m *ExternalMechanism) Step([]byte) ([]byte, error) {
+	return nil, errors.New("irc: EXTERNAL has no server challenges")
+}
+
 // ScramSHA256Mechanism implements SCRAM-SHA-256 (RFC 5802 and RFC 7677).
 // It never sends the password, and it checks the server's signature.
 type ScramSHA256Mechanism struct {

@@ -5,6 +5,7 @@ package bouncer
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log"
@@ -237,6 +238,9 @@ func (n *Network) connect(ctx context.Context) (*upstream.Client, error) {
 		sasl = &irc.PlainMechanism{Username: n.spec.SASLUser, Password: n.spec.SASLPassword}
 	case "SCRAM-SHA-256":
 		sasl = &irc.ScramSHA256Mechanism{Username: n.spec.SASLUser, Password: n.spec.SASLPassword}
+	case "EXTERNAL":
+		// The certificate was presented in the TLS handshake. SASLUser, if set, is the identity to act as.
+		sasl = &irc.ExternalMechanism{Authzid: n.spec.SASLUser}
 	}
 
 	client, err := upstream.Connect(irc.NewNetConn(conn), upstream.Config{
@@ -253,6 +257,10 @@ func (n *Network) connect(ctx context.Context) (*upstream.Client, error) {
 	return client, nil
 }
 
+// upstreamRootCAs replaces the system roots when verifying a network's TLS
+// certificate. It is nil outside tests.
+var upstreamRootCAs *x509.CertPool
+
 func dialUpstream(ctx context.Context, nc accounts.NetworkSpec) (net.Conn, error) {
 	d := &net.Dialer{Timeout: 20 * time.Second}
 	raw, err := d.DialContext(ctx, "tcp", net.JoinHostPort(nc.Host, strconv.Itoa(nc.Port)))
@@ -262,7 +270,16 @@ func dialUpstream(ctx context.Context, nc accounts.NetworkSpec) (net.Conn, error
 	if !nc.TLS {
 		return raw, nil
 	}
-	tc := tls.Client(raw, &tls.Config{ServerName: nc.Host, MinVersion: tls.VersionTLS12})
+	conf := &tls.Config{ServerName: nc.Host, MinVersion: tls.VersionTLS12, RootCAs: upstreamRootCAs}
+	if nc.ClientCert != "" {
+		cert, err := accounts.ParseClientCert(nc.ClientCert, nc.ClientKey)
+		if err != nil {
+			raw.Close()
+			return nil, err
+		}
+		conf.Certificates = []tls.Certificate{cert}
+	}
+	tc := tls.Client(raw, conf)
 	if err := tc.HandshakeContext(ctx); err != nil {
 		raw.Close()
 		return nil, err

@@ -41,7 +41,11 @@ type NetworkInput struct {
 	SASLMech       string
 	SASLUser       string
 	SASLPassword   string
-	Join           []string
+	// ClientCert and ClientKey are a PEM certificate and private key, presented to
+	// the network over TLS. SASL EXTERNAL needs them.
+	ClientCert string
+	ClientKey  string
+	Join       []string
 }
 
 // NetworkSpec is a network with its secrets decrypted. Only the bouncer uses it.
@@ -59,6 +63,8 @@ type NetworkSpec struct {
 	SASLMech       string
 	SASLUser       string
 	SASLPassword   string
+	ClientCert     string // PEM, decrypted
+	ClientKey      string // PEM, decrypted
 	Join           []string
 }
 
@@ -169,8 +175,23 @@ func (s *Service) AddNetwork(user string, in NetworkInput) (int64, error) {
 		if in.SASLUser == "" || in.SASLPassword == "" {
 			return 0, errors.New("SASL needs a user name and password")
 		}
+	case "EXTERNAL":
+		if in.ClientCert == "" {
+			return 0, errors.New("SASL EXTERNAL needs a client certificate")
+		}
+		if !in.TLS {
+			return 0, errors.New("SASL EXTERNAL needs TLS, because the certificate is presented in the TLS handshake")
+		}
 	default:
 		return 0, fmt.Errorf("SASL mechanism %q is not supported", in.SASLMech)
+	}
+	if in.ClientCert != "" || in.ClientKey != "" {
+		if _, err := ParseClientCert(in.ClientCert, in.ClientKey); err != nil {
+			return 0, err
+		}
+		if !in.TLS {
+			return 0, errors.New("a client certificate needs TLS")
+		}
 	}
 	for _, ch := range in.Join {
 		if ch == "" || strings.ContainsAny(ch, " \n,") {
@@ -192,6 +213,14 @@ func (s *Service) AddNetwork(user string, in NetworkInput) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	sealedCert, err := s.box.Seal(in.ClientCert)
+	if err != nil {
+		return 0, err
+	}
+	sealedKey, err := s.box.Seal(in.ClientKey)
+	if err != nil {
+		return 0, err
+	}
 	id, err := s.store.CreateNetwork(store.NetworkRow{
 		UserName:       user,
 		Name:           in.Name,
@@ -205,6 +234,8 @@ func (s *Service) AddNetwork(user string, in NetworkInput) (int64, error) {
 		SASLMech:       strings.ToUpper(in.SASLMech),
 		SASLUser:       in.SASLUser,
 		SASLPassword:   saslPw,
+		ClientCert:     sealedCert,
+		ClientKey:      sealedKey,
 		Join:           in.Join,
 		Enabled:        true,
 	})
@@ -271,6 +302,14 @@ func (s *Service) decryptAll(rows []store.NetworkRow) ([]NetworkSpec, error) {
 		if err != nil {
 			return nil, fmt.Errorf("network %s/%s: SASL password: %w", r.UserName, r.Name, err)
 		}
+		cert, err := s.box.Open(r.ClientCert)
+		if err != nil {
+			return nil, fmt.Errorf("network %s/%s: client certificate: %w", r.UserName, r.Name, err)
+		}
+		key, err := s.box.Open(r.ClientKey)
+		if err != nil {
+			return nil, fmt.Errorf("network %s/%s: client key: %w", r.UserName, r.Name, err)
+		}
 		out = append(out, NetworkSpec{
 			ID:             r.ID,
 			UserName:       r.UserName,
@@ -285,6 +324,8 @@ func (s *Service) decryptAll(rows []store.NetworkRow) ([]NetworkSpec, error) {
 			SASLMech:       r.SASLMech,
 			SASLUser:       r.SASLUser,
 			SASLPassword:   saslPw,
+			ClientCert:     cert,
+			ClientKey:      key,
 			Join:           r.Join,
 		})
 	}

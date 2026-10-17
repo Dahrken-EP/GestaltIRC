@@ -135,3 +135,25 @@ func TestSASLAssemblerEmpty(t *testing.T) {
 		t.Fatalf("Add(+) = %q, %v, %v", d, complete, err)
 	}
 }
+
+func TestExternalMechanism(t *testing.T) {
+	m := &ExternalMechanism{}
+	if m.Name() != "EXTERNAL" {
+		t.Errorf("Name = %q", m.Name())
+	}
+	first, err := m.Start()
+	if err != nil || len(first) != 0 {
+		t.Fatalf("Start = %q, %v", first, err)
+	}
+	// An empty response goes on the wire as "+".
+	if got := EncodeSASLPayload(first); len(got) != 1 || got[0] != "+" {
+		t.Errorf("empty EXTERNAL response encodes as %q", got)
+	}
+	if _, err := m.Step([]byte("x")); err == nil {
+		t.Error("EXTERNAL accepted a server challenge")
+	}
+	withID := &ExternalMechanism{Authzid: "matt"}
+	if got, _ := withID.Start(); string(got) != "matt" {
+		t.Errorf("authzid response = %q", got)
+	}
+}

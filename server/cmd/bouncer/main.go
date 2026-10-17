@@ -3,7 +3,7 @@
 //	bouncer -config bouncer.yaml init                 create the database and secret key
 //	bouncer -config bouncer.yaml serve                run the bouncer (default)
 //	bouncer -config bouncer.yaml user add|passwd|list|remove ...
-//	bouncer -config bouncer.yaml network add|list|remove ...
+//	bouncer -config bouncer.yaml network add|list|cert|remove ...
 //	bouncer hash-password                             print an argon2id hash of a stdin line
 package main
 
@@ -39,6 +39,7 @@ commands:
   user remove NAME             delete a user, their networks, and their history
   network add USER NAME ...    add a network; SASL password from stdin (see -h)
   network list USER
+  network cert USER NAME       print the SHA-256 fingerprint of the network's client certificate
   network remove USER NAME
   hash-password                print an argon2id hash of one stdin line
 `

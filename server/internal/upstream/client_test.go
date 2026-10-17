@@ -263,3 +263,47 @@ func contains(list []string, s string) bool {
 	}
 	return false
 }
+
+func TestConnectEXTERNAL(t *testing.T) {
+	conn := newScriptConn(func(line string) []string {
+		switch {
+		case line == "CAP LS 302":
+			return []string{":srv CAP * LS :sasl=PLAIN,EXTERNAL"}
+		case strings.HasPrefix(line, "CAP REQ"):
+			return ackAll(line)
+		case line == "AUTHENTICATE EXTERNAL":
+			return []string{"AUTHENTICATE +"}
+		case line == "AUTHENTICATE +":
+			return []string{":srv 903 me :SASL authentication successful"}
+		case line == "CAP END":
+			return []string{":srv 001 me :Welcome"}
+		}
+		return nil
+	})
+	client, err := Connect(conn, Config{Nick: "me", User: "me", SASL: &irc.ExternalMechanism{}})
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer client.Close()
+	sent := strings.Join(conn.Sent(), "\n")
+	if !strings.Contains(sent, "AUTHENTICATE EXTERNAL") {
+		t.Errorf("EXTERNAL never started; sent:\n%s", sent)
+	}
+	// The empty initial response is "+", not base64 of anything.
+	if strings.Count(sent, "AUTHENTICATE +") != 1 {
+		t.Errorf("expected exactly one empty response; sent:\n%s", sent)
+	}
+}
+
+func TestConnectEXTERNALRefusedWhenNotOffered(t *testing.T) {
+	conn := newScriptConn(func(line string) []string {
+		if line == "CAP LS 302" {
+			return []string{":srv CAP * LS :sasl=PLAIN"}
+		}
+		return nil
+	})
+	_, err := Connect(conn, Config{Nick: "me", User: "me", SASL: &irc.ExternalMechanism{}})
+	if !errors.Is(err, ErrSASLUnavailable) {
+		t.Errorf("err = %v, want ErrSASLUnavailable", err)
+	}
+}
