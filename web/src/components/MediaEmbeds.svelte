@@ -1,11 +1,10 @@
 <script lang="ts">
   import { classifyLink, embedSrc, fetchPreview, mediaSrc, type Preview } from '../lib/media'
+  import { player } from '../lib/player.svelte'
   import { settings } from '../lib/settings.svelte'
 
   let { links }: { links: string[] } = $props()
 
-  /** Which video players the user has clicked play on. */
-  let playing = $state<Record<string, boolean>>({})
   let failed = $state<Record<string, boolean>>({})
   /** Why a picture or video would not load, when the bouncer could say (for example that the other site refused it). */
   let why = $state<Record<string, string>>({})
@@ -96,17 +95,15 @@
       <audio class="sound" src={mediaSrc(href)} controls preload="none" onerror={() => (failed[href] = true)}></audio>
     {/if}
   {:else if (kind === 'youtube' || kind === 'streamable') && info.id}
-    {#if playing[href] && settings.embeds}
-      <div class="player">
-        <!-- YouTube refuses to play (error 153) for a page that sends no Referer, so the player gets this site's address and no more. -->
-        <iframe
-          src={embedSrc(kind, info.id)}
-          title={p?.title ?? 'Video player'}
-          allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-          allowfullscreen
-          referrerpolicy="strict-origin-when-cross-origin"
-          sandbox="allow-scripts allow-same-origin allow-presentation"
-        ></iframe>
+    {#if player.is(href) && settings.embeds}
+      <!-- The video plays in the corner of the window (FloatingPlayer), which stays when the channel changes. -->
+      <div class="card video now">
+        <div class="body">
+          <span class="site">{p?.site ?? (kind === 'youtube' ? 'YouTube' : 'Streamable')}</span>
+          <span class="title">{p?.title ?? href}</span>
+          <span class="desc">Playing in the player at the corner of the window.</span>
+          <button class="btn play" onclick={() => player.stop()}>■ Stop</button>
+        </div>
       </div>
     {:else}
       <div class="card video">
@@ -118,7 +115,7 @@
           <a class="title" href={href} target="_blank" rel="noopener noreferrer nofollow">{p?.title ?? href}</a>
           {#if p?.description}<span class="desc">{p.description}</span>{/if}
           {#if settings.embeds}
-            <button class="btn play" onclick={() => (playing[href] = true)}>▶ Play here</button>
+            <button class="btn play" onclick={() => player.play({ href, kind: kind as 'youtube' | 'streamable', id: info.id ?? '', title: p?.title ?? 'Video player' })}>▶ Play here</button>
           {/if}
         </div>
       </div>
@@ -228,18 +225,5 @@
     align-self: flex-start;
     margin-top: 4px;
     padding: 2px 10px;
-  }
-  .player {
-    margin-top: 4px;
-    width: min(100%, 480px);
-    aspect-ratio: 16 / 9;
-    border-radius: 6px;
-    overflow: hidden;
-    border: 1px solid var(--border);
-  }
-  .player iframe {
-    width: 100%;
-    height: 100%;
-    border: 0;
   }
 </style>
