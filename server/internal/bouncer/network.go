@@ -265,6 +265,11 @@ func (n *Network) connect(ctx context.Context) (*upstream.Client, error) {
 // certificate. It is nil outside tests.
 var upstreamRootCAs *x509.CertPool
 
+// SetUpstreamRootCAs makes the bouncer trust pool, instead of the system roots,
+// when it connects to a network over TLS. It exists for tests that run a network
+// with a self-signed certificate. Call it before starting the bouncer.
+func SetUpstreamRootCAs(pool *x509.CertPool) { upstreamRootCAs = pool }
+
 func dialUpstream(ctx context.Context, nc accounts.NetworkSpec) (net.Conn, error) {
 	d := &net.Dialer{Timeout: 20 * time.Second}
 	raw, err := d.DialContext(ctx, "tcp", net.JoinHostPort(nc.Host, strconv.Itoa(nc.Port)))

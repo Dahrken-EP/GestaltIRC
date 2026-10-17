@@ -30,6 +30,8 @@ const (
 
 type ergoServer struct {
 	tcpAddr string
+	tlsAddr string // TLS listener, with a certificate for 127.0.0.1
+	certPEM string // path to that certificate, so a client can trust it
 	wsURL   string
 }
 
@@ -43,6 +45,7 @@ func startErgo(t *testing.T) ergoServer {
 
 	tcpPort := freePort(t)
 	wsPort := freePort(t)
+	tlsPort := freePort(t)
 	tmp := t.TempDir()
 
 	raw, err := os.ReadFile(filepath.Join(dir, "default.yaml"))
@@ -53,7 +56,8 @@ func startErgo(t *testing.T) ergoServer {
 	certPath := filepath.Join(tmp, "cert.pem")
 	keyPath := filepath.Join(tmp, "key.pem")
 	gen := exec.Command("openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
-		"-nodes", "-keyout", keyPath, "-out", certPath, "-days", "1", "-subj", "/CN=localhost")
+		"-nodes", "-keyout", keyPath, "-out", certPath, "-days", "1", "-subj", "/CN=localhost",
+		"-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost")
 	if out, err := gen.CombinedOutput(); err != nil {
 		t.Fatalf("openssl: %v\n%s", err, out)
 	}
@@ -65,6 +69,9 @@ func startErgo(t *testing.T) ergoServer {
 		`"127.0.0.1:`+tcpPort+`":`)
 	conf = replaceOnce(t, conf, `"[::1]:6667":     # (loopback ipv6, localhost-only)`,
 		`"127.0.0.1:`+wsPort+`":`+"\n            websocket: true")
+	// Message redaction is off by default in Ergo. The redaction tests need it.
+	conf = replaceOnce(t, conf, `allow-individual-delete: false`, `allow-individual-delete: true`)
+	conf = replaceOnce(t, conf, `":6697":`, `"127.0.0.1:`+tlsPort+`":`)
 	conf = replaceOnce(t, conf, `path: ircd.db`, `path: `+filepath.Join(tmp, "ircd.db"))
 	confPath := filepath.Join(tmp, "ircd.yaml")
 	if err := os.WriteFile(confPath, []byte(conf), 0o600); err != nil {
@@ -93,9 +100,12 @@ func startErgo(t *testing.T) ergoServer {
 
 	waitForPort(t, "127.0.0.1:"+tcpPort)
 	waitForPort(t, "127.0.0.1:"+wsPort)
+	waitForPort(t, "127.0.0.1:"+tlsPort)
 
 	return ergoServer{
 		tcpAddr: "127.0.0.1:" + tcpPort,
+		tlsAddr: "127.0.0.1:" + tlsPort,
+		certPEM: certPath,
 		wsURL:   "ws://127.0.0.1:" + wsPort + "/",
 	}
 }

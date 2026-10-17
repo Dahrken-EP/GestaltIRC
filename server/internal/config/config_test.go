@@ -66,3 +66,14 @@ func TestUnknownKeysAreRejected(t *testing.T) {
 		t.Error("a misspelled key was silently ignored")
 	}
 }
+
+func TestExampleConfigLoads(t *testing.T) {
+	// The example is what people copy, so it must always be valid and say what it means.
+	c, err := Load("../../bouncer.example.yaml")
+	if err != nil {
+		t.Fatalf("bouncer.example.yaml does not load: %v", err)
+	}
+	if c.CookieSecure != "auto" || c.TrustProxy || c.STSDuration != 0 || c.PushContact == "" {
+		t.Errorf("the example config sets surprising values: %+v", c)
+	}
+}
