@@ -16,6 +16,7 @@ root=$(cd "$here/../.." && pwd)
 work=$(mktemp -d)
 bouncer_port=${BOUNCER_PORT:-18080}
 irc_port=${IRC_PORT:-16667}
+site_port=${SITE_PORT:-18081}
 password='a-long-password-1'
 pids=()
 
@@ -27,13 +28,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# A leftover process on one of the ports would answer instead of the ones started here,
+# and the tests would quietly run against old code.
+for port in "$bouncer_port" "$irc_port" "$site_port"; do
+  if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+    echo "port $port is already in use; stop whatever is listening, or set BOUNCER_PORT, IRC_PORT and SITE_PORT" >&2
+    exit 2
+  fi
+done
+
 if [ ! -f "$root/web/dist/index.html" ]; then
   echo "web/dist is missing. Run: npm --prefix web run build" >&2
   exit 2
 fi
 
+# The e2e tag lets the media proxy reach the test site on this machine. A normal
+# build forbids that, and this tag is never used for a real one.
 echo "building the bouncer"
-(cd "$root/server" && go build -o "$work/bouncer" ./cmd/bouncer)
+(cd "$root/server" && go build -tags e2e -o "$work/bouncer" ./cmd/bouncer)
 
 cat > "$work/bouncer.yaml" <<YAML
 listen: "127.0.0.1:$bouncer_port"
@@ -47,10 +59,17 @@ b() { "$work/bouncer" -config "$work/bouncer.yaml" "$@"; }
 b init > /dev/null
 echo "$password" | b user add matt > /dev/null
 b network add matt fake --host 127.0.0.1 --port "$irc_port" --nick matt --join '#chat,#bulk' > /dev/null
+# A second person, for the tests where two browsers talk to each other.
+echo "$password" | b user add jane > /dev/null
+b network add jane fake --host 127.0.0.1 --port "$irc_port" --nick jane --join '#chat' > /dev/null
 
 IRC_PORT=$irc_port python3 -I "$here/fake_irc.py" &
 pids+=($!)
-b serve > "$work/bouncer.log" 2>&1 &
+SITE_PORT=$site_port python3 -I "$here/site.py" &
+pids+=($!)
+# Started directly, not through the b() helper: a function in the background runs in a
+# subshell, so its PID is not the bouncer's, and cleanup would leave the bouncer running.
+"$work/bouncer" -config "$work/bouncer.yaml" serve > "$work/bouncer.log" 2>&1 &
 pids+=($!)
 
 for _ in $(seq 1 50); do
@@ -60,10 +79,18 @@ done
 # The bouncer connects to the network a few seconds after it starts.
 sleep 6
 
+# Playwright's headless shell does not honour a notification permission grant, which the push test
+# needs, so prefer a full Chromium when one is installed.
+if [ -z "${CHROMIUM_PATH:-}" ]; then
+  for c in "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"/chromium-*/chrome-linux/chrome; do
+    [ -x "$c" ] && export CHROMIUM_PATH="$c" && break
+  done
+fi
+
 out=${OUT_DIR:-$work/out}
 mkdir -p "$out"
 status=0
-BASE_URL="http://127.0.0.1:$bouncer_port" TEST_PASSWORD="$password" OUT_DIR="$out" \
+BASE_URL="http://127.0.0.1:$bouncer_port" SITE_URL="http://127.0.0.1:$site_port" TEST_PASSWORD="$password" OUT_DIR="$out" \
   node "$here/drive.cjs" || status=$?
 echo "screenshots: $out (removed on exit unless OUT_DIR is set)"
 if [ "$status" -ne 0 ]; then echo "--- bouncer log"; tail -20 "$work/bouncer.log"; fi

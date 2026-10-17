@@ -1,0 +1,24 @@
+# Caddy gets and renews the HTTPS certificate by itself, proxies the WebSocket as
+# well as the web client, and sends the headers the bouncer reads to tell that the
+# request arrived over TLS (X-Forwarded-Proto) and from which address (X-Forwarded-For).
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Frame-Options "DENY"
+		# The page already carries a content security policy; these cover what a
+		# meta tag cannot, and keep other sites from using the camera and microphone.
+		Permissions-Policy "camera=(), microphone=(self), geolocation=()"
+		-Server
+	}
+
+	reverse_proxy bouncer:8080 {
+		# Pushes and previews can take a while; a WebSocket must not be cut off.
+		transport http {
+			read_timeout 0
+		}
+	}
+}

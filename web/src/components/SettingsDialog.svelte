@@ -96,6 +96,26 @@
       Tell others when I am typing
     </label>
 
+    <fieldset>
+      <legend>Links</legend>
+      <label class="check">
+        <input type="checkbox" bind:checked={settings.inlineMedia} onchange={() => settings.save()} />
+        Show pictures and video inline
+      </label>
+      <label class="check">
+        <input type="checkbox" bind:checked={settings.previews} onchange={() => settings.save()} />
+        Show a title and picture for other links
+      </label>
+      <label class="check">
+        <input type="checkbox" bind:checked={settings.embeds} onchange={() => settings.save()} />
+        Offer YouTube and Streamable players
+      </label>
+      <p class="note">
+        The bouncer fetches these for you, so the other sites never see your address. A player loads from YouTube or
+        Streamable only when you press play.
+      </p>
+    </fieldset>
+
     <label class="check">
       <input type="checkbox" checked={settings.notify} onchange={toggleNotify} disabled={!notificationsSupported()} />
       Desktop notifications for mentions and private messages

@@ -15,6 +15,9 @@ interface Stored {
   showBufferList: boolean
   timestamps: boolean
   sendTyping: boolean
+  inlineMedia: boolean
+  embeds: boolean
+  previews: boolean
   notify: boolean
 }
 
@@ -27,11 +30,14 @@ const DEFAULTS: Stored = {
   showBufferList: true,
   timestamps: true,
   sendTyping: false,
+  inlineMedia: true,
+  embeds: true,
+  previews: true,
   notify: false,
 }
 
 /** The keys saved to the bouncer. */
-const SYNCED = ['theme', 'density', 'keywords', 'nickColors', 'showMembers', 'showBufferList', 'timestamps', 'sendTyping'] as const
+const SYNCED = ['theme', 'density', 'keywords', 'nickColors', 'showMembers', 'showBufferList', 'timestamps', 'sendTyping', 'inlineMedia', 'embeds', 'previews'] as const
 
 const KEY = 'irc:settings'
 const PUSH_DELAY_MS = 800
@@ -61,6 +67,12 @@ class Settings {
   showBufferList = $state(true)
   timestamps = $state(true)
   sendTyping = $state(false)
+  /** Show pictures and video from links in the message list, fetched through the bouncer. */
+  inlineMedia = $state(true)
+  /** Offer YouTube and Streamable players. Nothing from them loads until the user clicks play. */
+  embeds = $state(true)
+  /** Show a title and picture for other links, which the bouncer fetches. */
+  previews = $state(true)
   notify = $state(false)
 
   private remote: ((prefs: Record<string, unknown>) => void) | null = null
@@ -79,6 +91,9 @@ class Settings {
     if (typeof s.showBufferList === 'boolean') this.showBufferList = s.showBufferList
     if (typeof s.timestamps === 'boolean') this.timestamps = s.timestamps
     if (typeof s.sendTyping === 'boolean') this.sendTyping = s.sendTyping
+    if (typeof s.inlineMedia === 'boolean') this.inlineMedia = s.inlineMedia
+    if (typeof s.embeds === 'boolean') this.embeds = s.embeds
+    if (typeof s.previews === 'boolean') this.previews = s.previews
     if (typeof s.notify === 'boolean') this.notify = s.notify
   }
 

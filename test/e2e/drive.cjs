@@ -1,10 +1,12 @@
 // End-to-end check of the web client against a real bouncer and a scripted IRC
 // network. Run it with run.sh, which starts both. See README.md in this folder.
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
+const crypto = require('node:crypto')
 
 const OUT = process.env.OUT_DIR || '.'
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:18080'
 const URL = BASE + '/'
+const SITE = process.env.SITE_URL || 'http://127.0.0.1:18081'
 const PASSWORD = process.env.TEST_PASSWORD || 'a-long-password-1'
 let failures = 0
 const ok = (cond, msg) => {
@@ -32,11 +34,17 @@ async function send(page, text) {
 ;(async () => {
   const browser = await chromium.launch({
     executablePath: process.env.CHROMIUM_PATH || undefined,
-    args: process.env.CI || process.env.NO_SANDBOX ? ['--no-sandbox'] : [],
+    args: [
+      ...(process.env.CI || process.env.NO_SANDBOX ? ['--no-sandbox'] : []),
+    ],
   })
-  const ctxA = await browser.newContext({ viewport: { width: 1280, height: 760 }, permissions: ['notifications'] })
+  const ctxA = await browser.newContext({ viewport: { width: 1280, height: 760 } })
+  // Granted for this address in particular: a grant for every origin is not honoured by newer Chromium.
+  await ctxA.grantPermissions(['notifications'], { origin: BASE })
   const page = await ctxA.newPage()
   const errors = []
+  const requested = []
+  page.on('request', (r) => requested.push(r.url()))
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
   page.on('console', (m) => m.type() === 'error' && errors.push('console: ' + m.text()))
 
@@ -106,6 +114,51 @@ async function send(page, text) {
   await doomed.getByRole('button', { name: 'Delete message' }).click()
   await page.waitForSelector('.line:has-text("at noon")', { state: 'detached' })
   ok(true, 'deleting my message removes it when the network confirms')
+
+  // ---------- C2. pictures, previews and players from links ----------
+  await send(page, '!msg look: ' + SITE + '/pic.png and ' + SITE + '/page.html')
+  await page.waitForSelector('img[src^="/api/media?u="]', { timeout: 8000 })
+  await page.waitForFunction(() => [...document.querySelectorAll('img[src^="/api/media?u="]')].some((i) => i.complete && i.naturalWidth > 0), null, { timeout: 8000 })
+  ok(true, 'a picture link is shown inline, loaded from the bouncer')
+  await page.waitForSelector('.card:has-text("An interesting article")', { timeout: 8000 })
+  ok((await page.locator('.card:has-text("An interesting article")').first().innerText()).toLowerCase().includes('example journal'), 'a page link gets a card with its title and site')
+  await page.waitForFunction(() => [...document.querySelectorAll('.card img.thumb')].some((i) => i.complete && i.naturalWidth > 0), null, { timeout: 8000 })
+  ok(true, "the card's picture loads through the bouncer too")
+
+  await send(page, '!msg trick: ' + SITE + '/fake.png')
+  await page.waitForSelector('.note:has-text("Could not load that picture")', { timeout: 8000 })
+  ok(true, 'an HTML page pretending to be a picture is refused, and the link is offered instead')
+
+  await send(page, '!msg video: ' + SITE + '/clip.mp4')
+  await page.waitForSelector('video[src^="/api/media?u="]', { timeout: 8000 })
+  ok(true, 'a video link becomes a video element on the bouncer address')
+
+  await send(page, '!msg watch https://youtu.be/dQw4w9WgXcQ')
+  await page.waitForSelector('.card.video button:has-text("Play here")', { timeout: 8000 })
+  ok((await page.locator('iframe').count()) === 0, 'a YouTube link shows a card and loads nothing from YouTube yet')
+  await page.click('.card.video button:has-text("Play here")')
+  await page.waitForSelector('iframe[src^="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"]')
+  ok(true, 'pressing play loads the privacy-friendly player')
+
+  // The point of the proxy: the browser asked only the bouncer, and YouTube only after the click.
+  const direct = requested.filter((u) => u.startsWith(SITE))
+  ok(direct.length === 0, 'the browser never contacted the linked site itself' + (direct.length ? ': ' + direct.join(', ') : ''))
+  const outside = requested.filter((u) => !u.startsWith(BASE) && !u.startsWith('data:') && !u.startsWith('blob:') && !u.includes('youtube-nocookie.com'))
+  ok(outside.length === 0, 'every request went to the bouncer' + (outside.length ? ': ' + outside.join(', ') : ''))
+
+  // The settings switches really turn it off.
+  await page.click('button[aria-label="Settings"]')
+  await page.getByLabel('Show pictures and video inline').uncheck()
+  await page.getByLabel('Show a title and picture for other links').uncheck()
+  await page.getByLabel('Offer YouTube and Streamable players').uncheck()
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(() => document.querySelectorAll('img[src^="/api/media?u="], video, .card, iframe').length === 0, null, { timeout: 5000 })
+  ok(true, 'with the three switches off, nothing is fetched or shown')
+  await page.click('button[aria-label="Settings"]')
+  await page.getByLabel('Show pictures and video inline').check()
+  await page.getByLabel('Show a title and picture for other links').check()
+  await page.getByLabel('Offer YouTube and Streamable players').check()
+  await page.keyboard.press('Escape')
 
   // ---------- D. typing, E. away ----------
   await send(page, '!typing')
@@ -264,7 +317,107 @@ async function send(page, text) {
   ok(checked || pushNote.some((t) => /could not|did not allow|cannot/i.test(t)), 'the push switch either works or explains why not (checked=' + checked + ')')
   await page.keyboard.press('Escape')
 
-  // ---------- K. logout ----------
+
+  // ---------- K. direct chat and file transfer between two browsers ----------
+  const ctxJ = await browser.newContext({ viewport: { width: 1100, height: 760 }, acceptDownloads: true })
+  const jane = await ctxJ.newPage()
+  jane.on('pageerror', (e) => errors.push('jane pageerror: ' + e.message))
+  jane.on('console', (m) => m.type() === 'error' && errors.push('jane console: ' + m.text()))
+  await jane.goto(URL)
+  await login(jane, 'jane')
+  await jane.waitForSelector('.status.connected')
+
+  // jane has a second device open, to see that it is asked too.
+  const ctxJ2 = await browser.newContext({ viewport: { width: 900, height: 700 } })
+  const jane2 = await ctxJ2.newPage()
+  await jane2.goto(URL)
+  await login(jane2, 'jane')
+  await jane2.waitForSelector('.status.connected')
+
+  await openBuffer(page, 'Status')
+  await send(page, '/direct jane')
+  await page.waitForSelector('.panel .status[data-state=calling]')
+  ok((await page.locator('.panel .status').innerText()).includes('Waiting for jane'), 'asking for a direct chat shows a waiting state')
+  await jane.waitForSelector('button.name:has-text("matt") .badge')
+  await openBuffer(jane, 'matt')
+  await jane.waitForSelector('.panel .status[data-state=incoming]')
+  ok((await jane.locator('.panel .status').innerText()).includes('network address'), 'the callee is told what accepting reveals, and nothing is connected yet')
+  ok(!(await jane.evaluate(() => document.body.innerText)).includes('Connected directly'), 'no connection is made before the callee accepts')
+  ok((await page.locator('button.name:has-text("jane")').count()) === 0 || (await page.locator('.list h3:has-text("Messages")').count()) === 0, 'signalling did not open a query window')
+
+
+  await jane2.waitForSelector('button.name:has-text("matt") .badge', { timeout: 5000 })
+  ok(true, "a second device of the callee's account is asked too")
+  await ctxJ2.close()
+
+  await jane.getByRole('button', { name: 'Accept' }).click()
+  await page.waitForSelector('.panel .status[data-state=connected]', { timeout: 20000 })
+  await jane.waitForSelector('.panel .status[data-state=connected]', { timeout: 20000 })
+  ok(true, 'both browsers connect over WebRTC')
+  const code1 = await page.getByTestId('safety-code').innerText()
+  const code2 = await jane.getByTestId('safety-code').innerText()
+  ok(/^[0-9A-F]{4}( [0-9A-F]{4}){4}$/.test(code1) && code1 === code2, 'both sides show the same safety code: ' + code1)
+
+  await send(page, 'hello over p2p')
+  await jane.waitForSelector('.line:has-text("hello over p2p")')
+  await send(jane, 'hi matt, direct')
+  await page.waitForSelector('.line:has-text("hi matt, direct")')
+  ok(true, 'chat lines go both ways')
+  ok((await page.locator('.line:has-text("hello over p2p")').count()) === 1, 'a sent line is shown once on the sender')
+  await send(page, '/quit')
+  await page.waitForSelector('.line.error:has-text("Commands do not work")')
+  ok((await page.locator('.status.connected').count()) > 0, 'a command in a direct chat is refused instead of reaching the network')
+
+  // A file of several chunks with a known hash.
+  const data = Buffer.alloc(300_017)
+  for (let i = 0; i < data.length; i++) data[i] = (i * 31 + (i >> 8)) & 0xff
+  const want = crypto.createHash('sha256').update(data).digest('hex')
+  await page.getByTestId('file-input').setInputFiles({ name: '../../report final.bin', mimeType: 'text/html', buffer: data })
+  await jane.waitForSelector('.transfers li[data-state=offered]')
+  const offered = await jane.locator('.transfers li').innerText()
+  ok(offered.includes('report final.bin') && !offered.includes('..'), 'the offered file name is shown without any path: ' + offered.replace(/\s+/g, ' '))
+  await jane.locator('.transfers li').getByRole('button', { name: 'Accept' }).click()
+  await jane.waitForSelector('.transfers li[data-state=done]', { timeout: 30000 })
+  await page.waitForSelector('.transfers li[data-state=done]', { timeout: 30000 })
+  ok(true, 'the file transferred and both sides report it done')
+  const [download] = await Promise.all([jane.waitForEvent('download'), jane.locator('.transfers li').getByRole('button', { name: 'Save' }).click()])
+  const chunks = []
+  for await (const c of await download.createReadStream()) chunks.push(c)
+  const got = crypto.createHash('sha256').update(Buffer.concat(chunks)).digest('hex')
+  ok(got === want, 'the saved file is byte for byte what was sent')
+  ok(download.suggestedFilename() === 'report final.bin', 'it is saved under the cleaned name: ' + download.suggestedFilename())
+
+  // Declining sends nothing.
+  await page.getByTestId('file-input').setInputFiles({ name: 'nope.txt', mimeType: 'text/plain', buffer: Buffer.from('no thanks') })
+  await jane.waitForSelector('.transfers li[data-state=offered]')
+  await jane.locator('.transfers li[data-state=offered]').getByRole('button', { name: 'Decline' }).click()
+  await page.waitForSelector('.transfers li[data-state=declined]')
+  ok(true, 'a declined file is reported to the sender')
+
+  // An empty file is a valid file.
+  await page.getByTestId('file-input').setInputFiles({ name: 'empty.txt', mimeType: 'text/plain', buffer: Buffer.alloc(0) })
+  await jane.waitForSelector('.transfers li[data-state=offered]')
+  await jane.locator('.transfers li[data-state=offered]').getByRole('button', { name: 'Accept' }).click()
+  await jane.waitForSelector('.transfers li:has-text("empty.txt")[data-state=done]', { timeout: 15000 })
+  ok(true, 'an empty file transfers')
+
+  await page.screenshot({ path: OUT + '/direct-chat.png' })
+
+  await page.getByRole('button', { name: 'Hang up' }).click()
+  await page.waitForSelector('.panel .status[data-state=ended]')
+  await jane.waitForSelector('.panel .status[data-state=ended]')
+  ok((await jane.locator('.panel .status').innerText()).includes('They closed the chat'), 'hanging up is shown to the other side')
+  ok((await jane.locator('input[type=file]').count()) === 1 && (await jane.locator('#msg-input').isDisabled()), 'the message box is off once the chat has ended')
+
+  // It can be started again.
+  await page.getByRole('button', { name: 'Connect again' }).click()
+  await jane.waitForSelector('.panel .status[data-state=incoming]')
+  await jane.getByRole('button', { name: 'Decline' }).first().click()
+  await page.waitForSelector('.panel .status[data-state=ended]:has-text("declined")')
+  ok(true, 'a declined request ends the call on the caller')
+  await ctxJ.close()
+
+  // ---------- L. logout ----------
   await page.click('button[aria-label="Settings"]')
   await page.getByRole('button', { name: 'Log out' }).click()
   await page.waitForSelector('form.card')
@@ -278,7 +431,7 @@ async function send(page, text) {
 
   // Errors from trying to reach a push service that does not exist in this sandbox are expected.
   // The browser logs every failed fetch itself, so the 401 after logout appears as a console error.
-  const unexpected = errors.filter((e) => !/push service|Registration failed|AbortError|subscribe|status of 401|incognito/i.test(e))
+  const unexpected = errors.filter((e) => !/push service|Registration failed|AbortError|subscribe|status of 401|status of 415|incognito/i.test(e))
   ok(unexpected.length === 0, 'no unexpected console or page errors' + (unexpected.length ? ': ' + unexpected.join(' | ') : ''))
 
   await browser.close()

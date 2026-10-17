@@ -8,6 +8,8 @@ sent in a channel or private message.
 import asyncio, datetime, itertools, os, re
 
 mid = itertools.count(1)
+# Real clients that have registered, by lower-case nick, so they can talk to each other.
+clients = {}
 CAPS = "server-time message-tags echo-message batch message-ids away-notify multi-prefix draft/message-redaction"
 
 
@@ -58,6 +60,7 @@ async def handle(reader, writer):
             return
         st['reg'] = True
         n = st['nick']
+        clients[n.lower()] = send
         send(f':fake 001 {n} :Welcome to FakeNet {n}')
         send(f':fake 005 {n} NETWORK=FakeNet CHANTYPES=# PREFIX=(ov)@+ CHANMODES=beI,k,l,imnpst :are supported')
         send(f':fake 422 {n} :MOTD missing')
@@ -130,7 +133,10 @@ async def handle(reader, writer):
                 # Echo it back with the client-only tags it carried, plus a fresh msgid.
                 client = {k: v for k, v in ctags.items() if k.startswith('+')}
                 send(f'{tags({k: esc(v) for k, v in client.items()})}:{n}!u@h PRIVMSG {target} :{text}')
-                if text.startswith('!'):
+                peer = clients.get(target.lower())
+                if peer and target.lower() != n.lower():
+                    peer(f'{tags({k: esc(v) for k, v in client.items()})}:{n}!u@h PRIVMSG {target} :{text}')
+                elif text.startswith('!'):
                     command(target, text, n)
                 elif text.startswith('ping alice'):
                     bot_say(target, 'alice', f'{n}: pong', 0.2)
@@ -139,7 +145,11 @@ async def handle(reader, writer):
             elif cmd == 'TAGMSG':
                 target = rest.strip()
                 client = {k: v for k, v in ctags.items() if k.startswith('+')}
-                send(f'@{";".join(k + "=" + esc(v) for k, v in client.items())} :{n}!u@h TAGMSG {target}')
+                line_out = f'@{";".join(k + "=" + esc(v) for k, v in client.items())} :{n}!u@h TAGMSG {target}'
+                send(line_out)
+                peer = clients.get(target.lower())
+                if peer and target.lower() != n.lower():
+                    peer(line_out)
             elif cmd == 'REDACT':
                 target, msgid = rest.split(' ')[:2]
                 send(f':{n}!u@h REDACT {target} {msgid}')
@@ -152,6 +162,8 @@ async def handle(reader, writer):
     except ConnectionError:
         pass
     finally:
+        if st['reg'] and clients.get(st['nick'].lower()) is send:
+            del clients[st['nick'].lower()]
         writer.close()
 
 

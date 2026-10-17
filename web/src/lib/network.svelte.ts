@@ -6,6 +6,8 @@ import { parseInput, HELP, type Action } from './commands'
 import type { Batch, Status } from './irc/connection'
 import { format, isServerPrefix, nickOf, timeOf, type Message } from './irc/message'
 import { pageUnfocused } from './notify'
+import type { ChatLine, ChatView } from './p2p/chat'
+import { P2pHub, SIGNAL_TAG } from './p2p/hub'
 import { mentions } from './render'
 import { settings } from './settings.svelte'
 
@@ -67,7 +69,7 @@ let nextId = 1
 export class Buffer {
   readonly name: string
   readonly key: string
-  readonly kind: 'status' | 'channel' | 'query'
+  readonly kind: 'status' | 'channel' | 'query' | 'p2p'
 
   messages = $state.raw<ChatMessage[]>([])
   topic = $state('')
@@ -82,6 +84,9 @@ export class Buffer {
   typing = $state.raw<string[]>([])
   /** Bumped whenever `members` changes. Read it to depend on the map. */
   membersRev = $state(0)
+
+  /** For a direct chat: the state of the connection, files and all. Null for other buffers. */
+  p2p = $state.raw<ChatView | null>(null)
 
   /** Lowercase nick -> member. */
   members = new Map<string, Member>()
@@ -99,9 +104,15 @@ export class Buffer {
 
   constructor(name: string, kind: Buffer['kind'], lastRead: number) {
     this.name = name
-    this.key = kind === 'status' ? '' : name.toLowerCase()
+    // A direct chat's key has a prefix, which no nick can contain, so it never collides with a query.
+    this.key = kind === 'status' ? '' : kind === 'p2p' ? 'p2p:' + name.toLowerCase() : name.toLowerCase()
     this.kind = kind
     this.lastRead = lastRead
+  }
+
+  /** True for buffers that exist on the IRC network, as opposed to the status buffer and direct chats. */
+  get onNetwork(): boolean {
+    return this.kind === 'channel' || this.kind === 'query'
   }
 
   /** Adds a message in time order. Returns false when it is a duplicate. */
@@ -224,6 +235,10 @@ export class Buffer {
 export interface NetworkHooks {
   /** A mention or private message arrived live and the user may not be looking. */
   onMention(net: NetworkState, buf: Buffer, msg: ChatMessage): void
+  /** STUN and TURN servers for a direct connection. */
+  iceServers?(): Promise<RTCIceServer[]>
+  /** Makes peer connections for direct chats. Tests pass a fake. */
+  createConnection?: (config: RTCConfiguration) => RTCPeerConnection
 }
 
 export class NetworkState {
@@ -263,6 +278,7 @@ export class NetworkState {
   private activateOnJoin = new Set<string>()
   private send: (line: string) => void
   private hooks: NetworkHooks
+  private hub: P2pHub
 
   constructor(id: string, login: string, nick: string, send: (line: string) => void, hooks: NetworkHooks) {
     this.id = id
@@ -273,6 +289,14 @@ export class NetworkState {
     this.hooks = hooks
     this.readStore = loadReadStore(login)
     this.buffers = [new Buffer(this.label, 'status', 0)]
+    this.hub = new P2pHub({
+      ownNick: () => this.nick,
+      iceServers: () => this.hooks.iceServers?.() ?? Promise.resolve([]),
+      sendSignalLine: (peer, value) => this.send(format({ tags: { [SIGNAL_TAG]: value }, command: 'TAGMSG', params: [peer] })),
+      createConnection: hooks.createConnection,
+      onView: (peer, view) => this.onDirectView(peer, view),
+      onLine: (peer, line) => this.onDirectLine(peer, line),
+    })
   }
 
   get statusBuffer(): Buffer {
@@ -336,6 +360,75 @@ export class NetworkState {
     return buf
   }
 
+  /** Opens a direct chat with `nick` and asks them to connect. */
+  openDirect(nick: string, invite = true): void {
+    const problem = this.directProblem(nick)
+    if (problem) {
+      this.local(this.active, 'error', problem)
+      return
+    }
+    const buf = this.directBuffer(nick)
+    this.select(buf.key)
+    if (invite && buf.p2p?.state !== 'connected') void this.hub.chat(nick).invite()
+  }
+
+  /** Why a direct chat with `nick` cannot be started, or '' when it can. Checked before anything is sent: the offer carries the sender's network address. */
+  private directProblem(nick: string): string {
+    if (!/^[A-Za-z\[\]\\`_^{|}][A-Za-z0-9\[\]\\`_^{|}-]{0,63}$/.test(nick)) return `"${nick}" is not a nick. A direct chat is with one person.`
+    if (this.isSelf(nick)) return 'You cannot start a direct chat with yourself.'
+    if (!this.caps.has('message-tags')) return 'This network does not support message tags, which direct chat needs to set up the connection.'
+    return ''
+  }
+
+  private directBuffer(nick: string): Buffer {
+    const key = 'p2p:' + nick.toLowerCase()
+    const existing = this.find(key)
+    if (existing) return existing
+    const buf = new Buffer(nick, 'p2p', Date.now())
+    this.buffers = [...this.buffers, buf].sort((a, b) => (a.kind === 'status' ? -1 : b.kind === 'status' ? 1 : bufferOrder(a, b)))
+    return buf
+  }
+
+  /** Who the direct chat is with, and what it can do right now, for the page. */
+  directChat(buf: Buffer) {
+    return this.hub.chat(buf.name)
+  }
+
+  private onDirectView(peer: string, view: ChatView): void {
+    const buf = this.directBuffer(peer)
+    const before = buf.p2p?.state
+    buf.p2p = view
+    if (before === view.state) return
+    switch (view.state) {
+      case 'incoming':
+        this.local(buf, 'info', `${peer} wants to start a direct chat. Nothing is connected until you accept.`)
+        if (this.activeKey !== buf.key || !this.viewing || pageUnfocused()) {
+          buf.unread++
+          buf.mentionCount++
+          this.hooks.onMention(this, buf, {
+            id: nextId++, key: 'p2p-incoming', time: Date.now(), kind: 'msg', nick: peer,
+            text: 'wants to start a direct chat', self: false, mention: true,
+          })
+        }
+        break
+      case 'connected':
+        this.local(buf, 'info', 'Connected directly. Messages and files go straight between the two browsers.')
+        break
+      case 'ended':
+        this.local(buf, 'info', view.reason ? `Direct chat ended. ${view.reason}` : 'Direct chat ended.')
+        break
+    }
+  }
+
+  private onDirectLine(peer: string, line: ChatLine): void {
+    const buf = this.directBuffer(peer)
+    this.push(
+      buf,
+      { kind: 'msg', nick: line.self ? this.nick : peer, text: line.text, time: line.time, self: line.self, mention: !line.self, key: 'p2p|' + line.id },
+      false,
+    )
+  }
+
   select(key: string): void {
     this.activeKey = key.toLowerCase()
     this.markActiveRead()
@@ -351,6 +444,7 @@ export class NetworkState {
 
   removeBuffer(buf: Buffer): void {
     if (buf.kind === 'status') return
+    if (buf.kind === 'p2p') this.hub.close(buf.name)
     buf.dispose()
     this.buffers = this.buffers.filter((b) => b !== buf)
     if (this.activeKey === buf.key) this.activeKey = ''
@@ -392,6 +486,10 @@ export class NetworkState {
     for (const line of input.split(/\r?\n/)) {
       if (!line.trim()) continue
       const buf = this.active
+      if (buf.kind === 'p2p') {
+        this.submitDirect(buf, line)
+        continue
+      }
       const inBuffer = buf.kind !== 'status'
       for (const a of parseInput(line, { target: inBuffer ? buf.name : '', inBuffer, chanTypes: this.chanTypes })) {
         this.run(a, buf, replyTo)
@@ -399,6 +497,15 @@ export class NetworkState {
     }
     // Sending ends any typing notice for this buffer.
     this.sendTyping(this.active, 'done')
+  }
+
+  private submitDirect(buf: Buffer, line: string): void {
+    const text = line.startsWith('//') ? line.slice(1) : line
+    if (text.startsWith('/')) {
+      this.local(buf, 'error', 'Commands do not work in a direct chat. Use the buttons above, or open the channel or status window.')
+      return
+    }
+    if (!this.hub.chat(buf.name).sendChat(text)) this.local(buf, 'error', 'Not connected, so that was not sent.')
   }
 
   private run(a: Action, buf: Buffer, replyTo?: string): void {
@@ -417,6 +524,9 @@ export class NetworkState {
       }
       case 'open':
         this.openQuery(a.target)
+        break
+      case 'direct':
+        this.openDirect(a.target)
         break
       case 'clear':
         buf.clear()
@@ -446,7 +556,7 @@ export class NetworkState {
 
   /** Tells the channel whether we are typing. Throttled, and off unless the user opted in. */
   sendTyping(buf: Buffer, state: 'active' | 'done'): void {
-    if (buf.kind === 'status' || !settings.sendTyping || !this.caps.has('message-tags')) return
+    if (!buf.onNetwork || !settings.sendTyping || !this.caps.has('message-tags')) return
     const prev = this.typingSent.get(buf.key)
     const now = Date.now()
     if (state === 'active' && prev?.active && now - prev.at < TYPING_SEND_GAP_MS) return
@@ -457,7 +567,7 @@ export class NetworkState {
 
   /** Reacts to a message, or removes our reaction if we already made it. */
   react(buf: Buffer, msg: ChatMessage, emoji: string): void {
-    if (!msg.msgid || buf.kind === 'status' || !this.caps.has('message-tags')) return
+    if (!msg.msgid || !buf.onNetwork || !this.caps.has('message-tags')) return
     const removing = buf.hasReacted(msg.msgid, emoji, this.nick)
     const tags: Record<string, string> = removing
       ? { '+draft/unreact': emoji, '+draft/reply': msg.msgid }
@@ -485,7 +595,7 @@ export class NetworkState {
   }
 
   private queueMarker(buf: Buffer): void {
-    if (buf.kind === 'status' || !this.caps.has('draft/read-marker') || buf.lastRead <= 0) return
+    if (!buf.onNetwork || !this.caps.has('draft/read-marker') || buf.lastRead <= 0) return
     this.dirtyMarkers.add(buf.key)
     if (this.markerTimer) return
     this.markerTimer = setTimeout(() => this.flushMarkers(), MARKER_DELAY_MS)
@@ -515,7 +625,7 @@ export class NetworkState {
 
   /** Asks the bouncer for messages older than the oldest one shown. */
   loadOlder(buf: Buffer): void {
-    if (buf.kind === 'status' || buf.historyLoading || buf.historyExhausted) return
+    if (!buf.onNetwork || buf.historyLoading || buf.historyExhausted) return
     const oldest = buf.messages[0]
     const at = oldest ? new Date(oldest.time).toISOString() : null
     buf.historyLoading = true
@@ -726,6 +836,12 @@ export class NetworkState {
   private onTagmsg(m: Message, history: boolean): void {
     if (history || isServerPrefix(m.prefix)) return
     const from = nickOf(m.prefix)
+    const signal = m.tags[SIGNAL_TAG]
+    if (signal !== undefined) {
+      // Only a message addressed to us, from someone else, can start or answer a direct chat.
+      if (!this.isChannel(m.params[0] ?? '') && !this.isSelf(from)) this.hub.receive(from, signal)
+      return
+    }
     const buf = this.existingBufferFor(m.params[0] ?? '', from)
     if (!buf) return
     const self = this.isSelf(from)
@@ -911,11 +1027,11 @@ export class NetworkState {
   // --- adding messages ---
 
   /** Adds a message. `history` lines came from the bouncer's store and never notify. */
-  private push(buf: Buffer, m: Omit<ChatMessage, 'id' | 'key'>, history: boolean): void {
+  private push(buf: Buffer, m: Omit<ChatMessage, 'id' | 'key'> & { key?: string }, history: boolean): void {
     const msg: ChatMessage = {
       ...m,
       id: nextId++,
-      key: m.msgid ?? `${m.time}|${m.nick}|${m.kind}|${m.text}`,
+      key: m.key ?? m.msgid ?? `${m.time}|${m.nick}|${m.kind}|${m.text}`,
     }
     // Lines with no sender (local lines) always show; they are never duplicates.
     if (!m.nick && !m.msgid) msg.key = `local|${msg.id}`
@@ -940,12 +1056,13 @@ export class NetworkState {
   private saveReadSoon(): void {
     clearTimeout(this.saveTimer)
     this.saveTimer = setTimeout(() => {
-      for (const b of this.buffers) if (b.kind !== 'status') this.readStore[b.key] = b.lastRead
+      for (const b of this.buffers) if (b.onNetwork) this.readStore[b.key] = b.lastRead
       saveReadStore(this.login, this.readStore)
     }, 1500)
   }
 
   dispose(): void {
+    this.hub.dispose()
     clearTimeout(this.saveTimer)
     clearTimeout(this.markerTimer)
     for (const b of this.buffers) b.dispose()
@@ -954,7 +1071,8 @@ export class NetworkState {
 
 function bufferOrder(a: Buffer, b: Buffer): number {
   // Channels first, then queries, each alphabetically.
-  if (a.kind !== b.kind) return a.kind === 'channel' ? -1 : 1
+  const rank = (k: Buffer['kind']) => (k === 'channel' ? 0 : k === 'query' ? 1 : 2)
+  if (a.kind !== b.kind) return rank(a.kind) - rank(b.kind)
   return a.key.localeCompare(b.key)
 }
 

@@ -57,6 +57,7 @@ export const api = {
   login: (user: string, password: string) => request<{ user: string }>('POST', '/api/login', { user, password }),
   logout: () => request<{ ok: boolean }>('POST', '/api/logout', {}),
   putPrefs: (prefs: Record<string, unknown>) => request<{ ok: boolean }>('PUT', '/api/prefs', prefs),
+  ice: () => request<{ iceServers: RTCIceServer[]; ttl: number }>('GET', '/api/ice'),
   pushKey: () => request<{ key: string }>('GET', '/api/push/key'),
   pushSubscribe: (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
     request<{ ok: boolean }>('POST', '/api/push/subscribe', sub),

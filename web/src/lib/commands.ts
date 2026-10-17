@@ -5,6 +5,7 @@
 export type Action =
   | { type: 'raw'; line: string }
   | { type: 'open'; target: string }
+  | { type: 'direct'; target: string }
   | { type: 'clear' }
   | { type: 'help' }
   | { type: 'error'; text: string }
@@ -76,6 +77,7 @@ export const HELP = [
   'Channels: /join #chan [key], /part [#chan] [reason], /topic [text], /names [#chan], /list [mask], /invite NICK [#chan]',
   'Moderation: /kick NICK [reason], /ban NICK, /unban NICK, /mode [target] [modes]',
   'Info: /whois NICK, /whowas NICK, /who MASK, /time, /version, /motd, /stats, /links, /ping NICK',
+  'Direct: /direct NICK opens a private chat that goes straight between your browser and theirs, and can send files',
   'Other: /nick NEW, /away [reason], /back, /quit [reason], /clear, /raw LINE',
   'Any other /command is sent to the server as it is. Start a line with // to send a literal "/".',
 ].join('\n')
@@ -102,6 +104,12 @@ export function parseInput(input: string, ctx: CommandContext): Action[] {
       return [{ type: 'help' }]
     case 'clear':
       return [{ type: 'clear' }]
+    case 'direct':
+    case 'dm': {
+      const nick = args.split(' ')[0] ?? ''
+      if (!nick) return [{ type: 'error', text: 'Usage: /direct NICK. Opens a direct browser-to-browser chat.' }]
+      return [{ type: 'direct', target: nick }]
+    }
     case 'raw':
     case 'quote':
       return args ? [{ type: 'raw', line: args }] : []
