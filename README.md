@@ -91,7 +91,9 @@ The bouncer's own port, 8080, is never published. Already have Traefik, nginx or
 - **Themes.** Light, dark or follow the system, in compact or comfortable density.
 - **Emoji.** The smiley beside the input, or Ctrl+E, opens all 1,900 emoji with search, recently used and groups. Type `:tada:` and it becomes 🎉 when you close the colon; type `:tad` and a list offers matches (Up/Down to choose, Tab or Enter to take one, Esc to dismiss). Times like 10:30 and links are left alone. The emoji list is a separate download, fetched the first time it is needed.
 - **Keyboard.** Ctrl+K jumps to any channel on any network. Ctrl+F searches the messages of the channel you are in (`from:nick` narrows it to one person). Alt+A goes to the next unread, mentions first. Alt+Up and Alt+Down switch buffers. Tab completes nicks, channels and commands, and Up and Down recall what you typed. A button takes you back to the latest message when you have scrolled up.
-- **Installable.** A browser can install it as an app on a phone or desktop. It needs the bouncer, so there is no offline mode.
+- **Installable.** A browser can install it as an app on a phone or desktop. When the browser offers it, a ⬇ button appears at the bottom of the server bar, and Settings, General says how to do it in a browser that does not (Safari, for one). It needs the bouncer, so there is no offline mode.
+- **Your layout.** Drag the bars between the columns to resize the channel list and the member list (arrow keys work too, and double-click puts a bar back). The server bar can be hidden with the ‹ button, leaving a thin strip to bring it back. Widths are remembered per browser.
+- **Right-click a name** in the member list (or press the menu key on it) for message, direct chat, voice call, who is, client version and copy, and, if you are an operator, give or take operator and voice, kick, and ban and kick.
 
 ## Plugins
 A plugin is one JSON document, pasted into **Settings, Plugins**; it is kept on your account and follows you to other browsers. You see what it asks for and can untick any permission before it is installed. This one adds `/greet`:

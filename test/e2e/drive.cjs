@@ -383,6 +383,54 @@ async function send(page, text) {
   ok((await page.inputValue('#msg-input')) === 'time 10:30 :smi', 'Escape dismisses the suggestions and keeps the text')
   await page.fill('#msg-input', '')
 
+  // The user list: a right-click opens a menu of what can be done with someone.
+  await openBuffer(page, '#chat')
+  await page.locator('.members button', { hasText: 'carol' }).click({ button: 'right' })
+  await page.getByTestId('user-menu').waitFor()
+  const menuItems = await page.getByTestId('user-menu').getByRole('menuitem').allInnerTexts()
+  ok(['Message', 'Direct chat', 'Voice call', 'Who is…', 'Copy nick'].every((t) => menuItems.includes(t)), 'right-clicking someone opens a menu with message, direct chat, call and whois: ' + menuItems.join('|'))
+  ok(!menuItems.includes('Kick'), 'moderation commands are offered only to someone who can moderate')
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Escape')
+  await page.getByTestId('user-menu').waitFor({ state: 'detached' })
+  ok(true, 'Escape closes the user menu')
+
+  // Columns: the bars between them move with the keys and the mouse, and the server bar can be hidden.
+  const navBar = page.getByRole('separator', { name: 'Resize the channel list' })
+  const navWidth = async () => (await page.locator('.nav').boundingBox()).width
+  const navBefore = await navWidth()
+  await navBar.focus()
+  await page.keyboard.press('ArrowRight')
+  ok(Math.abs((await navWidth()) - (navBefore + 16)) <= 1, 'the arrow keys widen the channel list')
+  const bar = await navBar.boundingBox()
+  await page.mouse.move(bar.x + 2, bar.y + 100)
+  await page.mouse.down()
+  await page.mouse.move(bar.x + 62, bar.y + 100, { steps: 4 })
+  await page.mouse.up()
+  ok((await navWidth()) > navBefore + 60, 'dragging the bar resizes the channel list')
+  await navBar.dblclick()
+  ok(Math.abs((await navWidth()) - 220) <= 1, 'double-clicking the bar puts the width back')
+  const memberBar = page.getByRole('separator', { name: 'Resize the member list' })
+  const memberWidth = async () => (await page.locator('div.members').boundingBox()).width
+  const mBefore = await memberWidth()
+  await memberBar.focus()
+  await page.keyboard.press('ArrowLeft')
+  ok((await memberWidth()) > mBefore + 10, 'the member list can be resized too')
+  await memberBar.dblclick()
+  await page.getByTestId('hide-rail').click()
+  await page.getByRole('button', { name: 'Show the server bar' }).waitFor()
+  ok((await page.locator('nav.rail').count()) === 0, 'the server bar can be hidden')
+  await page.getByRole('button', { name: 'Show the server bar' }).click()
+  await page.locator('nav.rail').waitFor()
+  ok(true, 'and brought back from the strip at the edge')
+
+  // Installing the page as an app: the settings say how, whether or not this browser offers a prompt.
+  await openSettingsTab(page, 'General')
+  await page.waitForSelector('[data-testid=install-none], [data-testid=install-app], [data-testid=install-ios]')
+  ok(true, 'the settings explain how to install the page as an app')
+  await page.keyboard.press('Escape')
+  await page.waitForSelector('.card[role=dialog]', { state: 'detached' })
+
   // ---------- I. mobile layout ----------
   await page.setViewportSize({ width: 390, height: 760 })
   await page.waitForTimeout(200)

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
+  import { install } from '../lib/install.svelte'
   import PluginsPanel from './PluginsPanel.svelte'
   import { notificationsSupported, requestNotifyPermission } from '../lib/notify'
   import { disablePush, enablePush, pushSubscribed, pushSupported } from '../lib/push'
@@ -112,6 +113,23 @@
           <input type="checkbox" bind:checked={settings.sendTyping} onchange={() => settings.save()} />
           Tell others when I am typing
         </label>
+
+        <h3>App</h3>
+        {#if install.kind === 'prompt'}
+          <div class="row">
+            <span class="grow">Install Gestalt as an app, with its own window and icon.</span>
+            <button class="btn" data-testid="install-app" onclick={() => void install.install()}>Install</button>
+          </div>
+        {:else if install.kind === 'installed'}
+          <p class="note">Gestalt is running as an installed app.</p>
+        {:else if install.kind === 'ios'}
+          <p class="note" data-testid="install-ios">To install Gestalt, tap the Share button in Safari and choose <strong>Add to Home Screen</strong>.</p>
+        {:else}
+          <p class="note" data-testid="install-none">
+            To install Gestalt as an app, use your browser's menu (look for <strong>Install</strong> or <strong>Add to Home screen</strong>).
+            Browsers only offer it on a page served over HTTPS.
+          </p>
+        {/if}
 
         <h3>Servers</h3>
         <p class="note">
