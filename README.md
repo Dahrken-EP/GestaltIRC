@@ -147,6 +147,8 @@ command: `-f docker-compose.yml -f docker-compose.traefik.yml` (set `TRAEFIK_NET
 `TRAEFIK_CERTRESOLVER` in `.env` to match yours), or `-f docker-compose.yml -f docker-compose.proxy.yml` for any other proxy (it
 publishes the bouncer on `127.0.0.1:8081`). Keep the same files for every later command.
 
+**Prefer a virtual machine to a container?** The bouncer also runs in a Firecracker microVM; see [deploy/firecracker](deploy/firecracker/README.md).
+
 **Updating.** Back up first (the update may change the database), then:
 
     git pull

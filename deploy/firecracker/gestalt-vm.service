@@ -1,0 +1,18 @@
+# Runs the microVM at boot. Copy to /etc/systemd/system/, set WorkingDirectory to your clone, then
+#   sudo systemctl daemon-reload && sudo systemctl enable --now gestalt-vm
+[Unit]
+Description=Gestalt IRC bouncer in a Firecracker microVM
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/GestaltIRC
+ExecStart=/opt/GestaltIRC/deploy/firecracker/run.sh
+# run.sh turns the SIGTERM into a clean shutdown of the machine and needs a little time for it.
+KillMode=mixed
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
