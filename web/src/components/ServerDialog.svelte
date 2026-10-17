@@ -67,10 +67,8 @@
   }
 </script>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && close()} />
-
-<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="backdrop" onclick={(e) => e.target === e.currentTarget && close()}>
+<!-- The dialog closes with its × or Cancel, and only those: a click outside it, or Escape, would throw away a half-filled form. -->
+<div class="backdrop">
   <div class="card" role="dialog" aria-modal="true" aria-labelledby="server-title" data-testid="server-dialog">
     <header>
       <h2 id="server-title">{editing ? `Edit ${editing}` : 'Add a server'}</h2>

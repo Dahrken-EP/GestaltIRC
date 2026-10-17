@@ -902,6 +902,17 @@ async function send(page, text) {
   await dialog.waitFor()
   const headings = await dialog.locator('h3').allTextContents()
   ok(headings.join('|') === 'Server|Who you are|Logging in|After connecting|For this server', 'server details come first, then what is for this server: ' + headings.join(' / '))
+  // A half-filled form is not thrown away by a stray click or key: only the X (or Cancel) closes the dialog.
+  await dialog.getByLabel('Name', { exact: true }).fill('half-done')
+  await page.mouse.click(640, 740)
+  await page.keyboard.press('Escape')
+  await sleep(300)
+  ok((await dialog.isVisible()) && (await dialog.getByLabel('Name', { exact: true }).inputValue()) === 'half-done', 'clicking outside the server dialog, or pressing Escape, leaves it open with what was typed')
+  await dialog.getByRole('button', { name: 'Close' }).click()
+  await dialog.waitFor({ state: 'detached' })
+  ok(true, 'the X closes it')
+  await page.getByRole('button', { name: 'Add a server' }).click()
+  await dialog.waitFor()
   // Accepting an untrusted certificate is offered with TLS, and comes with its warning.
   ok((await dialog.getByLabel(/Accept an untrusted certificate/).count()) === 1 && (await page.getByTestId('untrusted-warning').count()) === 0, 'accepting an untrusted certificate is an option, and off')
   await dialog.getByLabel(/Accept an untrusted certificate/).check()
