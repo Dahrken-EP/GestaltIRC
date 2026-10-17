@@ -1,6 +1,6 @@
 [package]
 name = "gestalt-desktop"
-version = "0.1.5"
+version = "0.1.6"
 description = "Gestalt IRC, on the desktop"
 edition = "2021"
 
