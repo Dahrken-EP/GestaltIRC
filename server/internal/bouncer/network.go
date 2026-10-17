@@ -386,6 +386,7 @@ func (n *Network) attachUpstream(c *upstream.Client) {
 	n.client = c
 	n.connected = true
 	n.nick = c.Nick()
+	n.selfPfx = "" // from the last connection, when the nick may have been another
 	n.caps = c.Caps()
 	n.lastRecv = nowMS()
 	n.isupport = nil
@@ -685,6 +686,13 @@ func (n *Network) applyStateLocked(m *irc.Message) {
 	case "NICK":
 		if n.isSelf(m.Nick()) {
 			n.nick = m.Param(0)
+			// The prefix remembered from our own JOIN names the old nick. Replayed JOINs and the echo of what
+			// we send are built from it, so a browser that attaches later would see them from someone else.
+			if _, userhost, ok := strings.Cut(n.selfPfx, "!"); ok {
+				n.selfPfx = n.nick + "!" + userhost
+			} else {
+				n.selfPfx = ""
+			}
 		}
 		for _, cs := range n.channels {
 			if i := cs.index(m.Nick()); i >= 0 {

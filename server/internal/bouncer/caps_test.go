@@ -314,3 +314,16 @@ func TestSTSPolicyDependsOnTransport(t *testing.T) {
 		t.Error("sts sent to a client that cannot read cap values")
 	}
 }
+
+func TestOwnNickChangeUpdatesTheRememberedPrefix(t *testing.T) {
+	n := testNetwork(t)
+	feed(t, n, ":me!mu@mh JOIN #c", ":me!mu@mh NICK me|L")
+	if n.nick != "me|L" || n.selfPfx != "me|L!mu@mh" {
+		t.Fatalf("nick %q, prefix %q", n.nick, n.selfPfx)
+	}
+	s := sessionWithCaps()
+	n.sendStateLocked(s)
+	if len(s.queue) == 0 || s.queue[0] != ":me|L!mu@mh JOIN #c" {
+		t.Errorf("a browser attaching now is told %q", s.queue)
+	}
+}
