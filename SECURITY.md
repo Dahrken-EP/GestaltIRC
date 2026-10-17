@@ -68,9 +68,8 @@ everything. Account passwords are hashed, not encrypted.
 - Integration tests against a real Ergo server.
 - Browser tests in real Chromium: cookies not readable from script, no password stored in the page, the
   plugin sandbox, the media proxy ("the browser never contacted the linked site"), the network editor.
-- `govulncheck` and `npm audit` run in CI on every push and daily, and pass. CodeQL is set up too, but GitHub only
-  offers code scanning on a private repository with Advanced Security, so it is skipped until the repository is
-  public.
+- `govulncheck` and `npm audit` run in CI on every push and daily, and pass. CodeQL for Go and TypeScript runs through
+  GitHub's code scanning default setup, so its results are on the repository's Security tab, not in the workflows.
 
 Problems found by this testing during phase 8, and fixed: a plugin could reach the network through a function
 recovered from the prototype chain; a plugin's `send` could issue commands that act on the browser; a plugin

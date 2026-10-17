@@ -9,7 +9,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   govulncheck:
@@ -34,24 +33,5 @@ jobs:
       - run: npm ci && npm audit --omit=dev --audit-level=high
         working-directory: web
 
-  # Code scanning is free for public repositories. A private one needs GitHub Advanced Security, which a personal
-  # account does not have, so this is skipped until the repository is public.
-  codeql:
-    if: ${{ !github.event.repository.private }}
-    runs-on: ubuntu-latest
-    strategy:
-      # One language failing (for instance because code scanning is not switched on for the repository) must not
-      # cancel the other.
-      fail-fast: false
-      matrix:
-        language: [go, javascript-typescript]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        if: matrix.language == 'go'
-        with:
-          go-version-file: server/go.mod
-      - uses: github/codeql-action/init@v3
-        with:
-          languages: ${{ matrix.language }}
-      - uses: github/codeql-action/analyze@v3
+  # Code scanning (CodeQL) is not a job here: it runs through the repository's own "default setup" (Settings, Advanced
+  # Security, Code scanning). GitHub refuses results from a workflow while that is switched on.

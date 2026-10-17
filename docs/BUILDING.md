@@ -83,9 +83,9 @@ test/load/web.sh                 # the web client's JavaScript heap with 10 chan
 
 `.github/workflows/ci.yml` runs on every push and pull request: formatting, `go vet` and `go test -race`, the web
 type check, tests and build, the Ergo integration tests, and the browser tests. `security.yml` runs the same
-triggers and daily: `govulncheck`, `npm audit` for what ships to browsers, and CodeQL for Go and TypeScript (skipped while the repository is private, since GitHub only offers it
-there with Advanced Security).
-Dependabot proposes updates weekly.
+triggers and daily: `govulncheck` and `npm audit` (for what ships to browsers). CodeQL for Go and TypeScript runs through the
+repository's code scanning "default setup" in GitHub's settings, not from a workflow here. Dependabot proposes
+updates weekly.
 
 ## Layout
 
