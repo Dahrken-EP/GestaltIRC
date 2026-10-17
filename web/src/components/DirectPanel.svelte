@@ -60,9 +60,10 @@
   class:dragging
   aria-label="Direct chat with {buf.name}"
   ondragover={(e) => {
-    if (connected && e.dataTransfer?.types.includes('Files')) {
+    // Always claimed, or the browser would open a dropped file in this tab and leave the chat.
+    if (e.dataTransfer?.types.includes('Files')) {
       e.preventDefault()
-      dragging = true
+      dragging = connected
     }
   }}
   ondragleave={() => (dragging = false)}

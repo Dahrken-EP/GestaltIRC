@@ -129,7 +129,8 @@ async function request(url: string): Promise<Answer> {
     const data = (await res.json()) as Preview
     if (!data || typeof data.kind !== 'string') return { preview: null, final: false }
     // The bouncer says "none" when a link simply has nothing to show. That is an answer.
-    return data.kind === 'none' ? { preview: null, final: true } : { preview: data, final: true }
+    // "retry" means the other site failed just now, so it is worth asking again after a while.
+    return data.kind === 'none' ? { preview: null, final: !(data as { retry?: boolean }).retry } : { preview: data, final: true }
   } catch {
     return { preview: null, final: false }
   } finally {

@@ -471,3 +471,114 @@ func mustJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
 }
+
+func TestSeekingIntoTheMiddleOfAVideoWorks(t *testing.T) {
+	e := newEnv(t, true)
+	content := append(append([]byte(nil), mp4...), bytes.Repeat([]byte("x"), 5000)...)
+	o := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, "clip.mp4", time.Time{}, bytes.NewReader(content))
+	}))
+	defer o.Close()
+	// A range that starts part-way through has no file header, so only the file's own start can say what it is.
+	resp, body := e.get(t, mediaURL(o.URL+"/clip"), map[string]string{"Range": "bytes=3000-"})
+	if resp.StatusCode != http.StatusPartialContent || len(body) != len(content)-3000 {
+		t.Fatalf("seek: status %d, %d bytes", resp.StatusCode, len(body))
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "video/mp4" {
+		t.Errorf("Content-Type = %q, want video/mp4", ct)
+	}
+}
+
+func TestSeekingIntoSomethingThatIsNotAVideoIsRefused(t *testing.T) {
+	e := newEnv(t, true)
+	content := append(append([]byte(nil), page...), bytes.Repeat([]byte("x"), 5000)...)
+	o := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4") // a lie
+		http.ServeContent(w, r, "clip.mp4", time.Time{}, bytes.NewReader(content))
+	}))
+	defer o.Close()
+	resp, body := e.get(t, mediaURL(o.URL+"/clip.mp4"), map[string]string{"Range": "bytes=3000-"})
+	if resp.StatusCode != http.StatusUnsupportedMediaType || bytes.Contains(body, []byte("alert")) {
+		t.Errorf("status %d, body %q", resp.StatusCode, body)
+	}
+	// An image does not seek either.
+	img := origin(t, "image/png", append(append([]byte(nil), png...), bytes.Repeat([]byte("x"), 5000)...))
+	if resp, _ := e.get(t, mediaURL(img.URL+"/a.png"), map[string]string{"Range": "bytes=3000-"}); resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Errorf("range into a picture: status %d, want 415", resp.StatusCode)
+	}
+}
+
+func TestPlayingVideosDoNotUseUpThePicturesSlots(t *testing.T) {
+	e := newEnv(t, true)
+	release := make(chan struct{})
+	var started sync.WaitGroup
+	started.Add(perUserVideos)
+	var videos atomic.Int32
+	o := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".png") {
+			w.Write(png)
+			return
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Write(append(append([]byte(nil), mp4...), bytes.Repeat([]byte("v"), sniffLen)...)) // enough to sniff
+		w.(http.Flusher).Flush()
+		if videos.Add(1) <= perUserVideos {
+			started.Done()
+		}
+		<-release // the video keeps playing
+	}))
+	defer o.Close()
+	defer close(release)
+
+	for i := 0; i < perUserVideos; i++ {
+		go func(i int) {
+			req, _ := http.NewRequest("GET", e.srv.URL+mediaURL(o.URL+"/v"+string(rune('a'+i))+".mp4"), nil)
+			req.AddCookie(e.cookie)
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+		}(i)
+	}
+	started.Wait()
+	time.Sleep(100 * time.Millisecond)
+
+	// More pictures than there are general slots, one after another, all fine: the videos hold none of them.
+	for i := 0; i < perUserFetches+2; i++ {
+		if resp, _ := e.get(t, mediaURL(o.URL+"/p"+string(rune('a'+i))+".png"), nil); resp.StatusCode != 200 {
+			t.Fatalf("picture %d while videos play: status %d", i, resp.StatusCode)
+		}
+	}
+	// And one video too many is turned away.
+	resp, _ := e.get(t, mediaURL(o.URL+"/third.mp4"), nil)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("a third video at once: status %d, want 429", resp.StatusCode)
+	}
+}
+
+func TestAVideoMayOutlastThePictureTimeLimit(t *testing.T) {
+	e := newEnv(t, true)
+	e.proxy.ShortTimeout = 150 * time.Millisecond
+	slow := func(head []byte) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write(append(append([]byte(nil), head...), bytes.Repeat([]byte("v"), sniffLen)...))
+			w.(http.Flusher).Flush()
+			time.Sleep(500 * time.Millisecond) // well past the short limit
+			w.Write(bytes.Repeat([]byte("y"), 1000))
+		}))
+	}
+	// A video behind an address with no file extension is only known to be one from its bytes, and keeps streaming.
+	v := slow(mp4)
+	defer v.Close()
+	resp, body := e.get(t, mediaURL(v.URL+"/stream"), nil)
+	if want := len(mp4) + sniffLen + 1000; resp.StatusCode != 200 || len(body) != want {
+		t.Errorf("video: status %d, %d bytes, want %d", resp.StatusCode, len(body), want)
+	}
+	// A picture that dawdles is cut off, so a slow site cannot hold a slot for ever.
+	img := slow(png)
+	defer img.Close()
+	_, body = e.get(t, mediaURL(img.URL+"/stream"), nil)
+	if len(body) >= len(png)+sniffLen+1000 {
+		t.Errorf("a slow picture arrived whole (%d bytes)", len(body))
+	}
+}

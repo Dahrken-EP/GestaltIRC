@@ -9,6 +9,17 @@ describe('fingerprintOf', () => {
     const sdp = `v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=fingerprint:sha-256 ${FP_A.toLowerCase()}\r\na=setup:actpass\r\n`
     expect(fingerprintOf(sdp)).toBe(FP_A)
   })
+  it('accepts the same fingerprint written at session and media level', () => {
+    const sdp = `a=fingerprint:sha-256 ${FP_A}\r\nm=application 9\r\na=fingerprint:sha-256 ${FP_A.toLowerCase()}\r\n`
+    expect(fingerprintOf(sdp)).toBe(FP_A)
+  })
+  it('trusts nothing when two different fingerprints are present', () => {
+    // A rewritten description could add its own at media level, which the browser would prefer.
+    expect(fingerprintOf(`a=fingerprint:sha-256 ${FP_A}\r\nm=application 9\r\na=fingerprint:sha-256 ${FP_B}\r\n`)).toBe('')
+  })
+  it('trusts nothing when any fingerprint is another algorithm', () => {
+    expect(fingerprintOf(`a=fingerprint:sha-256 ${FP_A}\r\na=fingerprint:sha-384 ${FP_B}\r\n`)).toBe('')
+  })
   it('returns empty when there is none, or it is malformed or another algorithm', () => {
     expect(fingerprintOf('v=0\r\n')).toBe('')
     expect(fingerprintOf('a=fingerprint:sha-256 AB:CD\r\n')).toBe('')

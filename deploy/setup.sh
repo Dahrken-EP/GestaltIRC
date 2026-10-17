@@ -38,8 +38,10 @@ ext=""
 [ -z "$PUBLIC_IP" ] || ext="external-ip=$PUBLIC_IP"
 sed -e "s|@ADMIN_EMAIL@|$ADMIN_EMAIL|g" -e "s|@TURN_HOST@|$TURN_HOST|g" bouncer.yaml.template > bouncer.yaml
 sed -e "s|@TURN_HOST@|$TURN_HOST|g" -e "s|@TURN_SECRET@|$secret|g" -e "s|@EXTERNAL_IP_LINE@|$ext|g" turnserver.conf.template > turnserver.conf
-# The containers run as unprivileged users and must be able to read these files, so the
-# files are readable, and the secrets directory keeps other users on this machine out.
+# The containers run as unprivileged users and must be able to read these files, so they are
+# world-readable. That includes turnserver.conf, which holds the TURN secret: run this on a
+# machine whose other users you trust, or tighten the modes once you have checked that the
+# containers can still read them (see deploy/README.md).
 chmod 644 bouncer.yaml secrets/turn_secret turnserver.conf
 chmod 700 secrets
 

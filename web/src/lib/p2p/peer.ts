@@ -135,10 +135,21 @@ export class PeerSession {
   }
 }
 
-/** The "a=fingerprint" value of a description, upper-case, or '' when absent. */
+/**
+ * The certificate fingerprint a description commits to, upper-case. It is '' unless the
+ * description has fingerprint lines and they all agree on one SHA-256 value. A description
+ * with two different ones, or one this code cannot read, is not trusted: the browser might
+ * use a different one from the one a person would compare.
+ */
 export function fingerprintOf(sdp: string): string {
-  const m = /^a=fingerprint:sha-256 ([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){31})\s*$/m.exec(sdp)
-  return m ? m[1]!.toUpperCase() : ''
+  const found = new Set<string>()
+  let any = false
+  for (const m of sdp.matchAll(/^a=fingerprint:(\S+) (\S+)\s*$/gm)) {
+    any = true
+    if (m[1]!.toLowerCase() !== 'sha-256' || !/^[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){31}$/.test(m[2]!)) return ''
+    found.add(m[2]!.toUpperCase())
+  }
+  return any && found.size === 1 ? [...found][0]! : ''
 }
 
 /**

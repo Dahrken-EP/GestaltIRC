@@ -1,7 +1,9 @@
 package media
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -14,16 +16,16 @@ import (
 	"golang.org/x/net/html"
 
 	"irc-webclient/server/internal/api"
+	"irc-webclient/server/internal/netguard"
 	"irc-webclient/server/internal/store"
 )
 
 const (
-	maxHTML        = 512 << 10 // read at most this much of a page
-	maxOEmbed      = 64 << 10
-	maxTitleRunes  = 200
-	maxDescRunes   = 400
-	maxSiteRunes   = 80
-	previewTimeout = 15 * time.Second
+	maxHTML       = 512 << 10 // read at most this much of a page
+	maxOEmbed     = 64 << 10
+	maxTitleRunes = 200
+	maxDescRunes  = 400
+	maxSiteRunes  = 80
 )
 
 // Preview is what the client shows for a link.
@@ -115,7 +117,24 @@ func (p *Proxy) handlePreview(w http.ResponseWriter, r *http.Request, user store
 	}
 	defer p.release(user.ID)
 
-	prev := p.build(r, target)
+	prev, transient := p.build(r, target)
+	switch {
+	case r.Context().Err() != nil:
+		// The browser stopped waiting. That says nothing about the link, so nothing is remembered.
+		return
+	case transient && prev == nil:
+		// The other site failed this time. Remembering that would hide a working link for minutes,
+		// for everyone, so it is not remembered and the client is told it may ask again later.
+		// It is still a 200: a failing site is not a fault of this page, and an error status
+		// would be logged by the browser for every such link.
+		w.Header().Set("Cache-Control", "no-store")
+		api.WriteJSON(w, http.StatusOK, map[string]any{"kind": "none", "retry": true})
+		return
+	case transient:
+		// A video player still works without its title; show it, but do not keep it for an hour.
+		respondPreview(w, prev)
+		return
+	}
 	p.previews.put(key, prev)
 	respondPreview(w, prev)
 }
@@ -132,8 +151,9 @@ func respondPreview(w http.ResponseWriter, p *Preview) {
 	api.WriteJSON(w, http.StatusOK, p)
 }
 
-// build works out what to show for a link. It returns nil when there is nothing worth showing.
-func (p *Proxy) build(r *http.Request, target *url.URL) *Preview {
+// build works out what to show for a link. The preview is nil when there is nothing worth
+// showing. Transient is true when the answer is only "the other site failed just now".
+func (p *Proxy) build(r *http.Request, target *url.URL) (pv *Preview, transient bool) {
 	if id := youtubeID(target); id != "" {
 		return p.oembed(r, p.YouTubeOEmbed, "https://www.youtube.com/watch?v="+id, "youtube", id, "YouTube")
 	}
@@ -143,25 +163,50 @@ func (p *Proxy) build(r *http.Request, target *url.URL) *Preview {
 	return p.pagePreview(r, target)
 }
 
+// failedForNow reports whether an error says "try again later" rather than "there is nothing here".
+func failedForNow(err error) bool {
+	return !errors.Is(err, netguard.ErrBlocked)
+}
+
+// get fetches with the short time limit. The limit ends when the body is closed.
 func (p *Proxy) get(r *http.Request, rawURL, accept string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, rawURL, nil)
+	ctx, cancel := context.WithTimeout(r.Context(), p.ShortTimeout)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", accept)
-	return p.client.Do(req)
+	resp, err := p.client.Do(req)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
+}
+
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnClose) Close() error {
+	defer c.cancel()
+	return c.ReadCloser.Close()
 }
 
 // pagePreview fetches a page and reads its title, description and picture.
-func (p *Proxy) pagePreview(r *http.Request, target *url.URL) *Preview {
+func (p *Proxy) pagePreview(r *http.Request, target *url.URL) (*Preview, bool) {
 	resp, err := p.get(r, target.String(), "text/html,application/xhtml+xml;q=0.9,image/*;q=0.5,*/*;q=0.1")
 	if err != nil {
-		return nil
+		return nil, failedForNow(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil
+		// A page that is gone or forbidden has no preview. One that is overloaded might next time.
+		return nil, resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
 	}
 	final := resp.Request.URL
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
@@ -169,18 +214,18 @@ func (p *Proxy) pagePreview(r *http.Request, target *url.URL) *Preview {
 	case strings.HasPrefix(ct, "image/"):
 		// A link with no file extension that is really a picture. The media endpoint
 		// still checks the bytes, so this is only a hint.
-		return &Preview{URL: target.String(), Kind: "image"}
+		return &Preview{URL: target.String(), Kind: "image"}, false
 	case strings.HasPrefix(ct, "video/"):
-		return &Preview{URL: target.String(), Kind: "video"}
+		return &Preview{URL: target.String(), Kind: "video"}, false
 	case !strings.Contains(ct, "html"):
-		return nil
+		return nil, false
 	}
 
 	meta := readMeta(io.LimitReader(resp.Body, maxHTML))
 	title := firstNonEmpty(meta["og:title"], meta["twitter:title"], meta["<title>"])
 	desc := firstNonEmpty(meta["og:description"], meta["twitter:description"], meta["description"])
 	if title == "" && desc == "" {
-		return nil
+		return nil, false
 	}
 	pv := &Preview{
 		URL:         target.String(),
@@ -194,21 +239,21 @@ func (p *Proxy) pagePreview(r *http.Request, target *url.URL) *Preview {
 			pv.Image = MediaPath(abs)
 		}
 	}
-	return pv
+	return pv, false
 }
 
 // oembed asks a video site for a title and thumbnail. Only its JSON is read.
-func (p *Proxy) oembed(r *http.Request, endpoint, videoURL, kind, id, site string) *Preview {
+func (p *Proxy) oembed(r *http.Request, endpoint, videoURL, kind, id, site string) (*Preview, bool) {
 	q := url.Values{"url": {videoURL}, "format": {"json"}}
+	pv := &Preview{URL: videoURL, Kind: kind, ID: id, Site: site}
 	resp, err := p.get(r, endpoint+"?"+q.Encode(), "application/json")
 	if err != nil {
-		// The player still works without a title.
-		return &Preview{URL: videoURL, Kind: kind, ID: id, Site: site}
+		// The player still works without a title, but this is not worth remembering for an hour.
+		return pv, failedForNow(err)
 	}
 	defer resp.Body.Close()
-	pv := &Preview{URL: videoURL, Kind: kind, ID: id, Site: site}
 	if resp.StatusCode != http.StatusOK {
-		return pv
+		return pv, resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
 	}
 	var o struct {
 		Title      string `json:"title"`
@@ -217,14 +262,14 @@ func (p *Proxy) oembed(r *http.Request, endpoint, videoURL, kind, id, site strin
 		ProviderNm string `json:"provider_name"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxOEmbed)).Decode(&o); err != nil {
-		return pv
+		return pv, false
 	}
 	pv.Title = clean(o.Title, maxTitleRunes)
 	pv.Description = clean(o.Author, maxDescRunes)
 	if u, err := url.Parse(o.Thumbnail); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != "" {
 		pv.Image = MediaPath(u.String())
 	}
-	return pv
+	return pv, false
 }
 
 // --- parsing ---
@@ -358,6 +403,13 @@ func youtubeID(u *url.URL) string {
 	return ""
 }
 
+var streamablePages = map[string]bool{
+	"login": true, "about": true, "terms": true, "privacy": true, "upload": true, "signup": true, "pricing": true,
+	"help": true, "blog": true, "apps": true, "tools": true, "legal": true, "report": true, "contact": true, "faq": true,
+	"embed": true, "api": true, "jobs": true, "press": true, "copyright": true, "register": true, "logout": true,
+	"account": true, "videos": true, "search": true, "explore": true, "trending": true, "popular": true, "settings": true,
+}
+
 // streamableID returns the clip id for streamable.com links, or "".
 func streamableID(u *url.URL) string {
 	if strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.") != "streamable.com" {
@@ -365,7 +417,8 @@ func streamableID(u *url.URL) string {
 	}
 	id := strings.Trim(u.Path, "/")
 	id = strings.TrimPrefix(id, "e/")
-	if streamableR.MatchString(id) {
+	// The site's own pages have short lowercase names too.
+	if streamableR.MatchString(id) && !streamablePages[id] {
 		return id
 	}
 	return ""

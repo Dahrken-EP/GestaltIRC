@@ -113,6 +113,18 @@ describe('fetchPreview', () => {
     expect(f).toHaveBeenCalledTimes(1) // not asked again: the answer was final
   })
 
+  it('asks again later when the bouncer says the other site failed just now', async () => {
+    const f = vi.fn().mockResolvedValue(ok({ kind: 'none', retry: true }))
+    vi.stubGlobal('fetch', f)
+    let now = 1000
+    expect(await fetchPreview('https://a.example/', () => now)).toBeNull()
+    expect(await fetchPreview('https://a.example/', () => now)).toBeNull()
+    expect(f).toHaveBeenCalledTimes(1) // not straight away
+    now += 61_000
+    await fetchPreview('https://a.example/', () => now)
+    expect(f).toHaveBeenCalledTimes(2)
+  })
+
   it('does not ask again right after a failure, but does after a while', async () => {
     const f = vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({}) })
     vi.stubGlobal('fetch', f)

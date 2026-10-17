@@ -48,8 +48,16 @@ Open these ports: 80 and 443 (tcp, and 443 udp), 3478 (udp and tcp), 5349 (tcp),
 - **TLS for `turns:`.** The template leaves the `cert` and `pkey` lines in `turnserver.conf`
   commented. To offer TURN over TLS (which gets through firewalls that only allow 443-like
   traffic), point them at a certificate for `TURN_HOST`, for example one copied from Caddy's
-  volume, and uncomment them. Without it, the `turns:` address in `bouncer.yaml` will fail and
-  browsers fall back to the others, so remove that line if you do not set it up.
+  volume, and uncomment them, then uncomment the `turns:` line in `bouncer.yaml` too. It ships
+  commented out because without a certificate it cannot work.
+- **Who can read the TURN secret.** `turnserver.conf` holds the shared secret and `setup.sh`
+  leaves it readable by every local user, because the coturn container runs unprivileged and I
+  could not test which user it needs. Anyone who can read it can mint TURN credentials and use
+  your server as a relay. Run this on a machine you control alone, or narrow the modes
+  (`chmod 640`, a group the container shares) after trying it.
+- **Credential lifetime.** `turn_ttl` defaults to a day. A call or transfer that is relayed
+  through coturn ends when the credential it started with expires, because an allocation cannot
+  be refreshed with an expired one. Direct connections are not affected.
 - **Back up the `data` volume.** `secret.key` and `bouncer.db` must stay together. Losing the
   key makes every stored network password unreadable, and it also protects the push key.
 - **Strict transport security.** `sts_duration` starts at one day. Raise it once you are sure

@@ -134,7 +134,7 @@ func TestPreviewNothingToShow(t *testing.T) {
 		"plain text":                          origin(t, "text/plain", []byte("hello")),
 		"an error page": httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/html")
-			w.WriteHeader(500)
+			w.WriteHeader(404)
 			w.Write(htmlPage(`<title>Server error</title>`))
 		})),
 	}
@@ -340,7 +340,52 @@ func TestPreviewRateLimitMatchesMedia(t *testing.T) {
 		e.proxy.release(7)
 	}
 	e.proxy.release(8)
-	if e.proxy.global != 0 || len(e.proxy.perUse) != 0 {
-		t.Errorf("slots leaked: global %d, per-user %v", e.proxy.global, e.proxy.perUse)
+	if e.proxy.general.global != 0 || len(e.proxy.general.perUse) != 0 {
+		t.Errorf("slots leaked: global %d, per-user %v", e.proxy.general.global, e.proxy.general.perUse)
+	}
+}
+
+func TestPreviewDoesNotRememberAFailureThatMayPass(t *testing.T) {
+	e := newEnv(t, true)
+	var fail atomic.Bool
+	fail.Store(true)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Write(htmlPage(`<title>Back again</title>`))
+	}))
+	defer s.Close()
+	if status, p := previewOf(t, e, s.URL); status != http.StatusOK || p["kind"] != "none" || p["retry"] != true {
+		t.Errorf("while the site failed: status %d, %v; want 200 with kind none and retry", status, p)
+	}
+	fail.Store(false)
+	if status, p := previewOf(t, e, s.URL); status != 200 || p["title"] != "Back again" {
+		t.Errorf("after it recovered: status %d, %v; the earlier failure was remembered", status, p)
+	}
+}
+
+func TestPreviewOfAConnectionRefusedIsNotRemembered(t *testing.T) {
+	e := newEnv(t, true)
+	if status, p := previewOf(t, e, "http://127.0.0.1:1/x"); status != http.StatusOK || p["retry"] != true {
+		t.Errorf("connection refused: status %d, %v; want a 200 that says to retry", status, p)
+	}
+	if _, ok := e.proxy.previews.get("http://127.0.0.1:1/x"); ok {
+		t.Error("a refused connection was cached")
+	}
+}
+
+func TestStreamableSitePagesAreNotClips(t *testing.T) {
+	for _, path := range []string{"login", "about", "terms", "upload", "privacy"} {
+		u, _ := url.Parse("https://streamable.com/" + path)
+		if id := streamableID(u); id != "" {
+			t.Errorf("/%s taken for a clip id %q", path, id)
+		}
+	}
+	u, _ := url.Parse("https://streamable.com/abc123")
+	if streamableID(u) != "abc123" {
+		t.Error("a real clip id was refused")
 	}
 }

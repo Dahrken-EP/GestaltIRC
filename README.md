@@ -58,7 +58,7 @@ Phase 5 adds pictures, video, link previews and direct chat:
   and it matches, nobody in between, including the IRC server and the bouncer, altered the
   connection. Without a TURN server (below) it only connects when a direct path exists.
 - **STUN and TURN.** `/api/ice` gives a logged-in browser the servers from `stun_uris` and
-  `turn_uris`, with TURN credentials that expire (`turn_ttl`) and are derived from a secret
+  `turn_uris`, with TURN credentials that expire (`turn_ttl`, a day by default) and are derived from a secret
   shared with coturn. `deploy/` has a Docker Compose setup with the bouncer, Caddy for HTTPS
   and coturn. See `deploy/README.md` for what was and was not run.
 

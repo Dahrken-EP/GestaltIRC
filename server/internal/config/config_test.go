@@ -83,7 +83,7 @@ func TestICEOptions(t *testing.T) {
 	if err != nil || c.TurnTTL != 600 || len(c.TurnURIs) != 2 {
 		t.Fatalf("valid ICE config: %+v, %v", c, err)
 	}
-	if d, _ := load(t, ""); d.TurnTTL != 3600 {
+	if d, _ := load(t, ""); d.TurnTTL != 86400 {
 		t.Errorf("default TTL = %d", d.TurnTTL)
 	}
 	bad := map[string]string{

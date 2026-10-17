@@ -7,12 +7,13 @@ interface Side {
   chat: DirectChat
   view: ChatView
   lines: ChatLine[]
+  history: ChatView[]
   sent: Array<{ sid: string; payload: { k: string; t: string; sdp?: string } }>
 }
 
 function pair(net = new FakeNet(), opts: { aWins?: boolean; ice?: () => Promise<RTCIceServer[]> } = {}) {
   const make = (name: string, wins: boolean): Side => {
-    const side: Side = { view: undefined as unknown as ChatView, lines: [], sent: [], chat: undefined as unknown as DirectChat }
+    const side: Side = { view: undefined as unknown as ChatView, lines: [], history: [], sent: [], chat: undefined as unknown as DirectChat }
     side.chat = new DirectChat({
       peer: name,
       iceServers: opts.ice ?? (async () => [{ urls: 'stun:stun.example.org' }]),
@@ -24,7 +25,10 @@ function pair(net = new FakeNet(), opts: { aWins?: boolean; ice?: () => Promise<
         // Delivered a moment later, as IRC would.
         setTimeout(() => (side === a ? b : a).chat.handleSignal(sid, payload), 1)
       },
-      onChange: (v) => (side.view = v),
+      onChange: (v) => {
+        side.view = v
+        side.history.push(v)
+      },
       onMessage: (l) => side.lines.push(l),
       inviteTimeoutMs: 5000,
     })
@@ -116,6 +120,55 @@ describe('DirectChat connection', () => {
     expect(p.b.view.state).toBe('ended')
     expect(p.a.view.state).toBe('ended')
     expect(p.a.view.reason).toBe('They closed the chat.')
+  })
+
+  it('records one ending, with the real reason, when the other side hangs up', async () => {
+    const p = pair()
+    await connect(p)
+    p.b.chat.hangUp()
+    await settle()
+    // Closing the connection reports back; that must not add a second, wrong ending.
+    const endings = p.a.history.filter((v) => v.state === 'ended').map((v) => v.reason)
+    expect(endings).toEqual(['They closed the chat.'])
+  })
+
+  it('closes a chat whose certificate cannot be read, instead of calling it verified', async () => {
+    const p = pair()
+    p.net.hideFingerprintNext = true // the caller's own descriptions carry no fingerprint
+    void p.a.chat.invite()
+    await settle()
+    void p.b.chat.acceptIncoming()
+    await settle(300)
+    expect(p.a.view.state).toBe('ended')
+    expect(p.a.view.reason).toContain('certificate')
+    expect(p.a.view.code).toBe('')
+    expect(p.b.view.state).toBe('ended')
+  })
+
+  it('keeps a file offer waiting when too many transfers are running', async () => {
+    const p = pair()
+    await connect(p)
+    const big = (n: string) => new File([new Uint8Array(3_000_000)], n)
+    const ids = [1, 2, 3, 4, 5].map((i) => p.a.chat.offerFile(big('f' + i))!)
+    await settle()
+    for (const id of ids.slice(0, 4)) p.b.chat.acceptFile(id)
+    p.b.chat.acceptFile(ids[4]!)
+    const fifth = p.b.view.transfers.find((t) => t.id === ids[4])!
+    expect(fifth.state).toBe('offered')
+    expect(fifth.error).toContain('wait')
+    expect(p.a.view.transfers.find((t) => t.id === ids[4])!.state).toBe('waiting')
+  })
+
+  it('tells the caller when accepting fails, instead of leaving them to time out', async () => {
+    const p = pair()
+    void p.a.chat.invite()
+    await settle()
+    p.net.failNext = true
+    void p.b.chat.acceptIncoming()
+    await settle(100)
+    expect(p.b.view.state).toBe('ended')
+    expect(p.b.sent.at(-1)).toMatchObject({ payload: { t: 'reject' } })
+    expect(p.a.view.reason).toBe('They declined.')
   })
 
   it('ends when the network connection fails', async () => {

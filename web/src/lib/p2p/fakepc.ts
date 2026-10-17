@@ -8,11 +8,24 @@ let counter = 0
 
 export class FakeNet {
   byFingerprint = new Map<string, FakePC>()
+  /** Makes the next connection write descriptions with no fingerprint line. */
+  hideFingerprintNext = false
   /** Called with every config the connections were made with. */
   configs: RTCConfiguration[] = []
+  /** Makes the next connection created refuse every description it is given. */
+  failNext = false
   create = (config: RTCConfiguration): RTCPeerConnection => {
     this.configs.push(config)
-    return new FakePC(this) as unknown as RTCPeerConnection
+    const pc = new FakePC(this)
+    if (this.hideFingerprintNext) {
+      pc.hideFingerprint = true
+      this.hideFingerprintNext = false
+    }
+    if (this.failNext) {
+      pc.rejectRemote = true
+      this.failNext = false
+    }
+    return pc as unknown as RTCPeerConnection
   }
 }
 
@@ -33,6 +46,7 @@ export class FakePC {
   holdGathering = false
   /** Makes setRemoteDescription fail. */
   rejectRemote = false
+  hideFingerprint = false
 
   constructor(private net: FakeNet) {
     const n = ++counter
@@ -41,7 +55,8 @@ export class FakePC {
   }
 
   private sdp(kind: string): string {
-    return `v=0\r\no=- ${counter} 2 IN IP4 127.0.0.1\r\na=fingerprint:sha-256 ${this.fingerprint}\r\na=x-kind:${kind}\r\n`
+    const fp = this.hideFingerprint ? '' : `a=fingerprint:sha-256 ${this.fingerprint}\r\n`
+    return `v=0\r\no=- ${counter} 2 IN IP4 127.0.0.1\r\na=x-id:${this.fingerprint}\r\n${fp}a=x-kind:${kind}\r\n`
   }
 
   async createOffer() {
@@ -61,7 +76,7 @@ export class FakePC {
   async setRemoteDescription(d: { type: string; sdp: string }) {
     if (this.rejectRemote) throw new Error('bad description')
     this.remoteDescription = d
-    const m = /a=fingerprint:sha-256 (\S+)/.exec(d.sdp)
+    const m = /a=x-id:(\S+)/.exec(d.sdp)
     this.remote = (m && this.net.byFingerprint.get(m[1]!)) || null
     // The answerer is connected once it has both; the offerer once it has the answer.
     if (d.type === 'answer' && this.remote) {

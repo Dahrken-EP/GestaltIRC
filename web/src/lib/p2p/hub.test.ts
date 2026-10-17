@@ -12,7 +12,7 @@ interface Node {
   wire: Array<{ to: string; value: string }>
 }
 
-function network(nicks: string[], opts: { maxIncoming?: number } = {}) {
+function network(nicks: string[], opts: { maxIncoming?: number; maxChats?: number } = {}) {
   const net = new FakeNet()
   const nodes = new Map<string, Node>()
   for (const nick of nicks) {
@@ -23,6 +23,7 @@ function network(nicks: string[], opts: { maxIncoming?: number } = {}) {
       createConnection: net.create,
       pace: 10,
       maxIncoming: opts.maxIncoming,
+      maxChats: opts.maxChats,
       sendSignalLine: (peer, value) => {
         node.wire.push({ to: peer, value })
         // The network delivers it with the sender's nick.
@@ -119,6 +120,16 @@ describe('P2pHub', () => {
     await settle(300)
     expect(a.hub.has('bob')).toBe(false)
     expect(b.views.get('alice')!.state).toBe('ended')
+  })
+
+  it('forgets finished chats with nothing in them when there are too many', () => {
+    const { nodes } = network(['a', 'b'], { maxChats: 1 })
+    const a = nodes.get('a')!
+    void a.hub.chat('x').invite()
+    a.hub.chat('x').hangUp()
+    a.hub.chat('y')
+    expect(a.hub.has('x')).toBe(false)
+    expect(a.hub.has('y')).toBe(true)
   })
 
   it('uses the tag name other clients can recognise', () => {

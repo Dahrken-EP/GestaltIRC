@@ -52,7 +52,7 @@ type Config struct {
 	// file instead, which keeps it out of this one.
 	TurnSecret     string `yaml:"turn_secret"`
 	TurnSecretFile string `yaml:"turn_secret_file"`
-	// TurnTTL is how many seconds issued TURN credentials stay valid. Default 3600.
+	// TurnTTL is how many seconds issued TURN credentials stay valid. Default 86400 (a day): a relayed call cannot renew its credential, so it ends when this does.
 	TurnTTL int `yaml:"turn_ttl"`
 	// DataDir holds the SQLite database and, by default, the secret key.
 	DataDir string `yaml:"data_dir"`
@@ -106,7 +106,7 @@ func (c *Config) setDefaults() {
 		c.CookieSecure = "auto"
 	}
 	if c.TurnTTL == 0 {
-		c.TurnTTL = 3600
+		c.TurnTTL = 86400
 	}
 	if c.PushContact == "" {
 		c.PushContact = "mailto:admin@localhost"

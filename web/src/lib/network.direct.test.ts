@@ -136,6 +136,28 @@ describe('direct chats in a network', () => {
     expect(bob.net.find('p2p:alice')!.p2p!.state).toBe('ended')
   })
 
+  it.each(['#chan', 'two words', 'a:b', '', 'x'.repeat(100)])('refuses to send an offer to %j, which is not a nick', async (target) => {
+    const { alice } = pair()
+    alice.sent.length = 0
+    alice.net.openDirect(target)
+    await settle()
+    expect(alice.sent).toEqual([])
+    expect(alice.net.buffers.some((b) => b.kind === 'p2p')).toBe(false)
+    expect(alice.net.active.messages.at(-1)).toMatchObject({ kind: 'error' })
+  })
+
+  it('refuses a direct chat with yourself, or on a network without message tags', async () => {
+    const { alice } = pair()
+    alice.net.openDirect('alice')
+    expect(alice.net.active.messages.at(-1)!.text).toContain('yourself')
+    alice.net.setCaps(new Set(['server-time']))
+    alice.net.openDirect('bob')
+    expect(alice.net.active.messages.at(-1)!.text).toContain('message tags')
+    expect(alice.net.buffers.some((b) => b.kind === 'p2p')).toBe(false)
+    await settle()
+    expect(alice.sent).toEqual([])
+  })
+
   it('opens from the /direct command', () => {
     const { alice } = pair()
     alice.net.submit('/direct bob')

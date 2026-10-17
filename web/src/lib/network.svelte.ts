@@ -362,9 +362,22 @@ export class NetworkState {
 
   /** Opens a direct chat with `nick` and asks them to connect. */
   openDirect(nick: string, invite = true): void {
+    const problem = this.directProblem(nick)
+    if (problem) {
+      this.local(this.active, 'error', problem)
+      return
+    }
     const buf = this.directBuffer(nick)
     this.select(buf.key)
     if (invite && buf.p2p?.state !== 'connected') void this.hub.chat(nick).invite()
+  }
+
+  /** Why a direct chat with `nick` cannot be started, or '' when it can. Checked before anything is sent: the offer carries the sender's network address. */
+  private directProblem(nick: string): string {
+    if (!/^[A-Za-z\[\]\\`_^{|}][A-Za-z0-9\[\]\\`_^{|}-]{0,63}$/.test(nick)) return `"${nick}" is not a nick. A direct chat is with one person.`
+    if (this.isSelf(nick)) return 'You cannot start a direct chat with yourself.'
+    if (!this.caps.has('message-tags')) return 'This network does not support message tags, which direct chat needs to set up the connection.'
+    return ''
   }
 
   private directBuffer(nick: string): Buffer {

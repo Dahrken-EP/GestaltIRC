@@ -18,6 +18,8 @@ export interface HubOptions {
   pace?: number
   /** Most people who may have an unanswered request to us at once. */
   maxIncoming?: number
+  /** Chats kept at once. Over this, finished ones with nothing in them are forgotten. */
+  maxChats?: number
 }
 
 export { SIGNAL_TAG }
@@ -37,6 +39,7 @@ export class P2pHub {
     const key = peer.toLowerCase()
     let c = this.chats.get(key)
     if (!c) {
+      this.prune()
       this.names.set(key, peer)
       c = new DirectChat({
         peer,
@@ -55,6 +58,20 @@ export class P2pHub {
       this.chats.set(key, c)
     }
     return c
+  }
+
+  /** Forgets chats that ended without ever holding anything, so strangers' passing offers do not pile up. */
+  private prune(): void {
+    if (this.chats.size < (this.o.maxChats ?? 50)) return
+    for (const [key, view] of this.views) {
+      if (view.state !== 'ended' && view.state !== 'idle') continue
+      if (view.transfers.length) continue
+      this.chats.get(key)?.dispose()
+      this.chats.delete(key)
+      this.views.delete(key)
+      this.names.delete(key)
+      if (this.chats.size < (this.o.maxChats ?? 50)) return
+    }
   }
 
   has(peer: string): boolean {
@@ -94,11 +111,12 @@ export class P2pHub {
 
   dispose(): void {
     clearTimeout(this.pacing)
-    this.queue = []
+    // Goodbyes still waiting their turn go out now, all at once: the page is going away.
     for (const c of this.chats.values()) {
       c.hangUp()
       c.dispose()
     }
+    for (const send of this.queue.splice(0)) send()
     this.chats.clear()
     this.views.clear()
   }

@@ -9,6 +9,7 @@ package media
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -27,16 +28,20 @@ import (
 
 // Defaults for the limits. A Proxy's fields can be changed before Register.
 const (
-	DefaultMaxImage  = 15 << 20  // 15 MiB
-	DefaultMaxVideo  = 150 << 20 // 150 MiB
-	maxURLLen        = 2048
-	perUserFetches   = 4
-	globalFetches    = 24
-	sniffLen         = 512
-	userAgent        = "irc-webclient-media-proxy/1 (+https://github.com/Dahrken-EP/wesite-stuff)"
-	maxRedirects     = 3
-	fetchTimeout     = 20 * time.Second
-	videoFetchTimout = 10 * time.Minute
+	DefaultMaxImage   = 15 << 20  // 15 MiB
+	DefaultMaxVideo   = 150 << 20 // 150 MiB
+	maxURLLen         = 2048
+	perUserFetches    = 4
+	globalFetches     = 24
+	perUserVideos     = 2
+	globalVideos      = 12
+	sniffLen          = 512
+	userAgent         = "irc-webclient-media-proxy/1 (+https://github.com/Dahrken-EP/wesite-stuff)"
+	maxRedirects      = 3
+	fetchTimeout      = 20 * time.Second
+	videoFetchTimeout = 10 * time.Minute
+	sniffCacheMax     = 256
+	sniffCacheTTL     = 10 * time.Minute
 )
 
 // Proxy serves /api/media and /api/preview.
@@ -44,19 +49,31 @@ type Proxy struct {
 	// MaxImage and MaxVideo cap the size of what is served, in bytes.
 	MaxImage int64
 	MaxVideo int64
+	// ShortTimeout is how long a request has to produce its first bytes, and to finish if it
+	// turns out to be a picture or a preview. A video may take much longer once it has started.
+	ShortTimeout time.Duration
 
 	// YouTubeOEmbed and StreamableOEmbed are the oEmbed endpoints used for previews.
 	// They can be replaced in tests.
 	YouTubeOEmbed    string
 	StreamableOEmbed string
 
-	client      *http.Client
-	videoClient *http.Client
-	previews    *previewCache
+	client   *http.Client
+	previews *previewCache
 
-	mu     sync.Mutex
-	perUse map[int64]int
-	global int
+	// Pictures and previews share one pool of slots. A video holds a slot for as long as
+	// it plays, so videos get a pool of their own and cannot starve the pictures.
+	general *limiter
+	videos  *limiter
+
+	sniffMu sync.Mutex
+	sniffed map[string]sniffedType
+}
+
+type sniffedType struct {
+	contentType string
+	k           kind
+	expires     time.Time
 }
 
 // New builds a proxy whose requests go through netguard, on ports 80 and 443 only.
@@ -64,12 +81,16 @@ func New() *Proxy {
 	return &Proxy{
 		MaxImage:         DefaultMaxImage,
 		MaxVideo:         DefaultMaxVideo,
+		ShortTimeout:     fetchTimeout,
 		YouTubeOEmbed:    "https://www.youtube.com/oembed",
 		StreamableOEmbed: "https://api.streamable.com/oembed.json",
-		client:           netguard.NewClient(netguard.Options{Timeout: fetchTimeout, MaxRedirects: maxRedirects, Ports: []int{80, 443}}),
-		videoClient:      netguard.NewClient(netguard.Options{Timeout: videoFetchTimout, MaxRedirects: maxRedirects, Ports: []int{80, 443}}),
-		previews:         newPreviewCache(500, time.Hour, 5*time.Minute),
-		perUse:           map[int64]int{},
+		// The client's own timeout is only a ceiling. Each request sets its own, shorter one:
+		// whether it is a picture or a video is not known until the first bytes arrive.
+		client:   netguard.NewClient(netguard.Options{Timeout: videoFetchTimeout, MaxRedirects: maxRedirects, Ports: []int{80, 443}}),
+		previews: newPreviewCache(500, time.Hour, 5*time.Minute),
+		general:  newLimiter(perUserFetches, globalFetches),
+		videos:   newLimiter(perUserVideos, globalVideos),
+		sniffed:  map[string]sniffedType{},
 	}
 }
 
@@ -80,29 +101,45 @@ func (p *Proxy) Register(a *api.API) {
 	a.Handle("GET /api/preview", p.handlePreview)
 }
 
+// limiter caps how much one user, and the bouncer as a whole, does at once.
+type limiter struct {
+	perUser, total int
+
+	mu     sync.Mutex
+	perUse map[int64]int
+	global int
+}
+
+func newLimiter(perUser, total int) *limiter {
+	return &limiter{perUser: perUser, total: total, perUse: map[int64]int{}}
+}
+
 // acquire takes a slot for the user. It returns false when the user or the
 // bouncer as a whole is already doing as much as allowed.
-func (p *Proxy) acquire(userID int64) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.perUse[userID] >= perUserFetches || p.global >= globalFetches {
+func (l *limiter) acquire(userID int64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.perUse[userID] >= l.perUser || l.global >= l.total {
 		return false
 	}
-	p.perUse[userID]++
-	p.global++
+	l.perUse[userID]++
+	l.global++
 	return true
 }
 
-func (p *Proxy) release(userID int64) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.perUse[userID] <= 1 {
-		delete(p.perUse, userID)
+func (l *limiter) release(userID int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.perUse[userID] <= 1 {
+		delete(l.perUse, userID)
 	} else {
-		p.perUse[userID]--
+		l.perUse[userID]--
 	}
-	p.global--
+	l.global--
 }
+
+func (p *Proxy) acquire(userID int64) bool { return p.general.acquire(userID) }
+func (p *Proxy) release(userID int64)      { p.general.release(userID) }
 
 // errBadURL means the address cannot be fetched at all, whatever is behind it.
 var errBadURL = errors.New("not a fetchable address")
@@ -152,7 +189,7 @@ func sniff(head []byte) (string, kind) {
 	return ct, kindNone
 }
 
-var rangeRe = regexp.MustCompile(`^bytes=\d*-\d*$`)
+var rangeRe = regexp.MustCompile(`^bytes=(\d*)-\d*$`)
 
 func (p *Proxy) handleMedia(w http.ResponseWriter, r *http.Request, user store.User) {
 	target, err := parseTarget(r.URL.Query().Get("u"))
@@ -165,9 +202,21 @@ func (p *Proxy) handleMedia(w http.ResponseWriter, r *http.Request, user store.U
 		api.WriteError(w, http.StatusTooManyRequests, "too many media requests at once")
 		return
 	}
-	defer p.release(user.ID)
+	generalHeld := true
+	defer func() {
+		if generalHeld {
+			p.release(user.ID)
+		}
+	}()
 
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target.String(), nil)
+	// A request has a short time to produce its first bytes. A picture must finish in that
+	// time too; a video, once it is known to be one, may play for much longer.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	deadline := time.AfterFunc(p.ShortTimeout, cancel)
+	defer deadline.Stop()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		api.WriteError(w, http.StatusBadRequest, "not a web address")
 		return
@@ -175,18 +224,30 @@ func (p *Proxy) handleMedia(w http.ResponseWriter, r *http.Request, user store.U
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "image/*,video/*")
 	// Neither the user's cookies nor where they came from go to the other site.
-	if rg := r.Header.Get("Range"); rg != "" && rangeRe.MatchString(rg) {
-		req.Header.Set("Range", rg)
+	var known *sniffedType
+	if rg := r.Header.Get("Range"); rg != "" {
+		if m := rangeRe.FindStringSubmatch(rg); m != nil {
+			req.Header.Set("Range", rg)
+			if m[1] != "" && m[1] != "0" {
+				// A range that starts part-way (seeking) has no file header to look at, so
+				// what the file is comes from a look at its start.
+				ct, k, err := p.typeOf(ctx, target)
+				if err != nil {
+					p.writeFetchError(w, r, err)
+					return
+				}
+				known = &sniffedType{contentType: ct, k: k}
+				if k != kindVideo {
+					api.WriteError(w, http.StatusUnsupportedMediaType, "that is not a video this proxy serves")
+					return
+				}
+			}
+		}
 	}
 
-	// A range request is how a video seeks, so it gets the long timeout.
-	client := p.client
-	if req.Header.Get("Range") != "" || hasVideoExt(target.Path) {
-		client = p.videoClient
-	}
-	resp, err := client.Do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
-		p.writeFetchError(w, err)
+		p.writeFetchError(w, r, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -201,8 +262,14 @@ func (p *Proxy) handleMedia(w http.ResponseWriter, r *http.Request, user store.U
 	}
 
 	br := bufio.NewReaderSize(resp.Body, 4096)
-	head, _ := br.Peek(sniffLen)
-	contentType, k := sniff(head)
+	var contentType string
+	var k kind
+	if known != nil {
+		contentType, k = known.contentType, known.k
+	} else {
+		head, _ := br.Peek(sniffLen)
+		contentType, k = sniff(head)
+	}
 	if k == kindNone {
 		api.WriteError(w, http.StatusUnsupportedMediaType, "that is not an image or a video this proxy serves")
 		return
@@ -210,6 +277,16 @@ func (p *Proxy) handleMedia(w http.ResponseWriter, r *http.Request, user store.U
 	limit := p.MaxImage
 	if k == kindVideo {
 		limit = p.MaxVideo
+		// From here on this is a long-lived stream: move to the video pool and the long timeout.
+		if !p.videos.acquire(user.ID) {
+			w.Header().Set("Retry-After", "5")
+			api.WriteError(w, http.StatusTooManyRequests, "too many videos at once")
+			return
+		}
+		defer p.videos.release(user.ID)
+		p.release(user.ID)
+		generalHeld = false
+		deadline.Reset(videoFetchTimeout)
 	}
 	if resp.ContentLength > limit {
 		api.WriteError(w, http.StatusRequestEntityTooLarge, "that file is too large")
@@ -246,16 +323,52 @@ func (p *Proxy) handleMedia(w http.ResponseWriter, r *http.Request, user store.U
 	}
 }
 
-func hasVideoExt(path string) bool {
-	p := strings.ToLower(path)
-	return strings.HasSuffix(p, ".mp4") || strings.HasSuffix(p, ".webm")
+// typeOf says what a file is by looking at its first bytes, remembering the answer for a
+// while so that seeking through a video does not look again at every jump.
+func (p *Proxy) typeOf(ctx context.Context, target *url.URL) (string, kind, error) {
+	key := target.String()
+	p.sniffMu.Lock()
+	if e, ok := p.sniffed[key]; ok && time.Now().Before(e.expires) {
+		p.sniffMu.Unlock()
+		return e.contentType, e.k, nil
+	}
+	p.sniffMu.Unlock()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, key, nil)
+	if err != nil {
+		return "", kindNone, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "image/*,video/*")
+	req.Header.Set("Range", "bytes=0-"+strconv.Itoa(sniffLen-1))
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return "", kindNone, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return "", kindNone, nil
+	}
+	head, _ := io.ReadAll(io.LimitReader(resp.Body, sniffLen))
+	ct, k := sniff(head)
+
+	p.sniffMu.Lock()
+	defer p.sniffMu.Unlock()
+	if len(p.sniffed) >= sniffCacheMax {
+		p.sniffed = map[string]sniffedType{}
+	}
+	p.sniffed[key] = sniffedType{contentType: ct, k: k, expires: time.Now().Add(sniffCacheTTL)}
+	return ct, k, nil
 }
 
-func (p *Proxy) writeFetchError(w http.ResponseWriter, err error) {
+func (p *Proxy) writeFetchError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case r.Context().Err() != nil:
+		// The browser gave up, so there is nobody to answer.
+		return
 	case errors.Is(err, netguard.ErrBlocked):
 		api.WriteError(w, http.StatusForbidden, "that address is not allowed")
-	case errors.Is(err, http.ErrHandlerTimeout), strings.Contains(err.Error(), "deadline"), strings.Contains(err.Error(), "timeout"):
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded), errors.Is(err, http.ErrHandlerTimeout), strings.Contains(err.Error(), "deadline"), strings.Contains(err.Error(), "timeout"):
 		api.WriteError(w, http.StatusGatewayTimeout, "the other site took too long")
 	default:
 		api.WriteError(w, http.StatusBadGateway, "could not reach the other site")

@@ -18,6 +18,8 @@ stun_uris:
   - "stun:@TURN_HOST@:3478"
 turn_uris:
   - "turn:@TURN_HOST@:3478?transport=udp"
-  - "turns:@TURN_HOST@:5349?transport=tcp"
+  # Turn this on together with the cert and pkey lines in turnserver.conf (see deploy/README.md).
+  # Listed without a certificate it only makes browsers wait for a connection that cannot work.
+  # - "turns:@TURN_HOST@:5349?transport=tcp"
 turn_secret_file: "/run/secrets/turn_secret"
-turn_ttl: 3600
+turn_ttl: 86400

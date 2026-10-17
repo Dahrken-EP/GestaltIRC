@@ -146,7 +146,11 @@ export class DirectChat {
       const session = await this.makeSession()
       await session.accept(offer.sdp)
     } catch {
-      if (this.sid === sid && this.state === 'connecting') this.end('Could not accept the connection.')
+      if (this.sid === sid && this.state === 'connecting') {
+        // The caller is waiting for an answer that will not come; tell them so they do not sit through the timeout.
+        this.o.signal(sid, { k: 'chat', t: 'reject' })
+        this.end('Could not accept the connection.')
+      }
     }
   }
 
@@ -247,8 +251,9 @@ export class DirectChat {
   acceptFile(id: string): void {
     const t = this.transfer(id)
     if (!t || t.dir !== 'in' || t.state !== 'offered') return
-    if (this.openCount() >= MAX_OPEN_TRANSFERS) return this.fileMessage('file-reject', id, 'declined')
-    this.setTransfer(id, { state: 'active' })
+    // The offer stays, so it can be accepted once another transfer has finished.
+    if (this.openCount() >= MAX_OPEN_TRANSFERS) return this.setTransfer(id, { error: 'wait for another transfer to finish' })
+    this.setTransfer(id, { state: 'active', error: undefined })
     this.control({ t: 'file-accept', id })
   }
 
@@ -316,7 +321,14 @@ export class DirectChat {
     const opened = () => {
       clearTimeout(this.timer)
       const fp = this.session?.fingerprints ?? { local: '', remote: '' }
-      this.update({ state: 'connected', reason: '', fingerprints: fp, code: safetyCode(fp.local, fp.remote) })
+      const code = safetyCode(fp.local, fp.remote)
+      if (!code) {
+        // Without a certificate to compare there is nothing to verify, so nothing is sent.
+        this.o.signal(this.sid, { k: 'chat', t: 'bye' })
+        this.end("Could not read the other browser's certificate, so the chat was closed.")
+        return
+      }
+      this.update({ state: 'connected', reason: '', fingerprints: fp, code })
     }
     if (ch.readyState === 'open') opened()
     else ch.onopen = opened
@@ -493,12 +505,13 @@ export class DirectChat {
       l.rx?.cancel()
     }
     this.live.clear()
+    // Detached first: closing reports back, and a session that is no longer ours must not end the chat again.
     const session = this.session
-    if (session && graceful) setTimeout(() => session.close(), 300)
-    else session?.close()
     this.session = null
     this.chat = null
     this.pending = null
+    if (session && graceful) setTimeout(() => session.close(), 300)
+    else session?.close()
   }
 
   private reset(): void {

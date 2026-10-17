@@ -22,7 +22,8 @@
   // so this runs only for messages the user can see.
   $effect(() => {
     for (const { href, info } of items) {
-      const needsPreview = info.kind === 'link' || info.kind === 'youtube' || info.kind === 'streamable'
+      // A video card gets its title from the bouncer only if previews are on; the player works without.
+      const needsPreview = info.kind === 'link' || ((info.kind === 'youtube' || info.kind === 'streamable') && settings.previews)
       if (!needsPreview || href in previews) continue
       previews[href] = null
       fetchPreview(href).then((p) => (previews[href] = p))
