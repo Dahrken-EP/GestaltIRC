@@ -289,10 +289,8 @@ fn main() {
                     if matches!(url.scheme(), "tauri" | "about" | "blob" | "data") || url.host_str() == Some("tauri.localhost") {
                         return true;
                     }
-                    match st.allowed.lock().unwrap().as_ref() {
-                        Some(a) => url.origin() == a.origin(),
-                        None => false,
-                    }
+                    let allowed = st.allowed.lock().unwrap().clone();
+                    allowed.is_some_and(|a| url.origin() == a.origin())
                 })
                 .build()?;
             *app.state::<App>().launcher.lock().unwrap() = win.url().ok();

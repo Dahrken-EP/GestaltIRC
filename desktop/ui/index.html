@@ -55,7 +55,7 @@
       const $ = (id) => document.getElementById(id)
 
       async function diagnose() {
-        const r = { webrtc: typeof RTCPeerConnection, getUserMedia: typeof navigator.mediaDevices?.getUserMedia, audioContext: typeof (window.AudioContext || window.webkitAudioContext) }
+        const r = { webrtc: typeof RTCPeerConnection, prefixed: typeof window.webkitRTCPeerConnection, dataChannel: typeof window.RTCDataChannel, mediaStream: typeof window.MediaStream, getUserMedia: typeof navigator.mediaDevices?.getUserMedia, audioContext: typeof (window.AudioContext || window.webkitAudioContext) }
         try {
           const a = new RTCPeerConnection({ iceServers: [] })
           a.createDataChannel('x')
