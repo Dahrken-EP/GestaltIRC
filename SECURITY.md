@@ -31,7 +31,7 @@ policy. Over HTTPS, `Strict-Transport-Security` is sent once `sts_duration` is s
 and page previews itself, refuses private, loopback and link-local addresses (checked at connect time, on the
 address actually dialled, so a redirect or a DNS answer that changes cannot get past it), judges the type by the
 bytes and not the server's header, refuses SVG and HTML as media, caps sizes, time and concurrency, and
-forwards no cookies. A YouTube or Streamable player loads only after you press play, in a sandboxed frame, and is told this site's address (and nothing more of the page's) because YouTube will not play without one.
+forwards no cookies. Imgur turns away the addresses of many servers, so there is an opt-in setting that makes the browser load imgur pictures itself (the policy allows `i.imgur.com` for pictures and video, and imgur then sees the user's address). A YouTube or Streamable player loads only after you press play, in a sandboxed frame, and is told this site's address (and nothing more of the page's) because YouTube will not play without one.
 
 **A guest, or someone who finds a guest link.** Guest links are off until a user switches them on, and the operator can
 switch them off with `disable_guests`. A link is 144 random bits, wrong ones are counted per address and block it, a direct

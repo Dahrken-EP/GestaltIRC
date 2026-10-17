@@ -291,8 +291,16 @@
           <input type="checkbox" bind:checked={settings.embeds} onchange={() => settings.save()} />
           Offer YouTube and Streamable players
         </label>
+        <label class="check">
+          <input type="checkbox" bind:checked={settings.imgurDirect} onchange={() => settings.save()} />
+          Load imgur pictures from imgur itself, in this browser
+        </label>
         <p class="note">
-          The bouncer fetches these for you, so the other sites never see your address. A player loads from YouTube or
+          Imgur turns away the addresses of many servers. If the bouncer's is one of them (a picture says imgur answered 429 or 403),
+          this makes your browser fetch imgur pictures instead. Imgur then sees your address, and nothing else is sent.
+        </p>
+        <p class="note">
+          The bouncer fetches everything else for you, so those sites never see your address. A player loads from YouTube or
           Streamable only when you press play.
         </p>
       {:else if tab === 'plugins'}

@@ -26,6 +26,8 @@ interface Stored {
   inlineMedia: boolean
   embeds: boolean
   previews: boolean
+  /** Load imgur pictures from imgur itself, which sees this browser's address, when the bouncer's own address is refused. */
+  imgurDirect: boolean
   notify: boolean
 }
 
@@ -45,11 +47,12 @@ const DEFAULTS: Stored = {
   inlineMedia: true,
   embeds: true,
   previews: true,
+  imgurDirect: false,
   notify: false,
 }
 
 /** The keys saved to the bouncer. */
-const SYNCED = ['theme', 'density', 'keywords', 'networkKeywords', 'networkMuted', 'nickColors', 'showMembers', 'showBufferList', 'timestamps', 'sendTyping', 'pushToTalk', 'announceVoice', 'inlineMedia', 'embeds', 'previews'] as const
+const SYNCED = ['theme', 'density', 'keywords', 'networkKeywords', 'networkMuted', 'nickColors', 'showMembers', 'showBufferList', 'timestamps', 'sendTyping', 'pushToTalk', 'announceVoice', 'inlineMedia', 'embeds', 'previews', 'imgurDirect'] as const
 
 const KEY = 'irc:settings'
 const PUSH_DELAY_MS = 800
@@ -93,6 +96,7 @@ class Settings {
   embeds = $state(true)
   /** Show a title and picture for other links, which the bouncer fetches. */
   previews = $state(true)
+  imgurDirect = $state(false)
   notify = $state(false)
 
   private remote: ((prefs: Record<string, unknown>) => void) | null = null
@@ -118,6 +122,7 @@ class Settings {
     if (typeof s.inlineMedia === 'boolean') this.inlineMedia = s.inlineMedia
     if (typeof s.embeds === 'boolean') this.embeds = s.embeds
     if (typeof s.previews === 'boolean') this.previews = s.previews
+    if (typeof s.imgurDirect === 'boolean') this.imgurDirect = s.imgurDirect
     if (typeof s.notify === 'boolean') this.notify = s.notify
   }
 

@@ -7,7 +7,7 @@ import (
 
 // AppCSP is the content security policy of the web client. The same policy, without the two
 // directives a <meta> tag cannot carry, is in web/index.html, and a test keeps them in step.
-const AppCSP = "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; media-src 'self'; " +
+const AppCSP = "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: https://i.imgur.com; media-src 'self' https://i.imgur.com; " +
 	"frame-src 'self' https://www.youtube-nocookie.com https://streamable.com; style-src 'self' 'unsafe-inline'; " +
 	"object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 
