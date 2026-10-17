@@ -76,6 +76,11 @@ func (a *API) Handle(pattern string, h func(http.ResponseWriter, *http.Request, 
 	a.mux.HandleFunc(pattern, a.authed(h))
 }
 
+// HandlePublic adds a route that needs no login, for something a link grants access to.
+func (a *API) HandlePublic(pattern string, h http.Handler) {
+	a.mux.Handle(pattern, h)
+}
+
 // --- identity ---
 
 type ctxKey struct{}

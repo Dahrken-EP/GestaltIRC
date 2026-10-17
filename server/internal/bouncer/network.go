@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"gestalt/server/internal/accounts"
+	"gestalt/server/internal/guests"
 	"gestalt/server/internal/irc"
 	"gestalt/server/internal/netguard"
 	"gestalt/server/internal/store"
@@ -103,11 +104,13 @@ func parseNames(list string) []member {
 
 // Network is one upstream IRC connection, kept alive for the user.
 type Network struct {
-	spec  accounts.NetworkSpec
-	id    int64  // key for the store
-	name  string // display name, as the user chose it
-	store *store.Store
-	limit int // history cap per buffer
+	// guests holds the links people without Gestalt joined by. It may be nil.
+	guests *guests.Hub
+	spec   accounts.NetworkSpec
+	id     int64  // key for the store
+	name   string // display name, as the user chose it
+	store  *store.Store
+	limit  int // history cap per buffer
 	// replayLimit caps the messages per buffer sent on attach.
 	replayLimit int
 
@@ -450,6 +453,10 @@ func (n *Network) detachUpstream(err error) {
 // Forward sends a client's message to the network. Echoes for PRIVMSG and
 // NOTICE are synthesised when the network does not echo them.
 func (n *Network) Forward(m *irc.Message) error {
+	// A message to a guest goes to the guest, not to the network, which has no such nick.
+	if m.Command == "TAGMSG" && n.guests != nil && n.guests.FromHost(n.id, m.Param(0), m.Tags) {
+		return nil
+	}
 	n.mu.Lock()
 	c := n.client
 	if c == nil {
@@ -518,7 +525,20 @@ func (n *Network) Attach(s *Session) error {
 		s.enqueueMarker(mk.Target, mk.TimeMS)
 	}
 	n.sessions[s] = struct{}{}
+	n.guestsAttached(s)
 	return nil
+}
+
+// guestsAttached tells a browser that has just attached about the guests already connected, which it missed.
+// Caller holds n.mu.
+func (n *Network) guestsAttached(s *Session) {
+	if n.guests == nil {
+		return
+	}
+	n.guests.SessionsChanged(n.id, len(n.sessions))
+	for _, g := range n.guests.LiveOn(n.id) {
+		s.enqueueMessage(guests.JoinLine(n.nick, g.Nick, g.Name, g.InviteID), n.nick, false)
+	}
 }
 
 // SetReadMarker moves a buffer's read marker forward and tells every attached
@@ -549,6 +569,9 @@ func (n *Network) Detach(s *Session) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	delete(n.sessions, s)
+	if n.guests != nil {
+		n.guests.SessionsChanged(n.id, len(n.sessions))
+	}
 	if len(n.sessions) == 0 {
 		if err := n.store.SetKV(store.LastSeenKey(n.id), nowMS()); err != nil {
 			log.Printf("record last seen: %v", err)
@@ -584,6 +607,10 @@ func (n *Network) handleUpstream(m *irc.Message) {
 	defer n.mu.Unlock()
 
 	n.lastRecv = nowMS()
+	// Lines about guests are the bouncer's own. One that comes from the network is someone pretending.
+	if _, has := m.Tag(guests.GuestTag); has || strings.HasSuffix(m.Prefix, "@"+guests.GuestHost) {
+		return
+	}
 	if isBurst(m.Command) {
 		if m.Command == "005" && len(m.Params) > 2 {
 			n.isupport = append(n.isupport, append([]string(nil), m.Params[1:len(m.Params)-1]...))

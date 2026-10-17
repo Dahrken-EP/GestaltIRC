@@ -72,6 +72,10 @@ type Config struct {
 	// private, loopback or link-local one) from the web editor. It is off by default, so that a user cannot
 	// make the bouncer connect to services behind it. Networks added with the command line are not affected.
 	AllowPrivateNetworks bool `yaml:"allow_private_networks"`
+	// DisableGuests switches off guest links for the whole bouncer: people without Gestalt joining a voice room
+	// or a direct chat through a link a user made. When it is off (the default), each user still chooses in
+	// Settings whether to allow them.
+	DisableGuests bool `yaml:"disable_guests"`
 	// ReplayLimit caps how many messages per buffer are replayed to a client on attach.
 	ReplayLimit int `yaml:"replay_limit"`
 }
