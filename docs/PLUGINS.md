@@ -26,6 +26,7 @@ keeps trying what it was refused is stopped.
 | `output` | write lines into a window that only you see |
 | `timers` | run a function after a delay, or repeatedly |
 | `storage` | keep a small amount of data between runs |
+| `dialogs` | open a window that shows you a message or asks you a question |
 
 ## The `irc` object
 
@@ -38,7 +39,25 @@ keeps trying what it was refused is stopped.
 | `irc.say(nick, text)` | sends a private message. |
 | `irc.print(text, window)` | shows a line only you see. |
 | `irc.storage.get/set/delete/keys` | keeps data between runs. |
+| `irc.alert(text)` | opens a window with a message. Returns a promise that settles when you click OK. Needs `dialogs`. |
+| `irc.confirm(text)` | asks a yes or no question. The promise gives `true` for OK and `false` for Cancel. Needs `dialogs`. |
+| `irc.prompt(text, initial)` | asks for a line of text. The promise gives the text, or `null` for Cancel. Needs `dialogs`. |
 | `irc.log(...)` | writes to the plugin's log, shown in Settings. |
+
+### Windows
+
+The page draws the windows, so a plugin cannot make one look like part of the client: each says "The plugin
+*name* says" or "asks", the text is shown as plain text, and a prompt reminds you not to type a password. There is
+a **Stop this plugin** button in every window. A window takes no answer in its first moment, so a key pressed for
+something else (the Enter that sends a message) does not answer it. A plugin may have three windows waiting and
+then open one every five seconds; further ones are answered as cancelled, and a plugin that keeps on is stopped.
+
+```js
+irc.alias('rename', async function () {
+  const name = await irc.prompt('New nick?', irc.info.nick)
+  if (name && await irc.confirm('Change your nick to ' + name + '?')) irc.send('/nick ' + name)
+})
+```
 
 An event has `event`, `network`, `buffer` (a channel, a nick, or empty), `nick` (who did it), `text` (the
 message, topic, reason or mode), `target` (the victim of a kick, or the new nick), `self` and `time`.

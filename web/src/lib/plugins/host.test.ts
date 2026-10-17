@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PluginInstance, type Sandbox, type Services } from './host'
 import type { ToWorker } from './protocol'
-import type { InstalledPlugin, Permission, PluginEvent } from './types'
+import type { DialogAnswer, DialogRequest, InstalledPlugin, Permission, PluginEvent } from './types'
 
 function plugin(granted: Permission[], over: Partial<InstalledPlugin> = {}): InstalledPlugin {
   return { manifest: { name: 'demo', version: '1.0.0', description: '', permissions: ['events', 'send', 'output', 'timers', 'storage'] }, source: 'irc.log(1)', granted, enabled: true, ...over }
@@ -18,6 +18,10 @@ interface Rig {
   logs: Array<[string, string]>
   saved: Array<Record<string, string>>
   stops: string[]
+  asked: DialogRequest[]
+  /** Answers the window asked about, oldest first. */
+  answer: (a: DialogAnswer) => void
+  closed: () => number
   terminated: () => number
   made: () => number
 }
@@ -28,13 +32,17 @@ function rig(granted: Permission[], over: Partial<InstalledPlugin> = {}, stored:
   const posted: ToWorker[] = []
   let terminated = 0
   let made = 0
-  const r = { sent: [], printed: [], logs: [], saved: [], stops: [] } as unknown as Rig
+  const r = { sent: [], printed: [], logs: [], saved: [], stops: [], asked: [] } as unknown as Rig
+  const resolvers: Array<(a: DialogAnswer) => void> = []
+  let closed = 0
   const services: Services = {
     context: () => ({ nick: 'me', network: 'net' }),
     send: (line, buffer, network) => r.sent.push([line, buffer, network]),
     print: (text, buffer, network) => r.printed.push([text, buffer, network]),
     loadStorage: () => stored,
     saveStorage: (all) => r.saved.push(all),
+    ask: (req) => new Promise((res) => (r.asked.push(req), resolvers.push(res))),
+    closeDialogs: () => void closed++,
     isBuiltin: (n) => ['join', 'msg', 'quit'].includes(n),
     log: (text, kind) => r.logs.push([text, kind]),
     onStop: (reason) => r.stops.push(reason),
@@ -50,6 +58,8 @@ function rig(granted: Permission[], over: Partial<InstalledPlugin> = {}, stored:
   r.say = (m) => message(m)
   r.fatal = (x) => fatal(x)
   r.terminated = () => terminated
+  r.answer = (a) => resolvers.shift()!(a)
+  r.closed = () => closed
   r.made = () => made
   return r
 }
@@ -315,5 +325,80 @@ describe('limits and watching', () => {
     r.say({ t: 'pong', n: 999 })
     vi.advanceTimersByTime(5100)
     expect(r.inst.status).toBe('failed')
+  })
+})
+
+describe('dialogs', () => {
+  const ask = (id: number, kind = 'confirm', text = 'Sure?', value = '') => ({ t: 'dialog', id, kind, text, value })
+
+  it('opens a window for a plugin that was allowed to, and passes the answer back', async () => {
+    const r = running(['dialogs'])
+    r.say(ask(1, 'prompt', 'Name?', 'bob'))
+    expect(r.asked).toEqual([{ kind: 'prompt', text: 'Name?', value: 'bob' }])
+    r.answer({ ok: true, value: 'alice' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(r.posted.at(-1)).toEqual({ t: 'answer', id: 1, ok: true, value: 'alice' })
+  })
+
+  it('treats a plugin that was not allowed as one using a permission it was refused', () => {
+    const r = running(['send'])
+    for (let i = 1; i <= 5; i++) r.say(ask(i))
+    expect(r.asked).toEqual([])
+    expect(r.inst.status).toBe('failed')
+  })
+
+  it('answers "no" to windows beyond three waiting, and to a flood after the first few', async () => {
+    const r = running(['dialogs'])
+    for (let i = 1; i <= 4; i++) r.say(ask(i))
+    expect(r.asked.length).toBe(3)
+    expect(r.posted.at(-1)).toEqual({ t: 'answer', id: 4, ok: false, value: '' })
+    // Answering frees a place, but the burst is spent: one more every five seconds.
+    r.answer({ ok: true, value: '' })
+    await vi.advanceTimersByTimeAsync(0)
+    r.say(ask(5))
+    expect(r.asked.length).toBe(3)
+    vi.advanceTimersByTime(5_000)
+    r.say(ask(6))
+    expect(r.asked.length).toBe(4)
+  })
+
+  it('stops a plugin that keeps asking for windows it is refused', () => {
+    const r = running(['dialogs'])
+    for (let i = 1; i <= 3; i++) r.say(ask(i))
+    for (let i = 4; i < 30; i++) r.say(ask(i))
+    expect(r.inst.status).toBe('failed')
+    expect(r.stops[0]).toMatch(/windows/)
+    expect(r.closed()).toBeGreaterThan(0)
+  })
+
+  it('closes its windows when it stops, and ignores an answer that arrives afterwards', async () => {
+    const r = running(['dialogs'])
+    r.say(ask(1))
+    r.inst.stop()
+    expect(r.closed()).toBeGreaterThan(0)
+    const before = r.posted.length
+    r.answer({ ok: true, value: '' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(r.posted.length).toBe(before)
+  })
+
+  it('does not give the answer to a window from an earlier run to the next run', async () => {
+    const r = running(['dialogs'])
+    r.say(ask(1))
+    r.inst.stop()
+    r.inst.start()
+    r.say({ t: 'ready', ok: true })
+    const before = r.posted.length
+    r.answer({ ok: true, value: 'late' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(r.posted.length).toBe(before)
+  })
+
+  it('cuts a long answer', async () => {
+    const r = running(['dialogs'])
+    r.say(ask(1, 'prompt'))
+    r.answer({ ok: true, value: 'x'.repeat(500) })
+    await vi.advanceTimersByTimeAsync(0)
+    expect((r.posted.at(-1) as { value: string }).value.length).toBe(200)
   })
 })

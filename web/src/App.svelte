@@ -12,6 +12,7 @@
   import MemberList from './components/MemberList.svelte'
   import MessagePane from './components/MessagePane.svelte'
   import NetworkRail from './components/NetworkRail.svelte'
+  import PluginDialog from './components/PluginDialog.svelte'
   import QuickSwitcher from './components/QuickSwitcher.svelte'
   import SearchBar from './components/SearchBar.svelte'
   import ServerDialog from './components/ServerDialog.svelte'
@@ -149,6 +150,7 @@
 {#if app.showSettings}<SettingsDialog />{/if}
 {#if app.showSwitcher}<QuickSwitcher />{/if}
 {#if app.serverDialog}<ServerDialog />{/if}
+<PluginDialog />
 <ServerMenu />
 {/if}
 
