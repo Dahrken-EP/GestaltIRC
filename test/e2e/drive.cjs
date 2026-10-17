@@ -402,7 +402,26 @@ async function send(page, text) {
   await login(jane2, 'jane')
   await jane2.waitForSelector('.status.connected')
 
+  // Ordinary IRC private messages, which have nothing to do with WebRTC: a PRIVMSG to a nick through the
+  // bouncer and the network, a "Messages" buffer on each side, and a reply back.
   await openBuffer(page, 'Status')
+  await send(page, '/msg jane hello by plain irc')
+  await page.waitForSelector('.list h3:has-text("Messages")')
+  await jane.waitForSelector('.list h3:has-text("Messages")')
+  await jane.waitForSelector('button.name:has-text("matt") .badge', { timeout: 8000 })
+  ok(true, 'a private message opens a Messages buffer with an unread badge for the person it was sent to')
+  await openBuffer(jane, 'matt')
+  await jane.waitForSelector('.line:not(.self):has-text("hello by plain irc")')
+  ok((await jane.locator('.panel .status').count()) === 0, 'it is an ordinary query, with no direct-chat state')
+  await send(jane, 'got it, plain reply')
+  await openBuffer(page, 'jane')
+  await page.waitForSelector('.line:not(.self):has-text("got it, plain reply")')
+  ok(true, 'the reply comes back through the network to the sender')
+  await page.locator('.list').getByRole('button', { name: 'Close jane' }).click()
+  await jane.locator('.list').getByRole('button', { name: 'Close matt' }).click()
+  await openBuffer(page, 'Status')
+  await openBuffer(jane, 'Status')
+
   await send(page, '/direct jane')
   await page.waitForSelector('.panel .status[data-state=calling]')
   ok((await page.locator('.panel .status').innerText()).includes('Waiting for jane'), 'asking for a direct chat shows a waiting state')
