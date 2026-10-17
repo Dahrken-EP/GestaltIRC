@@ -1,0 +1,14 @@
+{
+  "name": "gestalt-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "tauri": "tauri",
+    "sidecar": "./build-sidecar.sh",
+    "build": "./build-sidecar.sh && tauri build",
+    "dev": "./build-sidecar.sh && tauri dev"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}
