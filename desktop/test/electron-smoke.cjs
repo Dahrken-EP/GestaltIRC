@@ -22,6 +22,11 @@ const { _electron } = require('playwright-core')
   const notif = await page.evaluate(() => ({ bridge: window.gestaltDesktop?.desktop, permission: Notification.permission, notify: JSON.parse(localStorage.getItem('irc:settings') || '{}').notify ?? 'unset' }))
   console.log('notifications:', JSON.stringify(notif))
   if (notif.bridge !== true || notif.permission !== 'granted') throw new Error('the desktop app cannot show notifications')
+  // The tray holds the menu, so the window has no menu bar across its top.
+  const bar = await app.evaluate(({ Menu }) => Menu.getApplicationMenu() === null)
+  console.log('window has no menu bar:', bar)
+  if (!bar) throw new Error('the window still has a menu bar although the tray has the menu')
+
   // Closing the window keeps the app in the tray; the tray brings it back; quitting really quits.
   const closed = await app.evaluate(({ BrowserWindow }) => {
     const w = BrowserWindow.getAllWindows()[0]

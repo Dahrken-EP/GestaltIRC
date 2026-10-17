@@ -20,10 +20,10 @@ workflow that will show whether the AppImage and the Windows installer build.
 
 Both apps put an icon in the system tray. Clicking it shows or hides the window; its menu has *Show Gestalt*, *Change server…*,
 a switch for whether closing the window keeps the app in the tray, and *Quit*. By default **closing the window hides it to the
-tray** and the app stays connected; *Quit* (tray or app menu) really quits. On Linux, launching the app a second time brings the
+tray** and the app stays connected; *Quit* (in the tray menu) really quits. The Linux window has no menu bar of its own: everything it had is in the tray menu. On Linux, launching the app a second time brings the
 first back, so a hidden window is never lost. Linux caveat: GNOME shows tray icons only with the AppIndicator extension, so on
-a stock GNOME desktop the icon may not be visible; turn the switch off there so closing quits, or use a second launch to bring
-the window back.
+a stock GNOME desktop the icon may not be visible, and with it the menu; install the extension, or use a second launch to bring
+the window back. On a desktop with no tray at all the app keeps its menu bar, so it can still be quit.
 
 ## Two ways to run
 
