@@ -56,6 +56,12 @@ async function send(page, text) {
   // Granted for this address in particular: a grant for every origin is not honoured by newer Chromium.
   await ctxA.grantPermissions(['notifications'], { origin: BASE })
   const page = await ctxA.newPage()
+  // A video this browser cannot decode becomes a note a moment after it appears, so a poll can miss the element.
+  await page.addInitScript(() => {
+    new MutationObserver(() => {
+      if (document.querySelector('video[src^="/api/media?u="]')) window.__sawVideo = true
+    }).observe(document, { subtree: true, childList: true, attributes: true })
+  })
   const errors = []
   const requested = []
   page.on('request', (r) => requested.push(r.url()))
@@ -144,7 +150,7 @@ async function send(page, text) {
   ok(true, 'an HTML page pretending to be a picture is refused, and the link is offered instead')
 
   await send(page, '!msg video: ' + SITE + '/clip.mp4')
-  await page.waitForSelector('video[src^="/api/media?u="]', { timeout: 20000 })
+  await page.waitForFunction(() => window.__sawVideo === true, null, { timeout: 20000 })
   ok(true, 'a video link becomes a video element on the bouncer address')
 
   await send(page, '!msg tune: ' + SITE + '/tune.mp3')

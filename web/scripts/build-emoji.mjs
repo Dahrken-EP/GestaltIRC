@@ -22,7 +22,7 @@ const messages = read('en/messages.json')
 // Group keys as the picker shows them, in Emojibase's order. "component" is dropped.
 const groups = messages.groups.filter((g) => g.key !== 'component').sort((a, b) => a.order - b.order)
 const groupIndex = new Map(groups.map((g, i) => [g.order, i]))
-const title = (s) => s.replace(/\b\w/g, (c) => c.toUpperCase()).replace('&', 'and')
+const title = (s) => s.replace(/\b\w/g, (c) => c.toUpperCase()).replace(/&/g, 'and')
 
 const entries = []
 for (const e of data) {
