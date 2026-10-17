@@ -1,7 +1,7 @@
 """A small website for the media proxy to fetch from during the browser tests.
 
 It serves a real PNG, a page with Open Graph tags, an HTML page that pretends to be
-a picture, and the start of an MP4. The browser must never request any of these
+a picture, the start of an MP4 and of an MP3. The browser must never request any of these
 itself: everything goes through the bouncer.
 """
 import base64
@@ -14,6 +14,8 @@ import socketserver
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVR4nGP4z8Dwn4GBgYGBgQEAFAAD/xIdL6AAAAAASUVORK5CYII="
 )
+# An MPEG audio frame header (MPEG-1 layer III, 128 kbit/s, 44.1 kHz) followed by silence.
+MP3 = b"\xff\xfb\x90\x00" + b"\x00" * 400
 MP4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"\x00" * 200
 
 PAGE = """<!doctype html><html><head>
@@ -54,6 +56,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply("text/html; charset=utf-8", PAGE)
         elif path == "/fake.png":
             self.reply("image/png", b"<html><script>alert(1)</script></html>")
+        elif path == "/tune.mp3":
+            self.reply("audio/mpeg", MP3)
         elif path == "/clip.mp4":
             self.reply("video/mp4", MP4)
         else:

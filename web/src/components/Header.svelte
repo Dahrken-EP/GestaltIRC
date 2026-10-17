@@ -4,11 +4,12 @@
   import { settings } from '../lib/settings.svelte'
   import TokenText from './TokenText.svelte'
 
-  let { net, buf, onmenu, onchannel }: {
+  let { net, buf, onmenu, onchannel, onsearch }: {
     net: NetworkState
     buf: Buffer
     onmenu: () => void
     onchannel: (name: string) => void
+    onsearch: () => void
   } = $props()
 
   const topic = $derived(tokenize(buf.topic))
@@ -31,6 +32,7 @@
       <button class="btn" title="Ring them for a private voice call" onclick={() => net.callNick(buf.name)}>📞 Call</button>
     {/if}
   {/if}
+  <button class="icon" title="Search this conversation (Ctrl+F)" aria-label="Search this conversation" onclick={onsearch}>🔍</button>
   {#if buf.kind === 'channel'}
     <button
       class="icon"

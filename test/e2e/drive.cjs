@@ -136,6 +136,16 @@ async function send(page, text) {
   await page.waitForSelector('video[src^="/api/media?u="]', { timeout: 8000 })
   ok(true, 'a video link becomes a video element on the bouncer address')
 
+  await send(page, '!msg tune: ' + SITE + '/tune.mp3')
+  await page.waitForSelector('audio.sound[src^="/api/media?u="]', { timeout: 8000 })
+  ok((await page.locator('audio.sound').first().getAttribute('controls')) !== null, 'a sound link becomes a player on the bouncer address')
+
+  // Imgur and Giphy pages are shown as the file they stand for, still fetched through the bouncer.
+  await send(page, '!msg https://imgur.com/AbCd123 and https://giphy.com/gifs/cat-xT9IgzoKnwFNmISR8I')
+  for (let i = 0; i < 40 && !(requested.some((u) => u.includes('i.imgur.com')) && requested.some((u) => u.includes('media.giphy.com'))); i++) await sleep(200)
+  ok(requested.some((u) => u.endsWith('/api/media?u=https%3A%2F%2Fi.imgur.com%2FAbCd123.jpg')), 'an imgur page link is fetched as its picture, through the bouncer')
+  ok(requested.some((u) => u.endsWith('/api/media?u=https%3A%2F%2Fmedia.giphy.com%2Fmedia%2FxT9IgzoKnwFNmISR8I%2Fgiphy.gif')), 'a giphy page link is fetched as its gif, through the bouncer')
+
   await send(page, '!msg watch https://youtu.be/dQw4w9WgXcQ')
   await page.waitForSelector('.card.video button:has-text("Play here")', { timeout: 8000 })
   ok((await page.locator('iframe').count()) === 0, 'a YouTube link shows a card and loads nothing from YouTube yet')
@@ -155,7 +165,7 @@ async function send(page, text) {
   await page.getByLabel('Show a title and picture for other links').uncheck()
   await page.getByLabel('Offer YouTube and Streamable players').uncheck()
   await page.keyboard.press('Escape')
-  await page.waitForFunction(() => document.querySelectorAll('img[src^="/api/media?u="], video, .card, iframe').length === 0, null, { timeout: 5000 })
+  await page.waitForFunction(() => document.querySelectorAll('img[src^="/api/media?u="], video, audio, .card, iframe').length === 0, null, { timeout: 5000 })
   ok(true, 'with the three switches off, nothing is fetched or shown')
   await page.click('button[aria-label="Settings"]')
   await page.getByLabel('Show pictures, video and sound inline').check()
@@ -266,6 +276,61 @@ async function send(page, text) {
   await page.evaluate(() => { const vl = document.querySelector('.vl'); vl.scrollTop = vl.scrollHeight; vl.dispatchEvent(new Event('scroll')) })
   await page.waitForSelector('.line:has-text("bulk message 799")')
   ok(true, 'scrolling back down reaches the newest message')
+
+  // ---------- H2. jump to latest, search, quick switcher, next unread, emoji ----------
+  await page.evaluate(() => { document.querySelector('.vl').scrollTop = 3000 })
+  await page.waitForSelector('button:has-text("Jump to latest")')
+  ok(true, 'scrolled up, a button offers to jump to the latest message')
+  await page.click('button:has-text("Jump to latest")')
+  await page.waitForSelector('.line:has-text("bulk message 799")')
+  await page.waitForSelector('button:has-text("Jump to latest")', { state: 'detached' })
+  ok(true, 'it takes me to the newest message and goes away')
+
+  await page.keyboard.press('Control+f')
+  await page.waitForSelector('input[type=search]:focus')
+  ok(true, 'Ctrl+F opens the search bar with the cursor in it')
+  await page.keyboard.type('bulk message 42')
+  await sleep(800)
+  const found = await page.locator('.vl .line .text').allInnerTexts()
+  ok(found.length === 18 && found.every((t) => t.includes('42')), `search keeps only matching messages (${found.length} of 800: every word must appear)`)
+  await page.fill('input[type=search]', 'from:nobody')
+  await page.waitForSelector('.vl .empty:has-text("Nothing here matches")')
+  ok(true, 'a search with no matches says so')
+  await page.keyboard.press('Escape')
+  await page.waitForSelector('input[type=search]', { state: 'detached' })
+  await page.waitForSelector('.line:has-text("bulk message 799")')
+  ok(true, 'Escape closes the search and all messages come back')
+
+  await page.keyboard.press('Control+k')
+  await page.waitForSelector('[role=dialog][aria-label^="Go to"] input:focus')
+  await page.keyboard.type('chat')
+  await page.keyboard.press('Enter')
+  await page.waitForSelector('h1:has-text("#chat")')
+  ok((await page.locator('[role=dialog][aria-label^="Go to"]').count()) === 0, 'Ctrl+K, a few letters and Enter go to that channel')
+
+  await page.keyboard.press('Control+k')
+  await page.keyboard.type('zzzz')
+  await page.waitForSelector('[role=dialog] .none')
+  await page.keyboard.press('Escape')
+  await page.waitForSelector('[role=dialog][aria-label^="Go to"]', { state: 'detached' })
+  ok(true, 'the switcher says when nothing matches, and Escape closes it')
+
+  await openBuffer(page, '#bulk')
+  await send(page, '/msg #chat !msg alt-a target')
+  await page.waitForSelector('button.name:has-text("#chat") .badge')
+  await page.keyboard.press('Alt+a')
+  await page.waitForSelector('h1:has-text("#chat")')
+  await page.waitForSelector('button.name:has-text("#chat") .badge', { state: 'detached', timeout: 5000 })
+  ok(true, 'Alt+A goes to the buffer with unread messages and reads it')
+
+  await page.focus('#msg-input')
+  await page.keyboard.press('Control+e')
+  await page.waitForSelector('[data-testid=emoji-grid]')
+  await page.fill('.picker input', 'thumbs up')
+  await page.locator('[data-testid=emoji-grid] button').first().click()
+  ok(/\p{Extended_Pictographic}/u.test(await page.inputValue('#msg-input')), 'the emoji picker puts the emoji in the message')
+  await page.fill('#msg-input', '')
+  await page.keyboard.press('Escape')
 
   // ---------- I. mobile layout ----------
   await page.setViewportSize({ width: 390, height: 760 })
@@ -715,8 +780,9 @@ async function send(page, text) {
   ok(status === 401, 'the old session no longer works on the server')
 
   // Errors from trying to reach a push service that does not exist in this sandbox are expected.
-  // The browser logs every failed fetch itself, so the 401 after logout appears as a console error.
-  const unexpected = errors.filter((e) => !/push service|Registration failed|AbortError|subscribe|status of 401|status of 415|incognito/i.test(e))
+  // The browser logs every failed fetch itself, so the 401 after logout appears as a console error, and
+  // so does the 502 for the imgur and giphy pictures, which the sandbox has no way to reach.
+  const unexpected = errors.filter((e) => !/push service|Registration failed|AbortError|subscribe|status of 401|status of 415|status of 502|incognito/i.test(e))
   ok(unexpected.length === 0, 'no unexpected console or page errors' + (unexpected.length ? ': ' + unexpected.join(' | ') : ''))
 
   await browser.close()

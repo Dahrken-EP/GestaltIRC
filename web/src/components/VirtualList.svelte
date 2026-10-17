@@ -13,6 +13,7 @@
     overscan = 600,
     onreachtop,
     label = '',
+    atBottom = $bindable(true),
   }: {
     items: T[]
     children: Snippet<[T]>
@@ -20,6 +21,8 @@
     overscan?: number
     onreachtop?: () => void
     label?: string
+    /** True while the view is at the bottom. */
+    atBottom?: boolean
   } = $props()
 
   let el: HTMLDivElement
@@ -70,7 +73,15 @@
   function onscroll() {
     scrollTop = el.scrollTop
     stick = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+    atBottom = stick
     if (el.scrollTop < 120) onreachtop?.()
+  }
+
+  /** Scrolls to the newest row and follows it from here on. */
+  export function toBottom() {
+    stick = true
+    atBottom = true
+    el.scrollTop = el.scrollHeight
   }
 
   const nodes = new Set<HTMLElement>()

@@ -1,11 +1,14 @@
 <script lang="ts">
   import type { Buffer, ChatMessage, NetworkState } from '../lib/network.svelte'
   import MessageLine from './MessageLine.svelte'
+  import { filterMessages } from '../lib/search'
   import VirtualList from './VirtualList.svelte'
 
-  let { net, buf, onnick, onchannel, onreply }: {
+  let { net, buf, filter = '', onnick, onchannel, onreply }: {
     net: NetworkState
     buf: Buffer
+    /** Show only the messages that match this search. */
+    filter?: string
     onnick: (nick: string) => void
     onchannel: (name: string) => void
     onreply: (msg: ChatMessage) => void
@@ -14,6 +17,7 @@
   type Row =
     | { key: string; kind: 'older' }
     | { key: string; kind: 'empty' }
+    | { key: string; kind: 'nomatch' }
     | { key: string; kind: 'day'; time: number }
     | { key: string; kind: 'msg'; msg: ChatMessage; prev: ChatMessage | undefined }
 
@@ -22,8 +26,9 @@
   const rows = $derived.by(() => {
     const out: Row[] = []
     if (buf.onNetwork) out.push({ key: 'older', kind: 'older' })
-    const list = buf.messages
-    if (list.length === 0 && buf.kind === 'status') out.push({ key: 'empty', kind: 'empty' })
+    const list = filterMessages(buf.messages, filter)
+    if (list.length === 0 && filter.trim()) out.push({ key: 'nomatch', kind: 'nomatch' })
+    else if (list.length === 0 && buf.kind === 'status') out.push({ key: 'empty', kind: 'empty' })
     for (let i = 0; i < list.length; i++) {
       const msg = list[i]!
       const prev = list[i - 1]
@@ -36,9 +41,13 @@
   function dayLabel(t: number): string {
     return new Date(t).toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
   }
+
+  let list: VirtualList<Row>
+  let atBottom = $state(true)
 </script>
 
-<VirtualList items={rows} estimate={22} label="Messages in {buf.name || net.label}" onreachtop={() => buf.messages.length && net.loadOlder(buf)}>
+<div class="wrap">
+<VirtualList bind:this={list} bind:atBottom items={rows} estimate={22} label="Messages in {buf.name || net.label}" onreachtop={() => buf.messages.length && net.loadOlder(buf)}>
   {#snippet children(row)}
     {#if row.kind === 'older'}
       <div class="older">
@@ -52,6 +61,8 @@
       </div>
     {:else if row.kind === 'empty'}
       <p class="empty">Type /help for commands. Channels you have joined appear on the left.</p>
+    {:else if row.kind === 'nomatch'}
+      <p class="empty">Nothing here matches “{filter.trim()}”. Older messages may: use “Load older messages” above.</p>
     {:else if row.kind === 'day'}
       <div class="day"><span>{dayLabel(row.time)}</span></div>
     {:else}
@@ -59,8 +70,27 @@
     {/if}
   {/snippet}
 </VirtualList>
+{#if !atBottom}
+  <button class="latest btn" onclick={() => list.toBottom()}>↓ Jump to latest</button>
+{/if}
+</div>
 
 <style>
+  .wrap {
+    position: relative;
+    height: 100%;
+  }
+  .latest {
+    position: absolute;
+    right: 16px;
+    bottom: 12px;
+    padding: 4px 12px;
+    border-radius: 14px;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px rgb(0 0 0 / 0.3);
+  }
   .older {
     text-align: center;
     padding: 6px;

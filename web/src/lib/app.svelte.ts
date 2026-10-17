@@ -16,6 +16,16 @@ function microphone(): Promise<MediaStream> {
   return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
 }
 
+export interface SwitcherEntry {
+  netId: string
+  network: string
+  key: string
+  name: string
+  kind: Buffer['kind']
+  unread: number
+  mentions: number
+}
+
 export type Phase = 'loading' | 'login' | 'ready'
 
 class App {
@@ -24,6 +34,8 @@ class App {
   networks = $state.raw<NetworkState[]>([])
   activeId = $state('')
   showSettings = $state(false)
+  /** The quick switcher (Ctrl+K) is open. */
+  showSwitcher = $state(false)
   /** Why the last login failed, or why the session ended. Shown on the login form. */
   loginError = $state('')
   loginBusy = $state(false)
@@ -116,6 +128,7 @@ class App {
     this.activeId = ''
     this.user = ''
     this.showSettings = false
+    this.showSwitcher = false
     settings.disconnectRemote()
     this.loginError = reason
     this.phase = 'login'
@@ -204,6 +217,43 @@ class App {
     const i = net.buffers.findIndex((b) => b === net.active)
     const next = net.buffers[(i + delta + net.buffers.length) % net.buffers.length]
     if (next) net.select(next.key)
+  }
+
+  /** Every buffer on every network, in the order they are listed, for the quick switcher. */
+  get entries(): SwitcherEntry[] {
+    const out: SwitcherEntry[] = []
+    for (const net of this.networks) {
+      for (const buf of net.buffers) {
+        out.push({
+          netId: net.id,
+          network: net.label,
+          key: buf.key,
+          name: buf.kind === 'status' ? net.label : buf.name,
+          kind: buf.kind,
+          unread: buf.unread,
+          mentions: buf.mentionCount,
+        })
+      }
+    }
+    return out
+  }
+
+  /**
+   * Goes to the next buffer with anything unread: one with a mention first, otherwise the next
+   * unread one after the buffer on screen, wrapping round the networks. Returns false when
+   * everything has been read.
+   */
+  nextUnread(): boolean {
+    const all: { net: NetworkState; buf: Buffer }[] = []
+    for (const net of this.networks) for (const buf of net.buffers) all.push({ net, buf })
+    const here = all.findIndex((e) => e.net.id === this.activeId && e.buf === e.net.active)
+    // Walk once round, starting just after where we are, so repeated presses move on.
+    const ordered = here < 0 ? all : [...all.slice(here + 1), ...all.slice(0, here)]
+    const unread = ordered.filter((e) => e.buf.unread > 0)
+    const target = unread.find((e) => e.buf.mentionCount > 0) ?? unread[0]
+    if (!target) return false
+    this.goto(target.net.id, target.buf.key)
+    return true
   }
 
   /** A notification opened this page with ?network=&buffer=. Returns it and tidies the address bar. */
