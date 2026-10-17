@@ -16,6 +16,15 @@ launcher page (`desktop/ui/index.html`) and do the same: connect to a bouncer el
 `.github/workflows/desktop.yml` builds both on their own runners and runs the Linux smoke test. It is the first run of that
 workflow that will show whether the AppImage and the Windows installer build.
 
+## The tray
+
+Both apps put an icon in the system tray. Clicking it shows or hides the window; its menu has *Show Gestalt*, *Change server…*,
+a switch for whether closing the window keeps the app in the tray, and *Quit*. By default **closing the window hides it to the
+tray** and the app stays connected; *Quit* (tray or app menu) really quits. On Linux, launching the app a second time brings the
+first back, so a hidden window is never lost. Linux caveat: GNOME shows tray icons only with the AppIndicator extension, so on
+a stock GNOME desktop the icon may not be visible; turn the switch off there so closing quits, or use a second launch to bring
+the window back.
+
 ## Two ways to run
 
 - **Remote.** A first-run "Server address" prompt, remembered afterwards. The window then shows that bouncer's web page, so

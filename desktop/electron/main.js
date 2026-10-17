@@ -1,7 +1,7 @@
 // Gestalt on the desktop, for Linux, in Electron. Linux's own web view (WebKitGTK) has no WebRTC on Ubuntu and Debian,
 // and Electron carries Chromium, which does. It does what the Tauri app does for Windows: a launcher that chooses
 // between a bouncer run elsewhere and the one the app carries, then the bouncer's page, and nothing else.
-const { app, BrowserWindow, Menu, ipcMain, session, shell } = require('electron')
+const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, session, shell } = require('electron')
 const { spawn, spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const net = require('node:net')
@@ -9,13 +9,15 @@ const path = require('node:path')
 
 const launcher = path.join(__dirname, '..', 'ui', 'index.html')
 const settingsPath = path.join(app.getPath('userData'), 'settings.json')
-let settings = { mode: '', url: '', port: 0, user: '' }
+let settings = { mode: '', url: '', port: 0, user: '', closeToTray: true }
 try {
   settings = { ...settings, ...JSON.parse(fs.readFileSync(settingsPath, 'utf8')) }
 } catch {
   // first run
 }
 let win = null
+let tray = null
+let quitting = false
 let child = null
 /** The one address the window may show besides the launcher. */
 let allowed = null
@@ -145,8 +147,50 @@ handle('report', ({ text }) => {
 
 function backToLauncher() {
   allowed = null
+  showWindow()
   void win.loadFile(launcher)
 }
+
+function showWindow() {
+  if (!win) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
+
+function toggleWindow() {
+  if (win?.isVisible() && win.isFocused()) win.hide()
+  else showWindow()
+}
+
+/** The menu of the app and of the tray icon, the same, so the way out of a hidden window is always the tray. */
+function menuTemplate() {
+  return [
+    { label: 'Show Gestalt', click: showWindow },
+    { label: 'Change server…', click: backToLauncher },
+    {
+      label: 'Closing the window keeps Gestalt in the tray',
+      type: 'checkbox',
+      checked: settings.closeToTray,
+      click: (item) => {
+        settings.closeToTray = item.checked
+        save()
+        refreshMenus()
+      },
+    },
+    { type: 'separator' },
+    { label: 'Quit', click: () => app.quit() },
+  ]
+}
+
+function refreshMenus() {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'Gestalt', submenu: menuTemplate() }]))
+  tray?.setContextMenu(Menu.buildFromTemplate(menuTemplate()))
+}
+
+// A second launch brings the first back, which also means a window hidden on a desktop with no tray is never lost.
+if (!app.requestSingleInstanceLock()) app.quit()
+app.on('second-instance', showWindow)
 
 app.whenReady().then(async () => {
   const mine = 'media'
@@ -179,9 +223,22 @@ app.whenReady().then(async () => {
     if (/^https?:/.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([{ label: 'Gestalt', submenu: [{ label: 'Change server…', click: backToLauncher }, { role: 'quit' }] }]),
-  )
+  // Closing the window hides it to the tray, where Gestalt stays connected, unless the user chose otherwise or is quitting.
+  win.on('close', (e) => {
+    if (!quitting && settings.closeToTray && tray) {
+      e.preventDefault()
+      win.hide()
+    }
+  })
+  try {
+    tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'icon.png')))
+    tray.setToolTip('Gestalt')
+    tray.on('click', toggleWindow)
+    app.tray = tray
+  } catch {
+    tray = null // no tray on this desktop: closing quits, as it would without one
+  }
+  refreshMenus()
 
   await win.loadFile(launcher)
   if (process.env.GESTALT_DIAG) return
@@ -193,5 +250,8 @@ app.whenReady().then(async () => {
   }
 })
 
-app.on('before-quit', stopLocal)
+app.on('before-quit', () => {
+  quitting = true
+  stopLocal()
+})
 app.on('window-all-closed', () => app.quit())

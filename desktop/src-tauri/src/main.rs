@@ -16,7 +16,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{MenuBuilder, MenuItem, SubmenuBuilder},
-    AppHandle, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -29,6 +30,13 @@ struct Settings {
     port: u16,
     /// The account made for local mode.
     user: String,
+    /// Closing the window hides it to the tray instead of quitting.
+    #[serde(default = "yes")]
+    close_to_tray: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 struct App {
@@ -226,6 +234,14 @@ fn report(text: String) {
     }
 }
 
+fn show_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
 fn back_to_launcher(win: &WebviewWindow, st: &App) {
     *st.allowed.lock().unwrap() = None;
     if let Some(u) = st.launcher.lock().unwrap().clone() {
@@ -299,16 +315,71 @@ fn main() {
             let menu = MenuBuilder::new(app)
                 .item(
                     &SubmenuBuilder::new(app, "Gestalt")
+                        .item(&MenuItem::with_id(app, "show", "Show Gestalt", true, None::<&str>)?)
                         .item(&MenuItem::with_id(app, "change", "Change server…", true, None::<&str>)?)
-                        .quit()
+                        .item(&MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?)
                         .build()?,
                 )
                 .build()?;
             app.set_menu(menu)?;
-            app.on_menu_event(|app, event| {
-                if event.id() == "change" {
+            app.on_menu_event(|app, event| match event.id().as_ref() {
+                "show" => show_window(app),
+                "change" => {
+                    show_window(app);
                     if let Some(w) = app.get_webview_window("main") {
                         back_to_launcher(&w, &app.state::<App>());
+                    }
+                }
+                "quit" => app.exit(0),
+                _ => {}
+            });
+
+            // The tray icon: a click shows or hides the window, and its menu is the way out of a hidden one.
+            let tray_menu = MenuBuilder::new(app)
+                .item(&MenuItem::with_id(app, "show", "Show Gestalt", true, None::<&str>)?)
+                .item(&MenuItem::with_id(app, "change", "Change server…", true, None::<&str>)?)
+                .separator()
+                .item(&MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?)
+                .build()?;
+            let mut tray = TrayIconBuilder::with_id("main").tooltip("Gestalt").menu(&tray_menu).show_menu_on_left_click(false);
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+            let has_tray = tray
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "show" => show_window(app),
+                    "change" => {
+                        show_window(app);
+                        if let Some(w) = app.get_webview_window("main") {
+                            back_to_launcher(&w, &app.state::<App>());
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                        let app = tray.app_handle();
+                        match app.get_webview_window("main") {
+                            Some(w) if w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false) => {
+                                let _ = w.hide();
+                            }
+                            _ => show_window(app),
+                        }
+                    }
+                })
+                .build(app)
+                .is_ok();
+
+            // Closing the window hides it to the tray, where Gestalt stays connected, unless the user chose
+            // otherwise or there is no tray to bring it back from.
+            let closer = win.clone();
+            let h = app.handle().clone();
+            win.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    if has_tray && h.state::<App>().settings.lock().unwrap().close_to_tray {
+                        api.prevent_close();
+                        let _ = closer.hide();
                     }
                 }
             });
