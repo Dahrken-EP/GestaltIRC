@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { uniqueLinks } from '../lib/media'
   import { nickColor } from '../lib/nickcolor'
   import { tokenize } from '../lib/render'
   import { settings } from '../lib/settings.svelte'
   import type { Buffer, ChatMessage, NetworkState } from '../lib/network.svelte'
+  import MediaEmbeds from './MediaEmbeds.svelte'
   import TokenText from './TokenText.svelte'
 
   let {
@@ -28,6 +30,8 @@
   const words = $derived([net.nick, ...settings.keywords])
   const tokens = $derived(tokenize(msg.text, words))
   const isChat = $derived(msg.kind === 'msg' || msg.kind === 'action' || msg.kind === 'notice')
+  // Links in a message, for pictures, players and previews under it.
+  const links = $derived(isChat ? uniqueLinks(tokens.flatMap((t) => (t.type === 'link' ? [t.href] : []))) : [])
   // Consecutive lines from one sender within five minutes drop the repeated nick.
   const merged = $derived(
     isChat && !!prev && prev.kind === msg.kind && prev.nick === msg.nick && msg.time - prev.time < 5 * 60_000,
@@ -130,6 +134,10 @@
       </span>
     {/if}
   </div>
+
+  {#if links.length}
+    <div class="embeds"><MediaEmbeds {links} /></div>
+  {/if}
 
   {#if reactions.length}
     <div class="reactions">
@@ -263,6 +271,10 @@
     gap: 0;
     border-left: 1px solid var(--border);
     margin-left: 2px;
+  }
+
+  .embeds {
+    padding: 0 0 2px calc(3.2em + 16px);
   }
 
   .reactions {

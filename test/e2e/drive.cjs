@@ -5,6 +5,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
 const OUT = process.env.OUT_DIR || '.'
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:18080'
 const URL = BASE + '/'
+const SITE = process.env.SITE_URL || 'http://127.0.0.1:18081'
 const PASSWORD = process.env.TEST_PASSWORD || 'a-long-password-1'
 let failures = 0
 const ok = (cond, msg) => {
@@ -37,6 +38,8 @@ async function send(page, text) {
   const ctxA = await browser.newContext({ viewport: { width: 1280, height: 760 }, permissions: ['notifications'] })
   const page = await ctxA.newPage()
   const errors = []
+  const requested = []
+  page.on('request', (r) => requested.push(r.url()))
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
   page.on('console', (m) => m.type() === 'error' && errors.push('console: ' + m.text()))
 
@@ -106,6 +109,51 @@ async function send(page, text) {
   await doomed.getByRole('button', { name: 'Delete message' }).click()
   await page.waitForSelector('.line:has-text("at noon")', { state: 'detached' })
   ok(true, 'deleting my message removes it when the network confirms')
+
+  // ---------- C2. pictures, previews and players from links ----------
+  await send(page, '!msg look: ' + SITE + '/pic.png and ' + SITE + '/page.html')
+  await page.waitForSelector('img[src^="/api/media?u="]', { timeout: 8000 })
+  await page.waitForFunction(() => [...document.querySelectorAll('img[src^="/api/media?u="]')].some((i) => i.complete && i.naturalWidth > 0), null, { timeout: 8000 })
+  ok(true, 'a picture link is shown inline, loaded from the bouncer')
+  await page.waitForSelector('.card:has-text("An interesting article")', { timeout: 8000 })
+  ok((await page.locator('.card:has-text("An interesting article")').innerText()).toLowerCase().includes('example journal'), 'a page link gets a card with its title and site')
+  await page.waitForFunction(() => [...document.querySelectorAll('.card img.thumb')].some((i) => i.complete && i.naturalWidth > 0), null, { timeout: 8000 })
+  ok(true, "the card's picture loads through the bouncer too")
+
+  await send(page, '!msg trick: ' + SITE + '/fake.png')
+  await page.waitForSelector('.note:has-text("Could not load that picture")', { timeout: 8000 })
+  ok(true, 'an HTML page pretending to be a picture is refused, and the link is offered instead')
+
+  await send(page, '!msg video: ' + SITE + '/clip.mp4')
+  await page.waitForSelector('video[src^="/api/media?u="]', { timeout: 8000 })
+  ok(true, 'a video link becomes a video element on the bouncer address')
+
+  await send(page, '!msg watch https://youtu.be/dQw4w9WgXcQ')
+  await page.waitForSelector('.card.video button:has-text("Play here")', { timeout: 8000 })
+  ok((await page.locator('iframe').count()) === 0, 'a YouTube link shows a card and loads nothing from YouTube yet')
+  await page.click('.card.video button:has-text("Play here")')
+  await page.waitForSelector('iframe[src^="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"]')
+  ok(true, 'pressing play loads the privacy-friendly player')
+
+  // The point of the proxy: the browser asked only the bouncer, and YouTube only after the click.
+  const direct = requested.filter((u) => u.startsWith(SITE))
+  ok(direct.length === 0, 'the browser never contacted the linked site itself' + (direct.length ? ': ' + direct.join(', ') : ''))
+  const outside = requested.filter((u) => !u.startsWith(BASE) && !u.startsWith('data:') && !u.startsWith('blob:') && !u.includes('youtube-nocookie.com'))
+  ok(outside.length === 0, 'every request went to the bouncer' + (outside.length ? ': ' + outside.join(', ') : ''))
+
+  // The settings switches really turn it off.
+  await page.click('button[aria-label="Settings"]')
+  await page.getByLabel('Show pictures and video inline').uncheck()
+  await page.getByLabel('Show a title and picture for other links').uncheck()
+  await page.getByLabel('Offer YouTube and Streamable players').uncheck()
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(() => document.querySelectorAll('img[src^="/api/media?u="], video, .card, iframe').length === 0, null, { timeout: 5000 })
+  ok(true, 'with the three switches off, nothing is fetched or shown')
+  await page.click('button[aria-label="Settings"]')
+  await page.getByLabel('Show pictures and video inline').check()
+  await page.getByLabel('Show a title and picture for other links').check()
+  await page.getByLabel('Offer YouTube and Streamable players').check()
+  await page.keyboard.press('Escape')
 
   // ---------- D. typing, E. away ----------
   await send(page, '!typing')
@@ -278,7 +326,7 @@ async function send(page, text) {
 
   // Errors from trying to reach a push service that does not exist in this sandbox are expected.
   // The browser logs every failed fetch itself, so the 401 after logout appears as a console error.
-  const unexpected = errors.filter((e) => !/push service|Registration failed|AbortError|subscribe|status of 401|incognito/i.test(e))
+  const unexpected = errors.filter((e) => !/push service|Registration failed|AbortError|subscribe|status of 401|status of 415|incognito/i.test(e))
   ok(unexpected.length === 0, 'no unexpected console or page errors' + (unexpected.length ? ': ' + unexpected.join(' | ') : ''))
 
   await browser.close()
