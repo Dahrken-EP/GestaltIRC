@@ -124,6 +124,7 @@ export class DirectChat {
     try {
       const session = await this.makeSession()
       const ch = await session.start(CHAT_LABEL)
+      if (!ch) throw new Error('no channel')
       // Something else (a competing offer, a hang-up) may have taken over meanwhile.
       if (this.session !== session) return
       this.chat = ch

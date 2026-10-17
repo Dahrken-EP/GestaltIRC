@@ -8,6 +8,11 @@ import { format, isServerPrefix, nickOf, timeOf, type Message } from './irc/mess
 import { pageUnfocused } from './notify'
 import type { ChatLine, ChatView } from './p2p/chat'
 import { P2pHub, SIGNAL_TAG } from './p2p/hub'
+import type { Signal } from './p2p/signal'
+import type { VoiceSlot } from './voice/active'
+import { VoiceCall, type CallView } from './voice/call'
+import { formatPresence, parsePresence, VOICE_TAG } from './voice/presence'
+import { VoiceRoom, type RoomView } from './voice/room'
 import { mentions } from './render'
 import { settings } from './settings.svelte'
 
@@ -87,6 +92,12 @@ export class Buffer {
 
   /** For a direct chat: the state of the connection, files and all. Null for other buffers. */
   p2p = $state.raw<ChatView | null>(null)
+  /** For a channel: the voice room as we have it, once we have joined it. */
+  voice = $state.raw<RoomView | null>(null)
+  /** For a channel: nicks seen joining its voice room since we connected. A hint, not a roll call. */
+  voiceMembers = $state.raw<string[]>([])
+  /** For a direct chat: the voice call with that person. */
+  call = $state.raw<CallView | null>(null)
 
   /** Lowercase nick -> member. */
   members = new Map<string, Member>()
@@ -239,6 +250,10 @@ export interface NetworkHooks {
   iceServers?(): Promise<RTCIceServer[]>
   /** Makes peer connections for direct chats. Tests pass a fake. */
   createConnection?: (config: RTCConfiguration) => RTCPeerConnection
+  /** The microphone, for voice rooms and calls. */
+  getMedia?: () => Promise<MediaStream>
+  /** Which voice chat holds the microphone. One for the whole page unless a test says otherwise. */
+  voiceSlot?: VoiceSlot
 }
 
 export class NetworkState {
@@ -279,6 +294,8 @@ export class NetworkState {
   private send: (line: string) => void
   private hooks: NetworkHooks
   private hub: P2pHub
+  private rooms = new Map<string, VoiceRoom>()
+  private calls = new Map<string, VoiceCall>()
 
   constructor(id: string, login: string, nick: string, send: (line: string) => void, hooks: NetworkHooks) {
     this.id = id
@@ -294,6 +311,7 @@ export class NetworkState {
       iceServers: () => this.hooks.iceServers?.() ?? Promise.resolve([]),
       sendSignalLine: (peer, value) => this.send(format({ tags: { [SIGNAL_TAG]: value }, command: 'TAGMSG', params: [peer] })),
       createConnection: hooks.createConnection,
+      onSignal: (from, sid, payload) => this.onVoiceSignal(from, sid, payload),
       onView: (peer, view) => this.onDirectView(peer, view),
       onLine: (peer, line) => this.onDirectLine(peer, line),
     })
@@ -358,6 +376,136 @@ export class NetworkState {
       this.select(key)
     }
     return buf
+  }
+
+  // --- voice ---
+
+  get canVoice(): boolean {
+    return this.caps.has('message-tags')
+  }
+
+  private tagmsg(target: string, tag: string, value: string): void {
+    this.send(format({ tags: { [tag]: value }, command: 'TAGMSG', params: [target] }))
+  }
+
+  private roomFor(buf: Buffer): VoiceRoom {
+    let room = this.rooms.get(buf.key)
+    if (!room) {
+      room = new VoiceRoom({
+        channel: buf.name,
+        ownNick: () => this.nick,
+        sendPresence: (target, value) => this.tagmsg(target, VOICE_TAG, value),
+        sendSignal: (peer, sid, payload) => this.hub.send(peer, sid, payload),
+        iceServers: () => this.hooks.iceServers?.() ?? Promise.resolve([]),
+        getMedia: () => this.getMedia(),
+        createConnection: this.hooks.createConnection,
+        slot: this.hooks.voiceSlot,
+        onChange: (v) => (buf.voice = v),
+      })
+      this.rooms.set(buf.key, room)
+    }
+    return room
+  }
+
+  private getMedia(): Promise<MediaStream> {
+    if (!this.hooks.getMedia) return Promise.reject(new Error('this browser cannot record audio'))
+    return this.hooks.getMedia()
+  }
+
+  voiceRoom(buf: Buffer): VoiceRoom {
+    return this.roomFor(buf)
+  }
+
+  joinVoice(buf: Buffer): void {
+    if (buf.kind === 'channel' && buf.joined && this.canVoice) void this.roomFor(buf).join()
+  }
+
+  leaveVoice(buf: Buffer): void {
+    this.rooms.get(buf.key)?.leave()
+  }
+
+  /** Voice calls are with one person, from their direct chat window. */
+  callFor(nick: string): VoiceCall {
+    const key = nick.toLowerCase()
+    let call = this.calls.get(key)
+    if (!call) {
+      call = new VoiceCall({
+        peer: nick,
+        wins: () => this.nick.toLowerCase() < key,
+        sendSignal: (sid, payload) => this.hub.send(nick, sid, payload),
+        iceServers: () => this.hooks.iceServers?.() ?? Promise.resolve([]),
+        getMedia: () => this.getMedia(),
+        createConnection: this.hooks.createConnection,
+        slot: this.hooks.voiceSlot,
+        onChange: (v) => this.onCallView(nick, v),
+      })
+      this.calls.set(key, call)
+    }
+    return call
+  }
+
+  /** Opens the direct chat window with `nick` and rings them. */
+  callNick(nick: string): void {
+    if (!this.canVoice) return
+    const buf = this.directBuffer(nick)
+    this.select(buf.key)
+    void this.callFor(nick).invite()
+  }
+
+  private onCallView(peer: string, view: CallView): void {
+    const buf = this.directBuffer(peer)
+    const before = buf.call?.state
+    buf.call = view
+    if (before === view.state) return
+    if (view.state === 'incoming') {
+      this.local(buf, 'info', `${peer} is calling. Your microphone stays off until you answer.`)
+      if (this.activeKey !== buf.key || !this.viewing || pageUnfocused()) {
+        buf.unread++
+        buf.mentionCount++
+        this.hooks.onMention(this, buf, {
+          id: nextId++, key: 'call-incoming', time: Date.now(), kind: 'msg', nick: peer,
+          text: 'is calling you', self: false, mention: true,
+        })
+      }
+    } else if (view.state === 'ended') {
+      this.local(buf, 'info', view.reason ? `Call ended. ${view.reason}` : 'Call ended.')
+    }
+  }
+
+  private onVoiceSignal(from: string, sid: string, payload: Signal): void {
+    if (payload.k !== 'voice') return
+    if (typeof payload.room === 'string' && payload.room) {
+      this.rooms.get(payload.room.toLowerCase())?.handleSignal(from, sid, payload)
+      return
+    }
+    // A call, which has no room. Only an offer can start one.
+    const existing = this.calls.get(from.toLowerCase())
+    if (existing) existing.handleSignal(sid, payload)
+    else if (payload.t === 'offer') this.callFor(from).handleSignal(sid, payload)
+  }
+
+  /** Someone's voice presence tag, sent to a channel (join, leave) or to us (here). */
+  private onVoicePresence(from: string, target: string, value: string): void {
+    const p = parsePresence(value)
+    if (!p) return
+    if (this.isChannel(target)) {
+      const buf = this.find(target)
+      if (!buf) return
+      const others = buf.voiceMembers.filter((n) => n.toLowerCase() !== from.toLowerCase())
+      if (p.t === 'join') buf.voiceMembers = [...others, from]
+      else if (p.t === 'leave') buf.voiceMembers = others
+      this.rooms.get(buf.key)?.handlePresence(from, value)
+    } else if (p.t === 'here') {
+      this.rooms.get(p.room.toLowerCase())?.handlePresence(from, value)
+    }
+  }
+
+  private voiceGone(nick: string, buf?: Buffer): void {
+    for (const b of buf ? [buf] : this.buffers) {
+      if (b.kind !== 'channel') continue
+      b.voiceMembers = b.voiceMembers.filter((n) => n.toLowerCase() !== nick.toLowerCase())
+      this.rooms.get(b.key)?.memberGone(nick)
+    }
   }
 
   /** Opens a direct chat with `nick` and asks them to connect. */
@@ -444,7 +592,15 @@ export class NetworkState {
 
   removeBuffer(buf: Buffer): void {
     if (buf.kind === 'status') return
-    if (buf.kind === 'p2p') this.hub.close(buf.name)
+    if (buf.kind === 'p2p') {
+      this.hub.close(buf.name)
+      this.calls.get(buf.name.toLowerCase())?.dispose()
+      this.calls.delete(buf.name.toLowerCase())
+    }
+    if (buf.kind === 'channel') {
+      this.rooms.get(buf.key)?.dispose()
+      this.rooms.delete(buf.key)
+    }
     buf.dispose()
     this.buffers = this.buffers.filter((b) => b !== buf)
     if (this.activeKey === buf.key) this.activeKey = ''
@@ -527,6 +683,15 @@ export class NetworkState {
         break
       case 'direct':
         this.openDirect(a.target)
+        break
+      case 'call':
+        this.callNick(a.target)
+        break
+      case 'voice':
+        if (buf.kind !== 'channel') this.local(buf, 'error', '/voice works in a channel.')
+        else if (!this.canVoice) this.local(buf, 'error', 'This network does not support message tags, which voice needs.')
+        else if (a.on) this.joinVoice(buf)
+        else this.leaveVoice(buf)
         break
       case 'clear':
         buf.clear()
@@ -842,6 +1007,11 @@ export class NetworkState {
       if (!this.isChannel(m.params[0] ?? '') && !this.isSelf(from)) this.hub.receive(from, signal)
       return
     }
+    const voice = m.tags[VOICE_TAG]
+    if (voice !== undefined) {
+      if (!this.isSelf(from)) this.onVoicePresence(from, m.params[0] ?? '', voice)
+      return
+    }
     const buf = this.existingBufferFor(m.params[0] ?? '', from)
     if (!buf) return
     const self = this.isSelf(from)
@@ -922,6 +1092,7 @@ export class NetworkState {
     buf.members.delete(nick.toLowerCase())
     buf.setTyping(nick, false)
     buf.touchMembers()
+    this.voiceGone(nick, buf)
     this.push(buf, { kind: 'part', nick, text: m.params[1] ?? '', time: timeOf(m), self: false, mention: false }, false)
   }
 
@@ -933,9 +1104,12 @@ export class NetworkState {
       buf.joined = false
       buf.members.clear()
       buf.touchMembers()
+      this.rooms.get(buf.key)?.leave('You were removed from the channel.')
+      buf.voiceMembers = []
     } else {
       buf.members.delete(victim.toLowerCase())
       buf.touchMembers()
+      this.voiceGone(victim, buf)
     }
     this.push(
       buf,
@@ -946,6 +1120,7 @@ export class NetworkState {
 
   private onQuit(m: Message): void {
     const nick = nickOf(m.prefix)
+    this.voiceGone(nick)
     for (const buf of this.buffers) {
       if (buf.kind === 'channel' && buf.members.delete(nick.toLowerCase())) {
         buf.setTyping(nick, false)
@@ -1062,6 +1237,8 @@ export class NetworkState {
   }
 
   dispose(): void {
+    for (const r of this.rooms.values()) r.dispose()
+    for (const c of this.calls.values()) c.dispose()
     this.hub.dispose()
     clearTimeout(this.saveTimer)
     clearTimeout(this.markerTimer)

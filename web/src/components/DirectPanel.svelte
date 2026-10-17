@@ -12,6 +12,10 @@
   let picker: HTMLInputElement
   let dragging = $state(false)
   let showDetails = $state(false)
+  const cv = $derived(buf.call)
+  const cs = $derived(cv?.state ?? 'idle')
+  const call = $derived(net.callFor(buf.name))
+  const inCall = $derived(cs === 'calling' || cs === 'connecting' || cs === 'connected')
 
   function sendFiles(files: FileList | File[] | null) {
     if (!files || !connected) return
@@ -116,6 +120,40 @@
     {/if}
   {/if}
 
+  {#if net.canVoice}
+    <div class="call" data-state={cs} role="status" aria-label="Voice call with {buf.name}">
+      {#if cs === 'incoming'}
+        <span>
+          📞 <strong>{buf.name}</strong> is calling. Your microphone stays off until you answer. Answering shares your network
+          address with them.
+        </span>
+        <button class="btn primary" onclick={() => void call.accept()}>Answer</button>
+        <button class="btn" onclick={() => call.decline()}>Decline</button>
+      {:else if cs === 'calling'}
+        <span>📞 Calling {buf.name}…</span>
+        <button class="btn" onclick={() => call.hangUp()}>Cancel</button>
+      {:else if cs === 'connecting'}
+        <span>📞 Connecting…</span>
+        <button class="btn" onclick={() => call.hangUp()}>Cancel</button>
+      {:else if cs === 'connected' && cv}
+        <span class="who" class:speaking={cv.remoteSpeaking} data-testid="remote-speaking">
+          <span class="dot" aria-hidden="true"></span>📞 In a call with {buf.name}
+        </span>
+        <span class="who me" class:speaking={cv.speaking} data-testid="call-me-speaking"><span class="dot" aria-hidden="true"></span>You{cv.muted ? ' (muted)' : ''}</span>
+        <button class="btn" aria-pressed={cv.muted} onclick={() => call.setMuted(!cv.muted)}>{cv.muted ? 'Unmute' : 'Mute'}</button>
+        <label class="vol"><span class="visually-hidden">Volume</span>
+          <input type="range" min="0" max="1" step="0.05" value={cv.volume} oninput={(e) => call.setVolume(Number(e.currentTarget.value))} />
+        </label>
+        <button class="btn" onclick={() => call.hangUp()}>Hang up</button>
+        <span class="dim small">Safety code <code data-testid="call-code">{cv.code}</code></span>
+      {:else}
+        <button class="btn" onclick={() => void call.invite()}>📞 {cs === 'ended' ? 'Call again' : 'Call'}</button>
+        {#if cs === 'ended' && cv?.reason}<span class="dim">{cv.reason}</span>{/if}
+        {#if cs === 'idle' && cv?.reason}<span class="dim">{cv.reason}</span>{/if}
+      {/if}
+    </div>
+  {/if}
+
   <input bind:this={picker} type="file" multiple hidden onchange={onpick} data-testid="file-input" />
 
   {#if view && view.transfers.length}
@@ -171,6 +209,43 @@
     color: var(--ok);
   }
   .status[data-state='ended'] span {
+    color: var(--fg-dim);
+  }
+  .call {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+  }
+  .call[data-state='connected'] {
+    border-left: 3px solid var(--ok);
+    padding-left: 8px;
+  }
+  .who {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--border);
+  }
+  .speaking .dot {
+    background: var(--ok);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 35%, transparent);
+  }
+  .vol input {
+    width: 6em;
+  }
+  .small {
+    font-size: 0.85em;
+  }
+  .dim {
     color: var(--fg-dim);
   }
   .verify {

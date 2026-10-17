@@ -35,6 +35,9 @@ export class FakePC {
   localDescription: { type: string; sdp: string } | null = null
   remoteDescription: { type: string; sdp: string } | null = null
   ondatachannel: ((ev: { channel: FakeChannel }) => void) | null = null
+  ontrack: ((ev: { streams: unknown[]; track: unknown }) => void) | null = null
+  tracks: Array<{ track: unknown; stream: unknown }> = []
+  private delivered = 0
   onconnectionstatechange: (() => void) | null = null
   closed = false
   readonly fingerprint: string
@@ -99,6 +102,10 @@ export class FakePC {
     this.listeners.delete(f)
   }
 
+  addTrack(track: unknown, stream: unknown) {
+    this.tracks.push({ track, stream })
+  }
+
   createDataChannel(label: string) {
     const [local, remote] = channelPair()
     local.label = label
@@ -117,6 +124,12 @@ export class FakePC {
     if (this.connectionState !== 'connected') {
       this.connectionState = 'connected'
       this.onconnectionstatechange?.()
+    }
+    // Audio the far side added reaches us once the connection is up.
+    const far = this.remote.tracks
+    while (this.delivered < far.length) {
+      const t = far[this.delivered++]!
+      this.ontrack?.({ streams: [t.stream], track: t.track })
     }
     for (const { local, remote } of this.outbox.splice(0)) {
       remote.readyState = 'open'
