@@ -127,6 +127,9 @@ func initialise(cfg *config.Config) error {
 	return nil
 }
 
+// shutdownGrace bounds how long serve waits for sessions to detach after a signal.
+const shutdownGrace = 15 * time.Second
+
 func serve(cfg *config.Config) error {
 	st, acc, err := openApp(cfg, false)
 	if err != nil {
@@ -138,21 +141,35 @@ func serve(cfg *config.Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	go b.Run(ctx)
+	// Run returns only after sessions have detached and networks have stopped.
+	// Wait for it before the deferred st.Close(), or detaching sessions find a closed database.
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		b.Run(ctx)
+	}()
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: b.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
 	log.Printf("bouncer listening on %s", cfg.Listen)
 
+	var serveErr error
 	select {
-	case err := <-errc:
-		return err
+	case serveErr = <-errc:
 	case <-ctx.Done():
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		serveErr = srv.Shutdown(shutdown)
+		cancel()
 	}
-	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return srv.Shutdown(shutdown)
+
+	stop()
+	select {
+	case <-runDone:
+	case <-time.After(shutdownGrace):
+		log.Printf("shutdown: sessions did not finish within %s; closing the database anyway", shutdownGrace)
+	}
+	return serveErr
 }
 
 func hashPassword(in *os.File, out *os.File) error {

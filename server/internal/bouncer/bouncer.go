@@ -33,6 +33,14 @@ type Bouncer struct {
 	mu      sync.Mutex
 	ctx     context.Context
 	running map[int64]*runningNetwork
+
+	// sessMu guards live and stopping. Once stopping is set, no new session is
+	// accepted, so sessions.Wait cannot race with sessions.Add.
+	sessMu   sync.Mutex
+	live     map[*Session]struct{}
+	stopping bool
+	sessions sync.WaitGroup // one per session goroutine
+	networks sync.WaitGroup // one per Network.Run goroutine
 }
 
 type runningNetwork struct {
@@ -51,7 +59,8 @@ func New(conf *config.Config, st *store.Store, acc *accounts.Service) *Bouncer {
 }
 
 // Run starts every enabled network and keeps the set in step with the
-// database until ctx is cancelled.
+// database until ctx is cancelled. It returns once every session has detached
+// and every network has stopped, so the caller may then close the store.
 func (b *Bouncer) Run(ctx context.Context) {
 	b.mu.Lock()
 	b.ctx = ctx
@@ -99,20 +108,79 @@ func (b *Bouncer) sync() {
 		}
 		ctx, cancel := context.WithCancel(b.ctx)
 		n := NewNetwork(spec, b.store, b.conf.HistoryLimit, b.conf.ReplayLimit)
-		go n.Run(ctx)
+		b.networks.Add(1)
+		go func() {
+			defer b.networks.Done()
+			n.Run(ctx)
+		}()
 		b.running[id] = &runningNetwork{net: n, cancel: cancel}
 		log.Printf("started network %s/%s", spec.UserName, spec.Name)
 	}
 }
 
+// stopAll shuts the bouncer down in an order that keeps the store usable until
+// the end: sessions go first and record their last-seen time as they detach,
+// then the networks stop, and only then does it return.
 func (b *Bouncer) stopAll() {
+	b.closeSessions()
+	b.sessions.Wait()
+
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	for id, r := range b.running {
 		r.cancel()
 		r.net.Stop()
 		delete(b.running, id)
 	}
+	b.mu.Unlock()
+	b.networks.Wait()
+}
+
+// closeSessions refuses new sessions and closes every live one, attached or not.
+// Closing can wait on the client's close handshake, so the sessions close in parallel.
+func (b *Bouncer) closeSessions() {
+	b.sessMu.Lock()
+	b.stopping = true
+	live := make([]*Session, 0, len(b.live))
+	for s := range b.live {
+		live = append(live, s)
+	}
+	b.sessMu.Unlock()
+
+	var wg sync.WaitGroup
+	for _, s := range live {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.close()
+		}()
+	}
+	wg.Wait()
+}
+
+// serveSession runs a client session to completion. It is counted in b.sessions,
+// so stopAll can wait for it to detach. A session that arrives during shutdown is dropped.
+func (b *Bouncer) serveSession(ctx context.Context, conn irc.LineConn) {
+	s := newSession(b, conn)
+	b.sessMu.Lock()
+	if b.stopping {
+		b.sessMu.Unlock()
+		s.close()
+		return
+	}
+	if b.live == nil {
+		b.live = map[*Session]struct{}{}
+	}
+	b.live[s] = struct{}{}
+	b.sessions.Add(1)
+	b.sessMu.Unlock()
+
+	defer func() {
+		b.sessMu.Lock()
+		delete(b.live, s)
+		b.sessMu.Unlock()
+		b.sessions.Done()
+	}()
+	s.run(ctx)
 }
 
 // Running reports how many networks are currently started.
@@ -135,7 +203,7 @@ func (b *Bouncer) network(id int64) *Network {
 func (b *Bouncer) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/ws", ws.Handler(b.conf.AllowedOrigins, func(ctx context.Context, conn irc.LineConn) {
-		newSession(b, conn).run(ctx)
+		b.serveSession(ctx, conn)
 	}))
 	if b.conf.WebDir != "" {
 		mux.Handle("/", http.FileServer(http.Dir(b.conf.WebDir)))
