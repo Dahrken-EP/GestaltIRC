@@ -269,3 +269,75 @@ describe('parseModeChanges', () => {
     ])
   })
 })
+
+describe('closed private conversations', () => {
+  class Mem {
+    data = new Map<string, string>()
+    getItem(k: string) { return this.data.get(k) ?? null }
+    setItem(k: string, v: string) { this.data.set(k, v) }
+    removeItem(k: string) { this.data.delete(k) }
+  }
+  const dm = (nick: string, text: string, time: string) => `@time=${time} :${nick}!u@h PRIVMSG me :${text}`
+  const history = (net: NetworkState, target: string, ...lines: string[]) =>
+    net.handleBatch({ type: 'chathistory', params: [target], messages: lines.map((l) => parse(l)!) })
+
+  beforeEach(() => {
+    ;(globalThis as { localStorage?: unknown }).localStorage = new Mem()
+  })
+
+  it('stays closed when history is fetched again after a reload', () => {
+    const first = setup()
+    first.feed(dm('alice', 'hello', '2020-01-01T00:00:00.000Z'))
+    const buf = first.net.find('alice')!
+    first.net.closeBuffer(buf)
+    expect(first.net.find('alice')).toBeUndefined()
+
+    // A new page: the same account, history replayed.
+    const second = setup()
+    history(second.net, 'alice', dm('alice', 'hello', '2020-01-01T00:00:00.000Z'))
+    expect(second.net.find('alice')).toBeUndefined()
+  })
+
+  it('opens again for a message that arrives after it was closed, and stays open after a reload', () => {
+    const first = setup()
+    first.feed(dm('alice', 'hello', '2020-01-01T00:00:00.000Z'))
+    first.net.closeBuffer(first.net.find('alice')!)
+    first.feed(dm('alice', 'are you there?', '2021-01-01T00:00:00.000Z'))
+    expect(first.net.find('alice')!.messages.map((m) => m.text)).toEqual(['are you there?'])
+
+    const second = setup()
+    history(second.net, 'alice', dm('alice', 'hello', '2020-01-01T00:00:00.000Z'), dm('alice', 'are you there?', '2021-01-01T00:00:00.000Z'))
+    expect(second.net.find('alice')!.messages.map((m) => m.text)).toEqual(['hello', 'are you there?'])
+  })
+
+  it('opens again when the user starts a conversation, or a message missed while away is replayed', () => {
+    const a = setup()
+    a.feed(dm('alice', 'hello', '2020-01-01T00:00:00.000Z'))
+    a.net.closeBuffer(a.net.find('alice')!)
+    a.net.openQuery('alice')
+    expect(a.net.find('alice')).toBeDefined()
+    const b = setup()
+    b.feed(dm('bob', 'hi', '2020-01-01T00:00:00.000Z'))
+    b.net.closeBuffer(b.net.find('bob')!)
+    // Sent while the page was closed, so it arrives as history, but after the closing.
+    history(b.net, 'bob', dm('bob', 'ping', '2999-01-01T00:00:00.000Z'))
+    expect(b.net.find('bob')!.messages.map((m) => m.text)).toEqual(['ping'])
+  })
+
+  it('does not ask for the history of a conversation closed since its last message', () => {
+    const { net, feed, sent } = setup()
+    net.setCaps(new Set(['chathistory', 'batch']))
+    feed(dm('alice', 'hello', '2020-01-01T00:00:00.000Z'))
+    net.closeBuffer(net.find('alice')!)
+    sent.length = 0
+    net.handleBatch({
+      type: 'draft/chathistory-targets',
+      params: [],
+      messages: [
+        parse(':bouncer CHATHISTORY TARGETS alice 2000-01-01T00:00:00.000Z')!,
+        parse(':bouncer CHATHISTORY TARGETS bob 2999-01-01T00:00:00.000Z')!,
+      ],
+    })
+    expect(sent).toEqual(['CHATHISTORY LATEST bob * 100'])
+  })
+})
