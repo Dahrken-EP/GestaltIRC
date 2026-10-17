@@ -10,18 +10,42 @@ A self-hosted IRC bouncer with a compact web client. The bouncer keeps you conne
 The server is Go and the client is Svelte. Any other IRC client can use the same bouncer.
 
 ## Screenshots
+
+**Managing servers.** The bar on the left has one icon per server and a **+** that always adds another. Click the server you are on for its menu: edit, switch off (it stays in the bar, dimmed, so you can switch it back on) or remove.
 <p align="center">
-  <img src="docs/assets/screenshot-channel-dark.png" alt="A channel in the dark theme, with a link preview and the member list" width="900">
+  <img src="docs/assets/screenshot-servers.png" alt="The server bar with three servers, one switched off, a + button, and the menu for the selected server" width="900">
+</p>
+
+The server dialog has the server's details first, then who you are (with alternative nicks), how you log in, what to do after connecting, and the highlight words and notifications for that server only.
+<p align="center">
+  <img src="docs/assets/screenshot-server-dialog.png" alt="The Add a server dialog, filled in" width="420">
+</p>
+
+**Pictures and gifs in the conversation**, one after another: a picture link, a Giphy page, a plain gif link and an imgur page. Your browser never contacts those sites; the bouncer fetches them.
+<p align="center">
+  <img src="docs/assets/screenshot-media-images.png" alt="A chat with an image, a Giphy gif, a gif link and an imgur picture, each shown under the message that linked it" width="560">
+</p>
+
+**Sound, video and links**: an audio player for a sound file, a card for a YouTube link (nothing loads from YouTube until you press play), and a preview card for any page.
+<p align="center">
+  <img src="docs/assets/screenshot-media-embeds.png" alt="A chat with an audio player, a YouTube card and a link preview card" width="560">
+</p>
+
+**Direct chat** between two browsers, with file transfer. The safety code and certificates stay out of sight until you press Verify.
+<p align="center">
+  <img src="docs/assets/screenshot-direct.png" alt="A direct chat with a finished file transfer" width="900">
+</p>
+
+**Settings**, with a tab for each kind of thing: General, Appearance, Notifications, Highlights, Media and Plugins.
+<p align="center">
+  <img src="docs/assets/screenshot-settings-general.png" alt="Settings, General" width="300">
+  <img src="docs/assets/screenshot-settings-appearance.png" alt="Settings, Appearance" width="300">
+  <img src="docs/assets/screenshot-settings-notifications.png" alt="Settings, Notifications" width="300">
 </p>
 <p align="center">
-  <img src="docs/assets/screenshot-voice.png" alt="A voice room in a channel, with two people speaking and a volume slider for each" width="900">
-</p>
-<p align="center">
-  <img src="docs/assets/screenshot-direct.png" alt="A direct chat between two browsers with a safety code and a finished file transfer" width="900">
-</p>
-<p align="center">
-  <img src="docs/assets/screenshot-switcher.png" alt="The quick switcher over a channel" width="440">
-  <img src="docs/assets/screenshot-networks.png" alt="The network editor in Settings" width="440">
+  <img src="docs/assets/screenshot-settings-highlights.png" alt="Settings, Highlights" width="300">
+  <img src="docs/assets/screenshot-settings-media.png" alt="Settings, Media" width="300">
+  <img src="docs/assets/screenshot-settings-plugins.png" alt="Settings, Plugins" width="300">
 </p>
 
 ## Try it
@@ -31,7 +55,7 @@ You need Docker. This runs the bouncer and web client on your own machine:
     docker run -d --name gestalt -p 127.0.0.1:8080:8080 -v gestalt-data:/data gestalt
     echo 'a-long-password' | docker exec -i gestalt bouncer user add alice
 
-Open <http://localhost:8080>, log in as `alice`, then **Settings, Networks, Add a network** (Libera is `irc.libera.chat`, port 6697, TLS). The first start creates the database and secret key in the `gestalt-data` volume. Back that volume up: the key protects your saved passwords.
+Open <http://localhost:8080>, log in as `alice`, and press **Add a server** (Libera is `irc.libera.chat`, port 6697, TLS). The first start creates the database and secret key in the `gestalt-data` volume. Back that volume up: the key protects your saved passwords.
 
 ## Run it on a server
 `docker-compose.yml` runs the whole stack: the bouncer and web client, [Caddy](https://caddyserver.com) for HTTPS (it gets and renews the certificate by itself), and [coturn](https://github.com/coturn/coturn) so that direct chat, file transfer and voice work between people behind NATs.
@@ -53,12 +77,12 @@ Point `DOMAIN` at the server first. Open these ports in the firewall:
 The bouncer's own port, 8080, is never published. See **[deploy/README.md](deploy/README.md)** for what the stack does, backing up, and what has and has not been tested.
 
 ## Features
-- **Many networks, one login.** Each network has its own icon in the left rail, with channels, queries and a status window. Unread counts are grey, mentions are coloured, and the tab title shows the total. Add, edit, switch off and remove your networks in Settings, with SASL PLAIN or SCRAM and a server password.
+- **Many servers, one login.** Each server has its own icon in the left bar, with channels, queries and a status window. Unread counts are grey, mentions are coloured, and the tab title shows the total. The **+** adds a server; click the one you are on to edit, switch off or remove it. A server can have a server password, alternative nicks (tried in order when the first is taken), SASL PLAIN or SCRAM or a NickServ password, channels to join, and commands to run after connecting, plus highlight words and notifications of its own.
 - **Always connected.** Close the browser and the bouncer stays on IRC. When you come back you get the messages you missed, and older ones by scrolling up (`CHATHISTORY`). The list draws only the rows near the view, so a channel with thousands of lines stays light: ten channels of 2000 messages each use about 16 MB in the browser.
-- **Read position follows you.** Reading a channel on your laptop clears it on your phone. Preferences follow your account too.
+- **Your settings follow you.** Reading a channel on your laptop clears it on your phone. Preferences, highlight words, each server's settings and your installed plugins (with what they store) are kept on the bouncer, so a new browser has them as soon as you log in. The one exception is permission for desktop notifications, which each browser grants for itself.
 - **Notifications.** Mentions and private messages raise a desktop notification while the page is open. With Web Push, the bouncer notifies your browser even when the tab is closed and no client is connected.
 - **Inline media.** Pictures (PNG, JPG, GIF, WEBP, AVIF, plus imgur and Giphy links) and video (MP4, WEBM, imgur GIFV) show in the chat, and sound files (MP3, OGG, OPUS, WAV, FLAC, M4A) get a player. Other links get a title and a picture. YouTube and Streamable show a card, and nothing loads from them until you press play. Your browser never contacts the linked site: the bouncer fetches it, so the site never sees your address. Each kind can be turned off.
-- **Direct chat and file transfer.** `/direct NICK` asks someone to connect browser to browser over WebRTC. Nothing is connected until they accept. Chat and files then go straight between you, are not stored anywhere, and both sides get a safety code to compare over another channel, so nobody in between, including the IRC server and the bouncer, can alter the connection unnoticed. Files are accepted one by one and checked against a SHA-256.
+- **Direct chat and file transfer.** `/direct NICK` asks someone to connect browser to browser over WebRTC. Nothing is connected until they accept. Chat and files then go straight between you, are not stored anywhere, and both sides can open a safety code to compare over another channel (**Verify**), so nobody in between, including the IRC server and the bouncer, can alter the connection unnoticed. Files are accepted one by one and checked against a SHA-256.
 - **Voice.** Press **Join voice** in any channel to talk with up to ten people at once, with no media server: everyone connects to everyone. You see who is speaking, can mute, and set each person's volume. `/call NICK` rings one person privately.
 - **Plugins.** Aliases, event hooks, timers and storage, written in JavaScript, run in a sandbox and limited to the permissions you grant. See [docs/PLUGINS.md](docs/PLUGINS.md).
 - **Replies, reactions, typing.** Reply to a message, react with emoji, delete your own messages, and see who is typing (off until you turn it on). Away members are dimmed.
@@ -70,7 +94,7 @@ The bouncer's own port, 8080, is never published. See **[deploy/README.md](deplo
 - **Installable.** A browser can install it as an app on a phone or desktop. It needs the bouncer, so there is no offline mode.
 
 ## Plugins
-A plugin is one JSON document, pasted into **Settings, Plugins**. You see what it asks for and can untick any permission before it is installed. This one adds `/greet`:
+A plugin is one JSON document, pasted into **Settings, Plugins**; it is kept on your account and follows you to other browsers. You see what it asks for and can untick any permission before it is installed. This one adds `/greet`:
 
     {
       "name": "greeter", "version": "1.0.0", "description": "Adds /greet.",

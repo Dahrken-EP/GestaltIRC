@@ -6,8 +6,8 @@ lists every option with its default.
 
 ## Accounts and networks
 
-Accounts are made with the command line (`bouncer user add`). People then add and edit their own networks in
-**Settings, Networks**, or you add them with `bouncer network add`. Network passwords are encrypted at rest with
+Accounts are made with the command line (`bouncer user add`). People then add and edit their own servers with the **+**
+in the server bar and the menu on each server, or you add them with `bouncer network add`. Network passwords are encrypted at rest with
 AES-256-GCM; the key is `secret.key`.
 
 Because the web editor lets any account make the bouncer open connections, a network added or moved there may
@@ -74,8 +74,8 @@ Not offered, and why:
 ## The HTTP API
 
 The web client logs in at `POST /api/login`, which sets the session cookie. `GET /api/session` returns the user's
-networks and preferences, `PUT /api/prefs` saves preferences, `GET/POST/PUT/DELETE /api/networks` is the network
-editor, `GET /api/media` and `GET /api/preview` are the proxy for links, and `GET /api/ice` gives a browser STUN and
+networks and preferences, `PUT /api/prefs` saves preferences, `GET/POST/PUT/DELETE /api/networks` is the server
+editor, `GET/PUT /api/docs/plugins` keeps the account's installed plugins, `GET /api/media` and `GET /api/preview` are the proxy for links, and `GET /api/ice` gives a browser STUN and
 TURN servers with expiring credentials. State-changing requests must be JSON and must not come from another
 origin. Failed logins, over HTTP or WebSocket, are rate limited per client address and per account, and a password
 change ends every session.

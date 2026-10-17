@@ -35,8 +35,9 @@ forwards no cookies. A YouTube or Streamable player loads only after you press p
 
 **An account that wants to reach the bouncer's own network.** The network editor lets any account make the
 bouncer open connections. A network added or moved there may reach public addresses only (checked again at
-connect time) and ports from 1024, and an account may have ten. Fields sent to the IRC network cannot hold
-line breaks. The operator can lift the address rule with `allow_private_networks`. Networks added with the
+connect time) and ports from 1024, and an account may have ten. Fields sent to the IRC network (nicks,
+passwords, the commands to run after connecting) cannot hold line breaks, and those commands cannot be PASS, USER, CAP,
+AUTHENTICATE or QUIT. The operator can lift the address rule with `allow_private_networks`. Networks added with the
 command line are the operator's choice and are not restricted.
 
 **A plugin.** A plugin is code the user pasted in, so the question is what it can do, not whether it is
@@ -78,6 +79,9 @@ have stopped plugins from running; ten simultaneous logins pushed memory to abou
 
 ## What is not covered
 
+- **The bouncer holds your plugins' code.** They are kept on your account so they follow you, which means anyone who can
+  act as your account (a stolen session, or the operator) can change them. They remain inside the sandbox and the
+  permissions you granted, but with `send` that is speaking as you, which that person could do anyway.
 - **A plugin you install can read your channels and speak as you if you grant it `events` and `send`.** The
   sandbox stops it leaving the browser and touching the page; it does not stop it misusing what you gave it.
   Install code you trust.
