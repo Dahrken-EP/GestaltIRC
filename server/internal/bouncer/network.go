@@ -18,6 +18,7 @@ import (
 
 	"gestalt/server/internal/accounts"
 	"gestalt/server/internal/irc"
+	"gestalt/server/internal/netguard"
 	"gestalt/server/internal/store"
 	"gestalt/server/internal/upstream"
 )
@@ -272,6 +273,11 @@ func SetUpstreamRootCAs(pool *x509.CertPool) { upstreamRootCAs = pool }
 
 func dialUpstream(ctx context.Context, nc accounts.NetworkSpec) (net.Conn, error) {
 	d := &net.Dialer{Timeout: 20 * time.Second}
+	if nc.Guarded {
+		// Checked as the socket connects, so a name that resolves to a private address, or one that
+		// changes between the check and the connection, is refused as well.
+		d = netguard.NewDialer(20 * time.Second)
+	}
 	raw, err := d.DialContext(ctx, "tcp", net.JoinHostPort(nc.Host, strconv.Itoa(nc.Port)))
 	if err != nil {
 		return nil, err

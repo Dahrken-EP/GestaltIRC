@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
+  import NetworksPanel from './NetworksPanel.svelte'
   import PluginsPanel from './PluginsPanel.svelte'
   import { notificationsSupported, requestNotifyPermission } from '../lib/notify'
   import { disablePush, enablePush, pushSubscribed, pushSupported } from '../lib/push'
@@ -137,6 +138,11 @@
       Highlight words <span class="opt">(your nick always highlights; one per line)</span>
       <textarea rows="3" bind:value={keywordText} onblur={saveKeywords}></textarea>
     </label>
+
+    <fieldset>
+      <legend>Networks</legend>
+      <NetworksPanel />
+    </fieldset>
 
     <fieldset>
       <legend>Plugins</legend>

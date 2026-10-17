@@ -7,6 +7,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,7 @@ type Bouncer struct {
 type runningNetwork struct {
 	net    *Network
 	cancel context.CancelFunc
+	spec   accounts.NetworkSpec
 }
 
 // New builds a bouncer. Call Run to start the networks.
@@ -58,6 +60,14 @@ func New(conf *config.Config, st *store.Store, acc *accounts.Service) *Bouncer {
 		running:  map[int64]*runningNetwork{},
 	}
 	b.api = api.New(acc, b, conf)
+	b.api.NetworksChanged = func() {
+		b.mu.Lock()
+		started := b.ctx != nil
+		b.mu.Unlock()
+		if started {
+			b.sync()
+		}
+	}
 	return b
 }
 
@@ -105,13 +115,17 @@ func (b *Bouncer) sync() {
 	}
 	want := make(map[int64]accounts.NetworkSpec, len(specs))
 	for _, s := range specs {
+		// A network whose address was chosen in the web editor may reach only public addresses.
+		s.Guarded = s.ViaWeb && !b.conf.AllowPrivateNetworks
 		want[s.ID] = s
 	}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for id, r := range b.running {
-		if _, ok := want[id]; !ok {
+		// A network that was removed or switched off stops. One whose settings changed stops too, and
+		// starts again below with the new ones.
+		if spec, ok := want[id]; !ok || !reflect.DeepEqual(spec, r.spec) {
 			log.Printf("stopping network %s", r.net.name)
 			r.cancel()
 			r.net.Stop()
@@ -125,7 +139,7 @@ func (b *Bouncer) sync() {
 		ctx, cancel := context.WithCancel(b.ctx)
 		n := NewNetwork(spec, b.store, b.conf.HistoryLimit, b.conf.ReplayLimit)
 		go n.Run(ctx)
-		b.running[id] = &runningNetwork{net: n, cancel: cancel}
+		b.running[id] = &runningNetwork{net: n, cancel: cancel, spec: spec}
 		log.Printf("started network %s/%s", spec.UserName, spec.Name)
 	}
 }

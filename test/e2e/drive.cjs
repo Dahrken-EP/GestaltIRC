@@ -767,6 +767,58 @@ async function send(page, text) {
   ok((await page.locator('[data-plugin]').count()) === 0, 'plugins can be removed')
   await closeSettings()
 
+  // ---------- N2. the network editor ----------
+  const railCount = () => page.locator('nav[aria-label=Networks] button.net:not(.add)').count()
+  ok((await railCount()) === 1, 'one network to start with')
+  await openSettings()
+  const panel = page.getByTestId('networks-panel')
+  ok((await panel.locator('[data-network]').count()) === 1, 'the editor lists the account\'s network')
+
+  await panel.getByRole('button', { name: 'Add a network…' }).click()
+  await panel.getByRole('button', { name: 'Add', exact: true }).click()
+  ok((await page.getByTestId('network-error').innerText()).includes('short name'), 'an empty form says what is missing before sending anything')
+  await panel.getByLabel('Name', { exact: true }).fill('fake')
+  await panel.getByLabel('Server', { exact: true }).fill('127.0.0.1')
+  await panel.getByLabel('Port').fill('16667')
+  await panel.getByLabel('Use TLS (encrypted)').uncheck()
+  await panel.getByRole('button', { name: 'Add', exact: true }).click()
+  await page.waitForFunction(() => document.querySelector('[data-testid=network-error]')?.textContent?.includes('already has a network named'))
+  ok(true, 'the bouncer\'s reason for refusing is shown (a name already in use)')
+
+  await panel.getByLabel('Name', { exact: true }).fill('second')
+  await panel.getByLabel('Nick', { exact: true }).fill('matt2')
+  await panel.getByLabel(/Channels to join/).fill('#chat')
+  await panel.getByRole('button', { name: 'Add', exact: true }).click()
+  await panel.locator('[data-network=second]').waitFor()
+  await page.waitForFunction(() => document.querySelectorAll('nav[aria-label=Networks] button.net:not(.add)').length === 2)
+  ok(true, 'a network added in the editor appears and connects without reloading')
+  await page.waitForFunction(() => document.querySelectorAll('nav[aria-label=Networks] button.net[aria-label*=", connected"]').length === 2, null, { timeout: 15000 })
+  await panel.locator('[data-network=second] [data-testid=network-state]:has-text("connected")').waitFor({ timeout: 10000 })
+  ok(true, 'it reaches the network and the list says so')
+
+  await panel.locator('[data-network=second]').getByRole('button', { name: 'Edit' }).click()
+  await panel.getByLabel('Nick', { exact: true }).fill('matt3')
+  await panel.getByRole('button', { name: 'Save' }).click()
+  await page.waitForFunction(async () => (await (await fetch('/api/networks')).json()).networks.some((n) => n.name === 'second' && n.nick === 'matt3'))
+  ok(true, 'an edit is saved')
+  const apiText = await page.evaluate(async () => JSON.stringify(await (await fetch('/api/networks')).json()))
+  ok(!/password/.test(apiText.replace(/has_\w*password/g, '')), 'the network list carries no passwords')
+  await page.waitForFunction(() => document.querySelectorAll('nav[aria-label=Networks] button.net[aria-label*=", connected"]').length === 2, null, { timeout: 15000 })
+  ok(true, 'the edited network reconnects by itself')
+
+  await panel.locator('[data-network=second]').getByRole('button', { name: 'Switch off' }).click()
+  await page.waitForFunction(() => document.querySelectorAll('nav[aria-label=Networks] button.net:not(.add)').length === 1)
+  ok(true, 'switching a network off closes it')
+  await panel.locator('[data-network=second]').getByRole('button', { name: 'Switch on' }).click()
+  await page.waitForFunction(() => document.querySelectorAll('nav[aria-label=Networks] button.net:not(.add)').length === 2)
+  await panel.locator('[data-network=second]').getByRole('button', { name: 'Remove…' }).click()
+  await panel.locator('[data-network=second]').getByRole('button', { name: 'Remove', exact: true }).click()
+  await page.waitForFunction(() => document.querySelectorAll('nav[aria-label=Networks] button.net:not(.add)').length === 1)
+  await panel.locator('[data-network=second]').waitFor({ state: 'detached' })
+  ok(true, 'removing a network, after confirming, takes it away')
+  ok((await railCount()) === 1 && (await panel.locator('[data-network]').count()) === 1, 'the original network is untouched')
+  await closeSettings()
+
   // ---------- L. logout ----------
   await page.click('button[aria-label="Settings"]')
   await page.getByRole('button', { name: 'Log out' }).click()
@@ -781,8 +833,8 @@ async function send(page, text) {
 
   // Errors from trying to reach a push service that does not exist in this sandbox are expected.
   // The browser logs every failed fetch itself, so the 401 after logout appears as a console error, and
-  // so does the 502 for the imgur and giphy pictures, which the sandbox has no way to reach.
-  const unexpected = errors.filter((e) => !/push service|Registration failed|AbortError|subscribe|status of 401|status of 415|status of 502|incognito/i.test(e))
+  // so does the 400 for the network editor test that adds a name already in use, and the 502 for the imgur and giphy pictures, which the sandbox has no way to reach.
+  const unexpected = errors.filter((e) => !/push service|Registration failed|AbortError|subscribe|status of 400|status of 401|status of 415|status of 502|incognito/i.test(e))
   ok(unexpected.length === 0, 'no unexpected console or page errors' + (unexpected.length ? ': ' + unexpected.join(' | ') : ''))
 
   await browser.close()

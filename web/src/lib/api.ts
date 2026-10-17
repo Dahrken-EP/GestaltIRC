@@ -16,6 +16,50 @@ export interface SessionInfo {
   prefs: Record<string, unknown> | null
 }
 
+/** A network as the editor sees it. Secrets are never sent to the browser, only whether one is set. */
+export interface NetworkDetail {
+  name: string
+  host: string
+  port: number
+  tls: boolean
+  nick: string
+  ident: string
+  realname: string
+  sasl_mech: string
+  sasl_user: string
+  has_server_password: boolean
+  has_sasl_password: boolean
+  has_certificate: boolean
+  join: string[]
+  enabled: boolean
+  connected: boolean
+}
+
+/** What the editor sends. A secret left out is kept; an empty one is cleared. */
+export interface NetworkRequest {
+  name?: string
+  host: string
+  port: number
+  tls: boolean
+  nick: string
+  ident: string
+  realname: string
+  sasl_mech: string
+  sasl_user: string
+  server_password?: string
+  sasl_password?: string
+  join: string[]
+  enabled: boolean
+}
+
+export interface NetworkList {
+  networks: NetworkDetail[]
+  /** How many networks an account may have. */
+  max: number
+  /** True when the operator lets the editor use addresses on the bouncer's own network. */
+  private_allowed: boolean
+}
+
 export class ApiError extends Error {
   readonly status: number
   constructor(status: number, message: string) {
@@ -57,6 +101,10 @@ export const api = {
   login: (user: string, password: string) => request<{ user: string }>('POST', '/api/login', { user, password }),
   logout: () => request<{ ok: boolean }>('POST', '/api/logout', {}),
   putPrefs: (prefs: Record<string, unknown>) => request<{ ok: boolean }>('PUT', '/api/prefs', prefs),
+  listNetworks: () => request<NetworkList>('GET', '/api/networks'),
+  addNetwork: (n: NetworkRequest) => request<{ ok: boolean }>('POST', '/api/networks', n),
+  updateNetwork: (name: string, n: NetworkRequest) => request<{ ok: boolean }>('PUT', '/api/networks/' + encodeURIComponent(name), n),
+  deleteNetwork: (name: string) => request<{ ok: boolean }>('DELETE', '/api/networks/' + encodeURIComponent(name)),
   ice: () => request<{ iceServers: RTCIceServer[]; ttl: number }>('GET', '/api/ice'),
   pushKey: () => request<{ key: string }>('GET', '/api/push/key'),
   pushSubscribe: (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) =>

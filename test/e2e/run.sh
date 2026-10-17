@@ -53,6 +53,8 @@ cat > "$work/bouncer.yaml" <<YAML
 listen: "127.0.0.1:$bouncer_port"
 web_dir: "$root/web/dist"
 data_dir: "$work/data"
+# The scripted network is on this machine, which the network editor refuses unless told otherwise.
+allow_private_networks: true
 secret_key_file: "$work/data/secret.key"
 YAML
 chmod 600 "$work/bouncer.yaml"

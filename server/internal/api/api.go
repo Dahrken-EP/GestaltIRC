@@ -36,6 +36,10 @@ type API struct {
 	Networks NetworkStatus
 	Conf     *config.Config
 
+	// NetworksChanged is called after the editor adds, changes or removes a network, so the bouncer can start,
+	// restart or stop it at once instead of at its next check.
+	NetworksChanged func()
+
 	// LoginByIP and LoginByUser slow down password guessing. Both count failures only.
 	LoginByIP   *ratelimit.Limiter
 	LoginByUser *ratelimit.Limiter
@@ -58,6 +62,7 @@ func New(acc *accounts.Service, nets NetworkStatus, conf *config.Config) *API {
 	a.mux.HandleFunc("GET /api/session", a.session)
 	a.mux.HandleFunc("GET /api/prefs", a.authed(a.getPrefs))
 	a.mux.HandleFunc("PUT /api/prefs", a.authed(a.putPrefs))
+	a.registerNetworks()
 	return a
 }
 

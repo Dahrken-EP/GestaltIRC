@@ -118,6 +118,36 @@ class App {
     else if (first) this.activate(first.id)
   }
 
+  /**
+   * Brings the connections in step with the account's networks after the editor changed them: new
+   * ones connect, removed or switched-off ones close. A network whose settings changed keeps its
+   * connection, which the bouncer closes and the client reopens by itself.
+   */
+  async resync(): Promise<void> {
+    let session: SessionInfo | null
+    try {
+      session = await api.session()
+    } catch {
+      return
+    }
+    if (!session || this.phase !== 'ready') return
+    const wanted = new Set(session.networks.filter((n) => n.enabled).map((n) => `${this.user}/${n.name}`))
+    for (const net of this.networks) {
+      if (wanted.has(net.login)) continue
+      this.conns.get(net.id)?.close()
+      this.conns.delete(net.id)
+      net.dispose()
+    }
+    this.networks = this.networks.filter((n) => wanted.has(n.login))
+    const have = new Set(this.networks.map((n) => n.login))
+    for (const info of session.networks) if (info.enabled && !have.has(`${this.user}/${info.name}`)) this.start(info)
+    if (!this.active) {
+      const first = this.networks[0]
+      if (first) this.activate(first.id)
+      else this.activeId = ''
+    }
+  }
+
   /** Drops every connection and returns to the login form. */
   private teardown(reason: string): void {
     plugins.dispose()
