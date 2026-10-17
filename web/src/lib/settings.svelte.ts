@@ -1,6 +1,7 @@
-// User preferences. The design stores these server-side so they follow the user
-// across devices; the bouncer has no preferences API yet, so for now they live
-// in this browser's localStorage.
+// User preferences. They are kept in this browser's localStorage so the page
+// looks right before login, and saved to the bouncer once logged in so they
+// follow the user to other devices. `notify` is the one exception: permission to
+// show notifications belongs to a browser, not an account, so it never leaves.
 
 export type Theme = 'system' | 'light' | 'dark'
 export type Density = 'compact' | 'comfortable'
@@ -12,8 +13,9 @@ interface Stored {
   nickColors: Record<string, string>
   showMembers: boolean
   showBufferList: boolean
-  notify: boolean
   timestamps: boolean
+  sendTyping: boolean
+  notify: boolean
 }
 
 const DEFAULTS: Stored = {
@@ -23,11 +25,16 @@ const DEFAULTS: Stored = {
   nickColors: {},
   showMembers: true,
   showBufferList: true,
-  notify: false,
   timestamps: true,
+  sendTyping: false,
+  notify: false,
 }
 
+/** The keys saved to the bouncer. */
+const SYNCED = ['theme', 'density', 'keywords', 'nickColors', 'showMembers', 'showBufferList', 'timestamps', 'sendTyping'] as const
+
 const KEY = 'irc:settings'
+const PUSH_DELAY_MS = 800
 
 function load(): Stored {
   try {
@@ -39,6 +46,12 @@ function load(): Stored {
   return { ...DEFAULTS }
 }
 
+const isTheme = (v: unknown): v is Theme => v === 'system' || v === 'light' || v === 'dark'
+const isDensity = (v: unknown): v is Density => v === 'compact' || v === 'comfortable'
+const isStringList = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string')
+const isColorMap = (v: unknown): v is Record<string, string> =>
+  !!v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((x) => typeof x === 'string')
+
 class Settings {
   theme = $state<Theme>(DEFAULTS.theme)
   density = $state<Density>(DEFAULTS.density)
@@ -46,37 +59,80 @@ class Settings {
   nickColors = $state<Record<string, string>>({})
   showMembers = $state(true)
   showBufferList = $state(true)
-  notify = $state(false)
   timestamps = $state(true)
+  sendTyping = $state(false)
+  notify = $state(false)
+
+  private remote: ((prefs: Record<string, unknown>) => void) | null = null
+  private timer: ReturnType<typeof setTimeout> | undefined
 
   constructor() {
-    const s = load()
-    this.theme = s.theme
-    this.density = s.density
-    this.keywords = s.keywords
-    this.nickColors = s.nickColors
-    this.showMembers = s.showMembers
-    this.showBufferList = s.showBufferList
-    this.notify = s.notify
-    this.timestamps = s.timestamps
+    this.assign(load())
+  }
+
+  private assign(s: Partial<Stored>): void {
+    if (isTheme(s.theme)) this.theme = s.theme
+    if (isDensity(s.density)) this.density = s.density
+    if (isStringList(s.keywords)) this.keywords = s.keywords
+    if (isColorMap(s.nickColors)) this.nickColors = s.nickColors
+    if (typeof s.showMembers === 'boolean') this.showMembers = s.showMembers
+    if (typeof s.showBufferList === 'boolean') this.showBufferList = s.showBufferList
+    if (typeof s.timestamps === 'boolean') this.timestamps = s.timestamps
+    if (typeof s.sendTyping === 'boolean') this.sendTyping = s.sendTyping
+    if (typeof s.notify === 'boolean') this.notify = s.notify
+  }
+
+  /** What is sent to the bouncer. */
+  synced(): Record<string, unknown> {
+    const out: Record<string, unknown> = {}
+    for (const k of SYNCED) out[k] = $state.snapshot(this[k])
+    return out
+  }
+
+  /**
+   * Starts saving changes to the bouncer through `push`. If the bouncer already
+   * holds preferences for this account they replace the local ones; otherwise the
+   * local ones are uploaded, so a user's existing settings carry over.
+   */
+  connectRemote(prefs: Record<string, unknown> | null, push: (prefs: Record<string, unknown>) => void): void {
+    if (prefs && Object.keys(prefs).length > 0) {
+      // Permission to notify belongs to this browser, so the server never gets a say in it.
+      const { notify: _ignored, ...rest } = prefs as Partial<Stored>
+      this.assign(rest)
+      this.writeLocal()
+    }
+    this.remote = push
+    if (!prefs || Object.keys(prefs).length === 0) this.schedulePush()
+  }
+
+  /** Stops saving to the bouncer, for example after logout. Local values stay. */
+  disconnectRemote(): void {
+    clearTimeout(this.timer)
+    this.remote = null
   }
 
   save(): void {
+    this.writeLocal()
+    this.schedulePush()
+  }
+
+  private writeLocal(): void {
     const s: Stored = {
-      theme: this.theme,
-      density: this.density,
-      keywords: [...this.keywords],
-      nickColors: { ...this.nickColors },
-      showMembers: this.showMembers,
-      showBufferList: this.showBufferList,
+      ...(this.synced() as Omit<Stored, 'notify'>),
       notify: this.notify,
-      timestamps: this.timestamps,
     }
     try {
       localStorage.setItem(KEY, JSON.stringify(s))
     } catch {
       // not persisted; the setting still applies for this page
     }
+  }
+
+  private schedulePush(): void {
+    if (!this.remote) return
+    clearTimeout(this.timer)
+    // Several quick changes, such as typing a keyword list, become one request.
+    this.timer = setTimeout(() => this.remote?.(this.synced()), PUSH_DELAY_MS)
   }
 
   setNickColor(nick: string, color: string | null): void {

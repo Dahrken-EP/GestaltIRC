@@ -1,85 +1,66 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import type { Buffer, NetworkState } from '../lib/network.svelte'
+  import type { Buffer, ChatMessage, NetworkState } from '../lib/network.svelte'
   import MessageLine from './MessageLine.svelte'
+  import VirtualList from './VirtualList.svelte'
 
-  let { net, buf, onnick, onchannel }: {
+  let { net, buf, onnick, onchannel, onreply }: {
     net: NetworkState
     buf: Buffer
     onnick: (nick: string) => void
     onchannel: (name: string) => void
+    onreply: (msg: ChatMessage) => void
   } = $props()
 
-  let el: HTMLDivElement
-  let stick = true
-  let renderedFirst: number | undefined
-  let heightBefore = 0
+  type Row =
+    | { key: string; kind: 'older' }
+    | { key: string; kind: 'empty' }
+    | { key: string; kind: 'day'; time: number }
+    | { key: string; kind: 'msg'; msg: ChatMessage; prev: ChatMessage | undefined }
 
-  function onscroll() {
-    stick = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-    if (el.scrollTop < 40 && buf.messages.length) net.loadOlder(buf)
-  }
+  const sameDay = (a: number, b: number) => new Date(a).toDateString() === new Date(b).toDateString()
 
-  // Remember the height before new rows render, so loading older messages
-  // above the view does not make the page jump.
-  $effect.pre(() => {
-    void buf.messages
-    if (el) heightBefore = el.scrollHeight
-  })
-
-  $effect(() => {
+  const rows = $derived.by(() => {
+    const out: Row[] = []
+    if (buf.kind !== 'status') out.push({ key: 'older', kind: 'older' })
     const list = buf.messages
-    if (!el) return
-    const first = list[0]?.id
-    if (stick) el.scrollTop = el.scrollHeight
-    else if (first !== renderedFirst && renderedFirst !== undefined) el.scrollTop += el.scrollHeight - heightBefore
-    renderedFirst = first
-  })
-
-  onMount(() => {
-    el.scrollTop = el.scrollHeight
-    renderedFirst = buf.messages[0]?.id
+    if (list.length === 0 && buf.kind === 'status') out.push({ key: 'empty', kind: 'empty' })
+    for (let i = 0; i < list.length; i++) {
+      const msg = list[i]!
+      const prev = list[i - 1]
+      if (!prev || !sameDay(prev.time, msg.time)) out.push({ key: `d${msg.id}`, kind: 'day', time: msg.time })
+      out.push({ key: `m${msg.id}`, kind: 'msg', msg, prev })
+    }
+    return out
   })
 
   function dayLabel(t: number): string {
     return new Date(t).toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
   }
-  const sameDay = (a: number, b: number) => new Date(a).toDateString() === new Date(b).toDateString()
 </script>
 
-<div class="pane" bind:this={el} {onscroll} role="log" aria-live="polite" aria-label="Messages in {buf.name || net.label}">
-  {#if buf.kind !== 'status'}
-    <div class="older">
-      {#if buf.historyLoading}
-        <span>Loading…</span>
-      {:else if buf.historyExhausted}
-        <span>Start of history</span>
-      {:else}
-        <button class="btn" onclick={() => net.loadOlder(buf)}>Load older messages</button>
-      {/if}
-    </div>
-  {/if}
-
-  {#each buf.messages as msg, i (msg.id)}
-    {@const prev = buf.messages[i - 1]}
-    {#if !prev || !sameDay(prev.time, msg.time)}
-      <div class="day"><span>{dayLabel(msg.time)}</span></div>
+<VirtualList items={rows} estimate={22} label="Messages in {buf.name || net.label}" onreachtop={() => buf.messages.length && net.loadOlder(buf)}>
+  {#snippet children(row)}
+    {#if row.kind === 'older'}
+      <div class="older">
+        {#if buf.historyLoading}
+          <span>Loading…</span>
+        {:else if buf.historyExhausted}
+          <span>Start of history</span>
+        {:else}
+          <button class="btn" onclick={() => net.loadOlder(buf)}>Load older messages</button>
+        {/if}
+      </div>
+    {:else if row.kind === 'empty'}
+      <p class="empty">Type /help for commands. Channels you have joined appear on the left.</p>
+    {:else if row.kind === 'day'}
+      <div class="day"><span>{dayLabel(row.time)}</span></div>
+    {:else}
+      <MessageLine msg={row.msg} prev={row.prev} {net} {buf} {onnick} {onchannel} {onreply} />
     {/if}
-    <MessageLine {msg} {prev} {net} {onnick} {onchannel} />
-  {/each}
-
-  {#if buf.messages.length === 0 && buf.kind === 'status'}
-    <p class="empty">Type /help for commands, or /join #channel to join one.</p>
-  {/if}
-</div>
+  {/snippet}
+</VirtualList>
 
 <style>
-  .pane {
-    height: 100%;
-    overflow-y: auto;
-    padding: 4px 0 8px;
-    overflow-anchor: none;
-  }
   .older {
     text-align: center;
     padding: 6px;
@@ -90,7 +71,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    margin: 8px 12px 4px;
+    padding: 8px 12px 4px;
     color: var(--fg-dim);
     font-size: 0.85em;
   }
@@ -101,7 +82,8 @@
     border-top: 1px solid var(--border);
   }
   .empty {
-    margin: 16px;
+    margin: 0;
+    padding: 16px;
     color: var(--fg-dim);
   }
 </style>

@@ -175,6 +175,59 @@ describe('Connection', () => {
   })
 })
 
+describe('Connection with the full bouncer', () => {
+  it('requests the capabilities the client can use, and only those offered', () => {
+    const { conn, sockets } = setup()
+    conn.connect()
+    const s = sockets[0]!
+    s.onopen!()
+    s.recv(
+      ':b CAP * LS :message-tags sasl=PLAIN draft/read-marker draft/message-redaction away-notify multi-prefix standard-replies cap-notify extended-join sts=port=443',
+    )
+    const req = s.sent.find((l) => l.startsWith('CAP REQ'))!
+    const asked = req.replace('CAP REQ :', '').split(' ')
+    expect(asked).toEqual(
+      expect.arrayContaining(['message-tags', 'sasl', 'draft/read-marker', 'draft/message-redaction', 'away-notify', 'multi-prefix', 'standard-replies', 'cap-notify']),
+    )
+    // Offered but not wanted, and the sts policy is never a capability to request.
+    expect(asked).not.toContain('extended-join')
+    expect(asked.some((c) => c.startsWith('sts'))).toBe(false)
+  })
+
+  it('logs in with an empty password when a session cookie stands in for it', () => {
+    const sockets: FakeSocket[] = []
+    const conn = new Connection({
+      url: 'ws://x/ws',
+      login: 'matt/libera',
+      password: '',
+      nick: 'matt',
+      onMessage: () => {},
+      onBatch: () => {},
+      onStatus: () => {},
+      createSocket: () => {
+        const s = new FakeSocket()
+        sockets.push(s)
+        return s
+      },
+    })
+    conn.connect()
+    const s = sockets[0]!
+    s.onopen!()
+    s.recv(':b CAP * LS :sasl=PLAIN')
+    s.recv(':b CAP * ACK :sasl')
+    s.recv('AUTHENTICATE +')
+    expect(s.sent).toContain('AUTHENTICATE ' + btoa('\0matt/libera\0'))
+  })
+
+  it('reports the capabilities the bouncer acknowledged', () => {
+    const { conn, sockets } = setup()
+    conn.connect()
+    handshake(sockets[0]!)
+    expect(conn.capabilities.has('sasl')).toBe(true)
+    expect(conn.capabilities.has('message-tags')).toBe(true)
+  })
+})
+
 describe('encodeSaslPlain', () => {
   it('encodes UTF-8 credentials', () => {
     expect(atob(encodeSaslPlain('u', 'pä')[0]!).length).toBeGreaterThan(0)

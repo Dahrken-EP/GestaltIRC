@@ -1,8 +1,14 @@
 <script lang="ts">
   import { applyCompletion, findCompletions, type Completion } from '../lib/complete'
-  import type { Buffer, NetworkState } from '../lib/network.svelte'
+  import type { Buffer, ChatMessage, NetworkState } from '../lib/network.svelte'
 
-  let { net, buf }: { net: NetworkState; buf: Buffer } = $props()
+  let { net, buf, reply, oncancelreply }: {
+    net: NetworkState
+    buf: Buffer
+    /** The message being answered, if the user chose "reply". */
+    reply: ChatMessage | null
+    oncancelreply: () => void
+  } = $props()
 
   const COMMANDS = [
     'help', 'join', 'part', 'quit', 'nick', 'msg', 'query', 'notice', 'me', 'topic', 'names', 'list', 'whois',
@@ -42,7 +48,14 @@
     if (history.length > 100) history.shift()
     histIdx = -1
     text = ''
-    net.submit(value)
+    net.submit(value, reply?.msgid)
+    oncancelreply()
+  }
+
+  // Tell the channel we are typing, unless this is a command or the box was emptied.
+  function oninput() {
+    if (!text.trim()) net.sendTyping(buf, 'done')
+    else if (!text.startsWith('/')) net.sendTyping(buf, 'active')
   }
 
   function complete(e: KeyboardEvent) {
@@ -66,7 +79,10 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    if (e.key === 'Escape' && reply) {
+      e.preventDefault()
+      oncancelreply()
+    } else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault()
       send()
     } else if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) {
@@ -94,15 +110,30 @@
   const placeholder = $derived(
     buf.kind === 'status' ? 'Type a command, e.g. /join #channel' : `Message ${buf.name}`,
   )
+
+  const typingText = $derived.by(() => {
+    const who = buf.typing
+    if (who.length === 0) return ''
+    if (who.length === 1) return `${who[0]} is typing…`
+    if (who.length === 2) return `${who[0]} and ${who[1]} are typing…`
+    return 'Several people are typing…'
+  })
 </script>
 
 <form class="input" onsubmit={(e) => { e.preventDefault(); send() }}>
+  {#if reply}
+    <div class="replying">
+      <span>Replying to <strong>{reply.nick}</strong>: {reply.text.length > 80 ? reply.text.slice(0, 79) + '…' : reply.text}</span>
+      <button type="button" aria-label="Cancel reply" title="Cancel reply (Esc)" onclick={oncancelreply}>×</button>
+    </div>
+  {/if}
   <label class="visually-hidden" for="msg-input">Message</label>
   <textarea
     id="msg-input"
     bind:this={el}
     bind:value={text}
     {onkeydown}
+    {oninput}
     {placeholder}
     rows="1"
     spellcheck="true"
@@ -110,6 +141,7 @@
     autocapitalize="off"
     disabled={net.status !== 'connected'}
   ></textarea>
+  <div class="typing" aria-live="polite">{typingText}</div>
 </form>
 
 <style>
@@ -131,5 +163,34 @@
   }
   textarea:disabled {
     opacity: 0.6;
+  }
+  .typing {
+    min-height: 1.3em;
+    padding-top: 2px;
+    font-size: 0.85em;
+    color: var(--fg-dim);
+  }
+  .replying {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 3px 8px;
+    margin-bottom: 4px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    font-size: 0.9em;
+    color: var(--fg-dim);
+    background: var(--bg-panel);
+  }
+  .replying span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .replying button {
+    font-size: 1.2em;
+    line-height: 1;
+    padding: 0 4px;
   }
 </style>
