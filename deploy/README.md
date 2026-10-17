@@ -188,6 +188,9 @@ coturn); over `https://localhost` it serves the client, redirects http to https,
 the proxy's `X-Forwarded-Proto`), frames the plugin sandbox page by this site only, logs in, hands out TURN
 credentials, and coturn answers a STUN request on 3478 (udp and tcp).
 
+The proxy override was also run: no Caddy, the bouncer published on 127.0.0.1 only, HSTS and a `Secure` cookie
+only when the request carries `X-Forwarded-Proto: https`. The nginx snippet above was not run.
+
 **Not tested:** a real domain with a real certificate, Caddy renewing it, coturn relaying media between two real
 browsers behind real NATs (the browser tests use loopback), TURN over TLS, the `PUBLIC_IP` path, and an upgrade
 from an earlier layout of this directory (the old `setup.sh` and `deploy/docker-compose.yml` are gone).
