@@ -46,6 +46,8 @@ export interface ChatView {
   reason: string
   /** Five groups of four characters to read aloud and compare. Empty until connected. */
   code: string
+  /** Their client confirmed it received our request, so we know they use Gestalt. It says nothing of what they will answer. */
+  acked: boolean
   fingerprints: { local: string; remote: string }
   transfers: Transfer[]
 }
@@ -98,7 +100,7 @@ interface Live {
 }
 
 export class DirectChat {
-  private view: ChatView = { state: 'idle', reason: '', code: '', fingerprints: { local: '', remote: '' }, transfers: [] }
+  private view: ChatView = { state: 'idle', reason: '', code: '', acked: false, fingerprints: { local: '', remote: '' }, transfers: [] }
   private sid = ''
   private pending: Description | null = null
   private session: PeerSession | null = null
@@ -122,7 +124,7 @@ export class DirectChat {
     if (this.view.state === 'incoming') return this.acceptIncoming()
     this.reset()
     const sid = (this.sid = this.o.newSid())
-    this.update({ state: 'calling', reason: '' })
+    this.update({ state: 'calling', reason: '', acked: false })
     this.armTimer('No answer.')
     try {
       const session = await this.makeSession()
@@ -193,6 +195,9 @@ export class DirectChat {
         this.armTimer('The connection did not complete.')
         this.session.applyAnswer(p.sdp).catch(() => this.end('The answer was not valid.'))
         return
+      case 'ack':
+        if (sid === this.sid && this.view.state === 'calling') this.update({ acked: true })
+        return
       case 'reject':
         if (sid === this.sid && this.view.state === 'calling') this.end('They declined.')
         return
@@ -224,6 +229,9 @@ export class DirectChat {
     this.sid = sid
     this.pending = { t: 'offer', sdp }
     this.update({ state: 'incoming', reason: '' })
+    // Says only that a client got the request, so the caller knows they are not talking to nobody. Nothing
+    // is connected and no address is shared until the user accepts.
+    this.o.signal(sid, { k: 'chat', t: 'ack' })
     this.armTimer('The request expired.')
   }
 

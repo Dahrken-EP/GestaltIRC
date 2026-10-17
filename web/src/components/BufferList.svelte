@@ -70,7 +70,7 @@
     <h3>Direct</h3>
     <ul>
       {#each directs as b (b.key)}
-        {@render item(b.key, (b.call?.state === 'connected' ? '📞 ' : '⚡ ') + b.name, b.unread, b.mentionCount, b.p2p?.state !== 'connected' && b.call?.state !== 'connected', true, b)}
+        {@render item(b.key, (b.call?.state === 'connected' ? '📞 ' : '⚡ ') + b.title, b.unread, b.mentionCount, b.p2p?.state !== 'connected' && b.call?.state !== 'connected', true, b)}
       {/each}
     </ul>
   {/if}

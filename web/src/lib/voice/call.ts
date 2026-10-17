@@ -21,6 +21,8 @@ export interface CallView {
   remote: MediaStream | null
   /** Compare out loud with the other person. Empty until connected. */
   code: string
+  /** Their client confirmed it received our ring, so we know they use Gestalt. */
+  acked: boolean
 }
 
 export interface CallOptions {
@@ -38,7 +40,7 @@ export interface CallOptions {
 }
 
 export class VoiceCall {
-  private view: CallView = { state: 'idle', reason: '', muted: false, speaking: false, remoteSpeaking: false, volume: 1, remote: null, code: '' }
+  private view: CallView = { state: 'idle', reason: '', muted: false, speaking: false, remoteSpeaking: false, volume: 1, remote: null, code: '', acked: false }
   private sid = ''
   private offer: string | null = null
   private session: PeerSession | null = null
@@ -66,7 +68,7 @@ export class VoiceCall {
     if (!this.slot.claim(this)) return this.update({ state: 'ended', reason: 'You are already in a voice chat. Leave it first.' })
     primeAudio()
     const sid = (this.sid = (this.o.newSid ?? newSessionId)())
-    this.update({ state: 'calling', reason: '', code: '', remote: null, muted: false })
+    this.update({ state: 'calling', reason: '', code: '', remote: null, muted: false, acked: false })
     this.arm('No answer.')
     try {
       const mic = await this.o.getMedia()
@@ -155,6 +157,9 @@ export class VoiceCall {
         this.arm('The call did not connect.')
         this.session.applyAnswer(s.sdp).catch(() => this.end('The answer was not valid.'))
         return
+      case 'ack':
+        if (sid === this.sid && this.view.state === 'calling') this.update({ acked: true })
+        return
       case 'reject':
         if (sid === this.sid && this.view.state === 'calling') this.end('They declined.')
         return
@@ -189,6 +194,7 @@ export class VoiceCall {
     this.sid = sid
     this.offer = sdp
     this.update({ state: 'incoming', reason: '', code: '', remote: null })
+    this.o.sendSignal(sid, { k: 'voice', t: 'ack' })
     this.arm('The call was not answered.')
   }
 
