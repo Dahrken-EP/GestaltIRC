@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: server/go.mod
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -41,7 +41,7 @@ jobs:
         language: [go, javascript-typescript]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         if: matrix.language == 'go'
         with:
           go-version-file: server/go.mod
