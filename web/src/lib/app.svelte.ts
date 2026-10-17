@@ -117,6 +117,7 @@ class App {
     let conn: Connection
     const net = new NetworkState(id, login, info.nick, (line) => conn.send(line), {
       onMention: (n, buf, msg) => this.notifyMention(n, buf, msg),
+      iceServers: () => api.ice().then((r) => r.iceServers),
     })
     conn = new Connection({
       url: websocketUrl(),
@@ -212,7 +213,7 @@ class App {
 
   private notifyMention(net: NetworkState, buf: Buffer, msg: ChatMessage): void {
     if (!settings.notify || !pageUnfocused()) return
-    const title = buf.kind === 'query' ? msg.nick : `${msg.nick} in ${buf.name}`
+    const title = buf.kind === 'query' || buf.kind === 'p2p' ? msg.nick : `${msg.nick} in ${buf.name}`
     const body = msg.kind === 'action' ? `* ${msg.nick} ${msg.text}` : msg.text
     showNotification(title, body, () => this.goto(net.id, buf.key))
   }

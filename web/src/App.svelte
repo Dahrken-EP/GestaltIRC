@@ -3,6 +3,7 @@
   import { app } from './lib/app.svelte'
   import { settings } from './lib/settings.svelte'
   import BufferList from './components/BufferList.svelte'
+  import DirectPanel from './components/DirectPanel.svelte'
   import Header from './components/Header.svelte'
   import InputBar from './components/InputBar.svelte'
   import Login from './components/Login.svelte'
@@ -78,6 +79,9 @@
     <div class="nav"><BufferList {net} onpick={() => (navOpen = false)} /></div>
     <main>
       <Header {net} {buf} onmenu={() => (navOpen = !navOpen)} onchannel={openChannel} />
+      {#if buf.kind === 'p2p'}
+        {#key net.id + '/' + buf.key}<DirectPanel {net} {buf} />{/key}
+      {/if}
       <div class="body">
         <div class="messages">
           {#key net.id + '/' + buf.key}

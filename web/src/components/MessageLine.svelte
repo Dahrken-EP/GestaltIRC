@@ -41,7 +41,7 @@
   const color = (nick: string) => nickColor(nick, settings.nickColors)
 
   // Replies, reactions and deletion need the message to have an id and the network to support them.
-  const canInteract = $derived(isChat && !!msg.msgid && buf.kind !== 'status')
+  const canInteract = $derived(isChat && !!msg.msgid && buf.onNetwork)
   const canReact = $derived(canInteract && net.caps.has('message-tags'))
   const canReply = $derived(canInteract && net.caps.has('message-tags'))
   const canDelete = $derived(canInteract && msg.self && net.canRedact)

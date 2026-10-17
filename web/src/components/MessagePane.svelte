@@ -21,7 +21,7 @@
 
   const rows = $derived.by(() => {
     const out: Row[] = []
-    if (buf.kind !== 'status') out.push({ key: 'older', kind: 'older' })
+    if (buf.onNetwork) out.push({ key: 'older', kind: 'older' })
     const list = buf.messages
     if (list.length === 0 && buf.kind === 'status') out.push({ key: 'empty', kind: 'empty' })
     for (let i = 0; i < list.length; i++) {

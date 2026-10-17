@@ -5,6 +5,7 @@
 
   const channels = $derived(net.buffers.filter((b) => b.kind === 'channel'))
   const queries = $derived(net.buffers.filter((b) => b.kind === 'query'))
+  const directs = $derived(net.buffers.filter((b) => b.kind === 'p2p'))
 
   function pick(key: string) {
     net.select(key)
@@ -51,6 +52,14 @@
     <ul>
       {#each queries as b (b.key)}
         {@render item(b.key, b.name, b.unread, b.mentionCount, false, true, b)}
+      {/each}
+    </ul>
+  {/if}
+  {#if directs.length}
+    <h3>Direct</h3>
+    <ul>
+      {#each directs as b (b.key)}
+        {@render item(b.key, '⚡ ' + b.name, b.unread, b.mentionCount, b.p2p?.state !== 'connected', true, b)}
       {/each}
     </ul>
   {/if}
