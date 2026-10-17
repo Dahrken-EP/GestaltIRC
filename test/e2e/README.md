@@ -18,6 +18,8 @@ What it covers:
 - plugins: install with a permission review, a refused permission really refused, a command, an event, a
   timer, data kept across a reload, the sandbox (a probe tries every way out; the test website must never
   hear from it), and a plugin stuck in a loop being stopped while the page stays usable
+- the server bar (the + button, the menu on a server, switching off and on, removing) and the server dialog
+  (alternative nicks, server password, commands on connect, highlight words for one server)
 - a voice room of three browsers (Chromium's fake microphone, real WebRTC audio): joining, everyone
   connected to everyone, the speaking indicator lighting from the other side's audio, mute, leaving,
   audio continuing in another window, and a private call: ring, answer, hear each other, hang up, decline

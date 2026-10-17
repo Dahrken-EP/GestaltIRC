@@ -62,6 +62,8 @@ func New(acc *accounts.Service, nets NetworkStatus, conf *config.Config) *API {
 	a.mux.HandleFunc("GET /api/session", a.session)
 	a.mux.HandleFunc("GET /api/prefs", a.authed(a.getPrefs))
 	a.mux.HandleFunc("PUT /api/prefs", a.authed(a.putPrefs))
+	a.mux.HandleFunc("GET /api/docs/{name}", a.authed(a.getDoc))
+	a.mux.HandleFunc("PUT /api/docs/{name}", a.authed(a.putDoc))
 	a.registerNetworks()
 	return a
 }
@@ -323,6 +325,47 @@ func (a *API) putPrefs(w http.ResponseWriter, r *http.Request, u store.User) {
 		return
 	}
 	if err := a.Accounts.SetPrefs(u.ID, string(out)); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// getDoc returns one of the account's stored documents (the installed plugins, for one), or null if none was saved.
+func (a *API) getDoc(w http.ResponseWriter, r *http.Request, u store.User) {
+	js, ok, err := a.Accounts.Doc(u.ID, r.PathValue("name"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "no such document")
+		return
+	}
+	if !ok {
+		// Not saved yet is an answer, not an error: the browser would log a 404 as a failure.
+		js = "null"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(js))
+}
+
+func (a *API) putDoc(w http.ResponseWriter, r *http.Request, u store.User) {
+	if !accounts.DocNames[r.PathValue("name")] {
+		writeError(w, http.StatusNotFound, "no such document")
+		return
+	}
+	var obj map[string]json.RawMessage
+	if !readJSON(w, r, accounts.MaxDocBytes, &obj) {
+		return
+	}
+	if obj == nil {
+		writeError(w, http.StatusBadRequest, "the document must be a JSON object")
+		return
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "the document must be a JSON object")
+		return
+	}
+	if err := a.Accounts.SetDoc(u.ID, r.PathValue("name"), string(out)); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -71,6 +71,7 @@
   })
 
   function onscroll() {
+    if (!el) return
     scrollTop = el.scrollTop
     stick = el.scrollHeight - el.scrollTop - el.clientHeight < 40
     atBottom = stick
@@ -105,6 +106,7 @@
   onMount(() => {
     viewport = el.clientHeight
     rowObserver = new ResizeObserver((entries) => {
+      if (!el) return // the list went away while this was queued
       // Take the anchor from the layout as it was, before this batch of heights is applied.
       const anchor = stick ? null : layout.anchorAt(el.scrollTop)
       let changed = false
@@ -122,6 +124,7 @@
     for (const n of nodes) rowObserver.observe(n)
 
     const boxObserver = new ResizeObserver(() => {
+      if (!el) return
       viewport = el.clientHeight
       if (stick) el.scrollTop = el.scrollHeight
     })

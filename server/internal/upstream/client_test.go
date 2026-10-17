@@ -200,6 +200,45 @@ func TestConnectNickInUse(t *testing.T) {
 	}
 }
 
+func TestConnectTriesAlternativeNicksInOrder(t *testing.T) {
+	taken := map[string]bool{"me": true, "me_": true}
+	conn := newScriptConn(func(line string) []string {
+		switch {
+		case line == "CAP LS 302":
+			return []string{":srv CAP * LS :"}
+		case strings.HasPrefix(line, "NICK "):
+			nick := strings.TrimPrefix(line, "NICK ")
+			if taken[nick] {
+				return []string{":srv 433 * " + nick + " :Nickname is already in use"}
+			}
+			return []string{":srv 001 " + nick + " :Welcome"}
+		}
+		return nil
+	})
+	c, err := Connect(conn, Config{Nick: "me", User: "me", AltNicks: []string{"me_", "me__"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Nick() != "me__" {
+		t.Errorf("nick = %q, want the second alternative", c.Nick())
+	}
+}
+
+func TestConnectFailsWhenEveryNickIsTaken(t *testing.T) {
+	conn := newScriptConn(func(line string) []string {
+		switch {
+		case line == "CAP LS 302":
+			return []string{":srv CAP * LS :"}
+		case strings.HasPrefix(line, "NICK "):
+			return []string{":srv 433 * x :Nickname is already in use"}
+		}
+		return nil
+	})
+	if _, err := Connect(conn, Config{Nick: "me", User: "me", AltNicks: []string{"me_"}}); !errors.Is(err, ErrNickInUse) {
+		t.Fatalf("err = %v, want ErrNickInUse", err)
+	}
+}
+
 func TestReadLoopAnswersPingAndDeliversEvents(t *testing.T) {
 	conn := newScriptConn(func(line string) []string {
 		switch line {

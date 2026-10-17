@@ -114,6 +114,7 @@
 <style>
   .media {
     display: block;
+    width: fit-content;
     margin-top: 4px;
     max-width: min(100%, 480px);
     max-height: 320px;

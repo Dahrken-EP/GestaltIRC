@@ -274,3 +274,63 @@ func TestCrossSiteRequestsCannotChangeNetworks(t *testing.T) {
 		t.Errorf("cross-origin delete = %d, want 403", resp.StatusCode)
 	}
 }
+
+func TestNickServPasswordAlternativeNicksAndConnectCommands(t *testing.T) {
+	e := newEnv(t, config.Config{}, fakeStatus{})
+	c := e.login(t)
+	body := `{"name":"libera","host":"irc.libera.chat","port":6697,"tls":true,"nick":"matt","alt_nicks":["matt_","matt__"],` +
+		`"perform":["MODE matt +ix","/msg ChanServ hello"],"nickserv_password":"ns-secret"}`
+	if resp, out := e.do(t, "POST", "/api/networks", body, nil, c); resp.StatusCode != 200 {
+		t.Fatalf("add = %d %v", resp.StatusCode, out)
+	}
+	n := networksOf(t, e, c)[0]
+	if got := fmt.Sprint(n["alt_nicks"]); got != "[matt_ matt__]" {
+		t.Errorf("alt_nicks = %s", got)
+	}
+	if got := fmt.Sprint(n["perform"]); got != "[MODE matt +ix /msg ChanServ hello]" {
+		t.Errorf("perform = %s", got)
+	}
+	if n["has_nickserv_password"] != true || strings.Contains(fmt.Sprint(n), "ns-secret") {
+		t.Errorf("the NickServ password must be reported only as set: %v", n)
+	}
+
+	// Left out of an edit, all three are kept.
+	if resp, out := e.do(t, "PUT", "/api/networks/libera", `{"host":"irc.libera.chat","port":6697,"tls":true,"nick":"matt2"}`, nil, c); resp.StatusCode != 200 {
+		t.Fatalf("edit = %d %v", resp.StatusCode, out)
+	}
+	spec, _ := e.acc.GetNetwork("matt", "libera")
+	if spec.NickServPassword != "ns-secret" || len(spec.AltNicks) != 2 || len(spec.Perform) != 2 {
+		t.Errorf("kept = %+v", spec)
+	}
+	// An empty value clears.
+	if resp, _ := e.do(t, "PUT", "/api/networks/libera", `{"host":"irc.libera.chat","port":6697,"tls":true,"nick":"matt2","nickserv_password":"","alt_nicks":[],"perform":[]}`, nil, c); resp.StatusCode != 200 {
+		t.Fatal("clear")
+	}
+	spec, _ = e.acc.GetNetwork("matt", "libera")
+	if spec.NickServPassword != "" || len(spec.AltNicks) != 0 || len(spec.Perform) != 0 {
+		t.Errorf("not cleared = %+v", spec)
+	}
+}
+
+func TestBadAlternativeNicksAndConnectCommandsAreRefused(t *testing.T) {
+	e := newEnv(t, config.Config{}, fakeStatus{})
+	c := e.login(t)
+	base := `"name":"x","host":"irc.example.org","port":6667,"nick":"m"`
+	for name, extra := range map[string]string{
+		"nick with space":   `"alt_nicks":["a b"]`,
+		"nick with newline": `"alt_nicks":["a\r\nQUIT"]`,
+		"too many nicks":    `"alt_nicks":["a","b","c","d","e","f"]`,
+		"empty nick":        `"alt_nicks":[""]`,
+		"line break":        `"perform":["MODE m +i\r\nQUIT"]`,
+		"QUIT":              `"perform":["QUIT :bye"]`,
+		"PASS":              `"perform":["/pass secret"]`,
+		"AUTHENTICATE":      `"perform":["AUTHENTICATE PLAIN"]`,
+		"empty line":        `"perform":["  "]`,
+		"too many lines":    `"perform":["a","b","c","d","e","f","g","h","i","j","k"]`,
+		"nickserv newline":  `"nickserv_password":"a\nOPER x y"`,
+	} {
+		if resp, _ := e.do(t, "POST", "/api/networks", "{"+base+","+extra+"}", nil, c); resp.StatusCode != 400 {
+			t.Errorf("%s: status %d, want 400", name, resp.StatusCode)
+		}
+	}
+}

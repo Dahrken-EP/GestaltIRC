@@ -27,6 +27,28 @@ PAGE = """<!doctype html><html><head>
 </head><body><p>body</p></body></html>""".encode()
 
 
+# Pictures for the screenshot script, if they are there (see samples/make_samples.py). The tests do not need them.
+# Only these names are served, so nothing a request says reaches the file system.
+SAMPLES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "samples")
+SAMPLES = {
+    "/photo.png": ("photo.png", "image/png"),
+    "/dashboard.png": ("dashboard.png", "image/png"),
+    "/thumb.png": ("thumb.png", "image/png"),
+    "/loop.gif": ("loop.gif", "image/gif"),
+}
+
+
+def sample(path):
+    entry = SAMPLES.get(path)
+    if entry is None:
+        return None
+    full = os.path.join(SAMPLES_DIR, entry[0])
+    if not os.path.isfile(full):
+        return None
+    with open(full, "rb") as f:
+        return entry[1], f.read()
+
+
 # Every path that was asked for, so a test can show something was never requested.
 HITS = []
 
@@ -50,6 +72,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         HITS.append(path)
         if path == "/escape.js":
             self.reply("text/javascript", b"export default 1")
+        elif path == "/card.png" and sample("/photo.png"):
+            self.reply(*sample("/photo.png"))
         elif path in ("/pic.png", "/card.png"):
             self.reply("image/png", PNG)
         elif path == "/page.html":
@@ -60,6 +84,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply("audio/mpeg", MP3)
         elif path == "/clip.mp4":
             self.reply("video/mp4", MP4)
+        elif sample(path):
+            self.reply(*sample(path))
         else:
             self.send_response(404)
             self.end_headers()

@@ -127,3 +127,18 @@ func TestAGuardedNetworkCannotConnectToThisMachine(t *testing.T) {
 	}
 	c.Close()
 }
+
+func TestPerformLine(t *testing.T) {
+	for in, want := range map[string]string{
+		"MODE me +i":              "MODE me +i",
+		"/mode me +i":             "mode me +i",
+		"  /join #chat  ":         "join #chat",
+		"msg NickServ identify x": "PRIVMSG NickServ :identify x",
+		"/MSG ChanServ op #a me":  "PRIVMSG ChanServ :op #a me",
+		"msg alone":               "msg alone",
+	} {
+		if got := performLine(in); got != want {
+			t.Errorf("performLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

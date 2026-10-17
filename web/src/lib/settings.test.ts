@@ -135,4 +135,31 @@ describe('settings', () => {
     settings.setNickColor('ALICE', null)
     expect(settings.nickColors).toEqual({})
   })
+
+  it('keeps highlight words and muting per network, and saves them to the bouncer', async () => {
+    const { settings } = await fresh()
+    const push = vi.fn()
+    settings.connectRemote({ theme: 'dark' }, push)
+    settings.keywords = ['deploy']
+    settings.setNetworkKeywords('libera', ['gestalt'])
+    settings.setNetworkMuted('oftc', true)
+    expect(settings.keywordsFor('libera')).toEqual(['deploy', 'gestalt'])
+    expect(settings.keywordsFor('oftc')).toEqual(['deploy'])
+    vi.advanceTimersByTime(1000)
+    expect(push).toHaveBeenCalledTimes(1)
+    expect(push.mock.calls[0]![0]).toMatchObject({ networkKeywords: { libera: ['gestalt'] }, networkMuted: { oftc: true } })
+  })
+
+  it('removes a network\'s own settings when told to forget it', async () => {
+    const { settings } = await fresh({ networkKeywords: { libera: ['a'] }, networkMuted: { libera: true } })
+    settings.forgetNetwork('libera')
+    expect(settings.networkKeywords).toEqual({})
+    expect(settings.networkMuted).toEqual({})
+  })
+
+  it('ignores per-network values of the wrong shape', async () => {
+    const { settings } = await fresh({ networkKeywords: { libera: 'not a list' }, networkMuted: { libera: 'yes' } })
+    expect(settings.networkKeywords).toEqual({})
+    expect(settings.networkMuted).toEqual({})
+  })
 })

@@ -1,5 +1,6 @@
-// Where installed plugins and their data are kept: in this browser, per account. They are not
-// sent to the bouncer, so a plugin installed here is not running on the user's other devices.
+// Where installed plugins and their data are kept in this browser, per account. The manager also keeps a
+// copy on the bouncer, which is what follows the account to another browser; this one is what works at once
+// and when the bouncer cannot be reached.
 
 import { parseStored } from './manifest'
 import { MAX_STORAGE_CHARS, type InstalledPlugin } from './types'
@@ -64,4 +65,16 @@ export function deleteData(user: string, name: string): void {
   } catch {
     // nothing to remove
   }
+}
+
+const STAMP = (user: string) => `irc:plugins-at:${user}`
+
+/** When the plugins or their data last changed in this browser, as milliseconds; 0 if never. */
+export function loadStamp(user: string): number {
+  const v = read(STAMP(user))
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0
+}
+
+export function saveStamp(user: string, ms: number): void {
+  write(STAMP(user), ms)
 }

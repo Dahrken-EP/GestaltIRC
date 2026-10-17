@@ -50,6 +50,11 @@ type NetworkRow struct {
 	// ViaWeb is set for a network whose address came from the web editor, which keeps the
 	// bouncer from connecting it to private addresses (unless the operator allows that).
 	ViaWeb bool
+	// AltNicks are tried in order when the nick is taken. Perform is sent to the network after connecting.
+	// NickServPassword is sealed.
+	AltNicks         []string
+	Perform          []string
+	NickServPassword string
 }
 
 // sqlite's constraint error code for UNIQUE violations.
@@ -143,6 +148,9 @@ func (s *Store) DeleteUser(name string) error {
 			return err
 		}
 	}
+	if _, err := tx.Exec(`DELETE FROM user_docs WHERE user_id = ?`, id); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM users WHERE id = ?`, id); err != nil {
 		return err
 	}
@@ -154,11 +162,12 @@ func (s *Store) DeleteUser(name string) error {
 func (s *Store) CreateNetwork(n NetworkRow) (int64, error) {
 	res, err := s.db.Exec(`
 INSERT INTO networks (user_id, name, host, port, tls, nick, ident, realname,
-	server_password, sasl_mech, sasl_user, sasl_password, client_cert, client_key, join_list, enabled, via_web)
-SELECT id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM users WHERE name = ?`,
+	server_password, sasl_mech, sasl_user, sasl_password, client_cert, client_key, join_list, enabled, via_web, alt_nicks, perform, nickserv_password)
+SELECT id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM users WHERE name = ?`,
 		n.Name, n.Host, n.Port, boolInt(n.TLS), n.Nick, n.Ident, n.RealName,
 		n.ServerPassword, n.SASLMech, n.SASLUser, n.SASLPassword, n.ClientCert, n.ClientKey,
-		strings.Join(n.Join, "\n"), boolInt(n.Enabled), boolInt(n.ViaWeb), n.UserName)
+		strings.Join(n.Join, "\n"), boolInt(n.Enabled), boolInt(n.ViaWeb),
+		strings.Join(n.AltNicks, "\n"), strings.Join(n.Perform, "\n"), n.NickServPassword, n.UserName)
 	if isUnique(err) {
 		return 0, ErrExists
 	}
@@ -175,11 +184,13 @@ SELECT id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM users WHERE name 
 func (s *Store) UpdateNetwork(n NetworkRow) error {
 	res, err := s.db.Exec(`
 UPDATE networks SET host = ?, port = ?, tls = ?, nick = ?, ident = ?, realname = ?, server_password = ?,
-	sasl_mech = ?, sasl_user = ?, sasl_password = ?, client_cert = ?, client_key = ?, join_list = ?, enabled = ?, via_web = ?
+	sasl_mech = ?, sasl_user = ?, sasl_password = ?, client_cert = ?, client_key = ?, join_list = ?, enabled = ?, via_web = ?,
+	alt_nicks = ?, perform = ?, nickserv_password = ?
 WHERE name = ? AND user_id = (SELECT id FROM users WHERE name = ?)`,
 		n.Host, n.Port, boolInt(n.TLS), n.Nick, n.Ident, n.RealName, n.ServerPassword,
 		n.SASLMech, n.SASLUser, n.SASLPassword, n.ClientCert, n.ClientKey,
-		strings.Join(n.Join, "\n"), boolInt(n.Enabled), boolInt(n.ViaWeb), n.Name, n.UserName)
+		strings.Join(n.Join, "\n"), boolInt(n.Enabled), boolInt(n.ViaWeb),
+		strings.Join(n.AltNicks, "\n"), strings.Join(n.Perform, "\n"), n.NickServPassword, n.Name, n.UserName)
 	if err != nil {
 		return err
 	}
@@ -252,7 +263,7 @@ func LastSeenKey(networkID int64) string {
 
 func (s *Store) queryNetworks(where string, args ...any) ([]NetworkRow, error) {
 	q := `SELECT n.id, n.user_id, u.name, n.name, n.host, n.port, n.tls, n.nick, n.ident, n.realname,
-	n.server_password, n.sasl_mech, n.sasl_user, n.sasl_password, n.client_cert, n.client_key, n.join_list, n.enabled, n.via_web
+	n.server_password, n.sasl_mech, n.sasl_user, n.sasl_password, n.client_cert, n.client_key, n.join_list, n.enabled, n.via_web, n.alt_nicks, n.perform, n.nickserv_password
 FROM networks n JOIN users u ON u.id = n.user_id ` + where + ` ORDER BY u.name, n.name`
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
@@ -263,9 +274,9 @@ FROM networks n JOIN users u ON u.id = n.user_id ` + where + ` ORDER BY u.name, 
 	for rows.Next() {
 		var n NetworkRow
 		var tls, enabled, viaWeb int
-		var join string
+		var join, alts, perform string
 		if err := rows.Scan(&n.ID, &n.UserID, &n.UserName, &n.Name, &n.Host, &n.Port, &tls, &n.Nick, &n.Ident,
-			&n.RealName, &n.ServerPassword, &n.SASLMech, &n.SASLUser, &n.SASLPassword, &n.ClientCert, &n.ClientKey, &join, &enabled, &viaWeb); err != nil {
+			&n.RealName, &n.ServerPassword, &n.SASLMech, &n.SASLUser, &n.SASLPassword, &n.ClientCert, &n.ClientKey, &join, &enabled, &viaWeb, &alts, &perform, &n.NickServPassword); err != nil {
 			return nil, err
 		}
 		n.TLS = tls != 0
@@ -273,6 +284,12 @@ FROM networks n JOIN users u ON u.id = n.user_id ` + where + ` ORDER BY u.name, 
 		n.ViaWeb = viaWeb != 0
 		if join != "" {
 			n.Join = strings.Split(join, "\n")
+		}
+		if alts != "" {
+			n.AltNicks = strings.Split(alts, "\n")
+		}
+		if perform != "" {
+			n.Perform = strings.Split(perform, "\n")
 		}
 		out = append(out, n)
 	}

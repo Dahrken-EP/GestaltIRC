@@ -19,7 +19,7 @@ docker compose up -d
 echo 'a-long-password' | docker compose exec -T bouncer bouncer user add alice
 ```
 
-Then open `https://DOMAIN`, log in, and add a network in **Settings, Networks**. Or from the command line:
+Then open `https://DOMAIN`, log in, and press **Add a server** (later, the **+** in the bar on the left). Or from the command line:
 
 ```bash
 docker compose exec bouncer bouncer network add alice libera --host irc.libera.chat --port 6697 --tls --nick alice --join '#chat'

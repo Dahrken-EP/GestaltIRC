@@ -2,27 +2,52 @@
   import { app } from '../lib/app.svelte'
 
   const initials = (label: string) => label.slice(0, 2).toUpperCase()
+
+  /** Opens the server menu beside the button that was pressed. */
+  function menu(name: string, e: MouseEvent) {
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    app.openServerMenu(name, box.right + 6, box.top)
+  }
 </script>
 
 <nav class="rail" aria-label="Networks">
-  {#each app.networks as net (net.id)}
-    <button
-      class="net"
-      class:active={net.id === app.activeId}
-      class:offline={net.status !== 'connected'}
-      title="{net.label} ({net.status})"
-      aria-label="{net.label}, {net.status}{net.unread ? `, ${net.unread} unread` : ''}"
-      aria-current={net.id === app.activeId ? 'true' : undefined}
-      onclick={() => app.activate(net.id)}
-    >
-      {initials(net.label)}
-      {#if net.mentionCount}
-        <span class="badge mention">{net.mentionCount}</span>
-      {:else if net.unread}
-        <span class="dot" aria-hidden="true"></span>
-      {/if}
-    </button>
+  {#each app.configured as info (info.name)}
+    {@const net = app.networks.find((n) => n.name === info.name)}
+    {#if net}
+      <button
+        class="net"
+        class:active={net.id === app.activeId}
+        class:offline={net.status !== 'connected'}
+        title="{net.label} ({net.status}). {net.id === app.activeId ? 'Click for the server menu.' : ''}"
+        aria-label="{net.label}, {net.status}{net.unread ? `, ${net.unread} unread` : ''}"
+        aria-current={net.id === app.activeId ? 'true' : undefined}
+        aria-haspopup="menu"
+        data-server={info.name}
+        onclick={(e) => (net.id === app.activeId ? menu(info.name, e) : app.activate(net.id))}
+        oncontextmenu={(e) => (e.preventDefault(), menu(info.name, e))}
+      >
+        {initials(net.label)}
+        {#if net.mentionCount}
+          <span class="badge mention">{net.mentionCount}</span>
+        {:else if net.unread}
+          <span class="dot" aria-hidden="true"></span>
+        {/if}
+      </button>
+    {:else}
+      <button
+        class="net off"
+        title="{info.name} (switched off)"
+        aria-label="{info.name}, switched off"
+        aria-haspopup="menu"
+        data-server={info.name}
+        onclick={(e) => menu(info.name, e)}
+        oncontextmenu={(e) => (e.preventDefault(), menu(info.name, e))}
+      >
+        {initials(info.name)}
+      </button>
+    {/if}
   {/each}
+  <button class="net plus" title="Add a server" aria-label="Add a server" onclick={() => app.openServerDialog()}>+</button>
   <span class="grow"></span>
   <button class="net add" title="Settings" aria-label="Settings" onclick={() => (app.showSettings = true)}>⚙</button>
 </nav>
@@ -62,12 +87,25 @@
     border-color: var(--accent);
     border-radius: 8px;
   }
-  .net.offline:not(.add) {
+  .net.offline:not(.add):not(.plus),
+  .net.off {
     opacity: 0.55;
   }
-  .add {
+  .net.off {
+    border-style: dashed;
+  }
+  .add,
+  .plus {
     font-size: 18px;
     font-weight: 400;
+  }
+  .plus {
+    border-style: dashed;
+    background: transparent;
+    color: var(--fg-dim);
+  }
+  .plus:hover {
+    color: var(--fg);
   }
   .badge {
     position: absolute;

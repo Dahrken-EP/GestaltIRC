@@ -5,6 +5,7 @@ import { blankForm, checkForm, formFromNetwork, parseChannels, toRequest } from 
 const saved: NetworkDetail = {
   name: 'libera', host: 'irc.libera.chat', port: 6697, tls: true, nick: 'matt', ident: 'matt', realname: 'matt',
   sasl_mech: 'PLAIN', sasl_user: 'matt', has_server_password: false, has_sasl_password: true, has_certificate: false,
+  has_nickserv_password: false, alt_nicks: ['matt_'], perform: ['MODE matt +i'],
   join: ['#a', '#b'], enabled: true, connected: true,
 }
 
@@ -82,5 +83,37 @@ describe('toRequest', () => {
     const f = formFromNetwork({ ...saved, sasl_mech: 'EXTERNAL', has_certificate: true, has_sasl_password: false })
     expect(f.certificate).toBe(true)
     expect(toRequest(f).sasl_mech).toBe('')
+  })
+})
+
+describe('alternative nicks, commands on connect and the NickServ password', () => {
+  it('reads them from a saved network and sends them back as lists', () => {
+    const f = formFromNetwork({ ...saved, alt_nicks: ['matt_', 'matt__'], perform: ['MODE matt +i', 'msg ChanServ hi'] })
+    expect(f.altNicks).toBe('matt_ matt__')
+    expect(f.perform).toBe('MODE matt +i\nmsg ChanServ hi')
+    const r = toRequest(f)
+    expect(r.alt_nicks).toEqual(['matt_', 'matt__'])
+    expect(r.perform).toEqual(['MODE matt +i', 'msg ChanServ hi'])
+  })
+
+  it('splits alternative nicks on spaces and commas, and drops blank command lines', () => {
+    const f = { ...blankForm('matt'), name: 'x', host: 'h', altNicks: 'a, b  c,a', perform: '\n MODE matt +i \n\n' }
+    expect(toRequest(f).alt_nicks).toEqual(['a', 'b', 'c'])
+    expect(toRequest(f).perform).toEqual(['MODE matt +i'])
+  })
+
+  it('keeps a saved NickServ password unless a new one is typed or removal is asked for', () => {
+    const f = formFromNetwork({ ...saved, has_nickserv_password: true })
+    expect('nickserv_password' in toRequest(f)).toBe(false)
+    expect(toRequest({ ...f, nickservPassword: 'new' }).nickserv_password).toBe('new')
+    expect(toRequest({ ...f, clearNickservPassword: true }).nickserv_password).toBe('')
+  })
+
+  it('refuses what the bouncer would', () => {
+    const ok = { ...blankForm('matt'), name: 'x', host: 'h' }
+    expect(checkForm({ ...ok, altNicks: 'a b c d e f' })).toMatch(/five/)
+    expect(checkForm({ ...ok, perform: Array(11).fill('MODE a').join('\n') })).toMatch(/ten/)
+    expect(checkForm({ ...ok, perform: '/quit bye' })).toMatch(/cannot be used/)
+    expect(checkForm({ ...ok, perform: 'MODE matt +i' })).toBe('')
   })
 })

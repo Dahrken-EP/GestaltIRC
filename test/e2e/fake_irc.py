@@ -10,6 +10,9 @@ import asyncio, datetime, itertools, os, re
 mid = itertools.count(1)
 # For the load test: how many old messages to send into each channel as it is joined.
 LOAD_MSGS = int(os.environ.get('LOAD_MSGS', '0'))
+# What the network calls itself (ISUPPORT NETWORK=). A client that sends a server password gets that as the name
+# instead, so a screenshot can show several differently named networks from one scripted server.
+NETWORK_NAME = os.environ.get('NETWORK_NAME', 'FakeNet')
 # Real clients that have registered, by lower-case nick, so they can talk to each other.
 clients = {}
 # Who is in each channel: lower-case channel -> {lower-case nick: send function}.
@@ -65,8 +68,8 @@ async def handle(reader, writer):
         st['reg'] = True
         n = st['nick']
         clients[n.lower()] = send
-        send(f':fake 001 {n} :Welcome to FakeNet {n}')
-        send(f':fake 005 {n} NETWORK=FakeNet CHANTYPES=# PREFIX=(ov)@+ CHANMODES=beI,k,l,imnpst :are supported')
+        send(f':fake 001 {n} :Welcome to {st.get("pass") or NETWORK_NAME} {n}')
+        send(f':fake 005 {n} NETWORK={st.get("pass") or NETWORK_NAME} CHANTYPES=# PREFIX=(ov)@+ CHANMODES=beI,k,l,imnpst :are supported')
         send(f':fake 422 {n} :MOTD missing')
 
     def bot_say(chan, nick, text, delay=0.0, extra=None):
@@ -77,6 +80,10 @@ async def handle(reader, writer):
         cmd, _, arg = text.partition(' ')
         if cmd == '!msg':
             bot_say(target, 'alice', arg, 0.1)
+        elif cmd == '!as':
+            # "!as NICK text": somebody else says it, so a screenshot can have a conversation.
+            who, _, said = arg.partition(' ')
+            bot_say(target, who, said, 0.1)
         elif cmd == '!away':
             asyncio.create_task(later(0.1, ':carol!u@h AWAY :at lunch'))
         elif cmd == '!back':
@@ -106,6 +113,8 @@ async def handle(reader, writer):
                 elif sub == 'END':
                     st['capend'] = True
                     maybe_reg()
+            elif cmd == 'PASS':
+                st['pass'] = rest.lstrip(':')
             elif cmd == 'NICK':
                 st['nick'] = rest.lstrip(':')
                 maybe_reg()
@@ -146,7 +155,9 @@ async def handle(reader, writer):
                 text = text.lstrip(':')
                 # Echo it back with the client-only tags it carried, plus a fresh msgid.
                 client = {k: v for k, v in ctags.items() if k.startswith('+')}
-                send(f'{tags({k: esc(v) for k, v in client.items()})}:{n}!u@h PRIVMSG {target} :{text}')
+                # "!as" lines are instructions to this script, not conversation, so they are not echoed back.
+                if not text.startswith('!as '):
+                    send(f'{tags({k: esc(v) for k, v in client.items()})}:{n}!u@h PRIVMSG {target} :{text}')
                 peer = clients.get(target.lower())
                 if peer and target.lower() != n.lower():
                     peer(f'{tags({k: esc(v) for k, v in client.items()})}:{n}!u@h PRIVMSG {target} :{text}')

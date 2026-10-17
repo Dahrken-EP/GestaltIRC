@@ -66,7 +66,7 @@ cd server && ERGO_DIR=/path/to/ergo go test -tags integration -race ./integratio
 
 ```bash
 npm --prefix web run build
-test/e2e/run.sh                  # SHOTS=1 takes screenshots instead; VOICE_LOAD=1 puts ten browsers in a voice room
+test/e2e/run.sh                  # SHOTS=1 OUT_DIR=dir takes the README's screenshots instead; VOICE_LOAD=1 puts ten browsers in a voice room
 ```
 
 They need Playwright (`npm i -g playwright`, or set `PLAYWRIGHT_MODULE`) and a full Chromium (`CHROMIUM_PATH`),
@@ -94,7 +94,7 @@ server/cmd/bouncer         the binary and its admin commands
 server/internal/irc        line parser, IRCv3 tags, SASL
 server/internal/upstream   the client side of a connection to an IRC network
 server/internal/bouncer    networks kept alive, client sessions, history replay
-server/internal/api        login, sessions, preferences, the network editor, security headers
+server/internal/api        login, sessions, preferences, the server editor, stored documents, security headers
 server/internal/media      the proxy for pictures, video, sound and link previews
 server/internal/netguard   refuses private addresses for outbound connections
 web/src/lib                the client: IRC, state, p2p, voice, plugins

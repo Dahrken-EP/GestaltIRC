@@ -1,19 +1,24 @@
-// Takes screenshots of the client in its main states, for looking at. Run with SHOTS=1 test/e2e/run.sh
-// and OUT_DIR set to keep them. This checks nothing.
+// Takes the screenshots in the README, from the browser tests' scripted network. Run it with
+//   SHOTS=1 OUT_DIR=/some/folder test/e2e/run.sh
+// This checks nothing. The scripted network is named Libera.Chat so the pictures show a name people know, the
+// pictures served in place of photographs are in samples/, and requests for imgur, giphy and YouTube are answered
+// from the page, so the result does not depend on the network the script runs on.
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
+const fs = require('node:fs')
+const path = require('node:path')
 
 const OUT = process.env.OUT_DIR || '.'
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:18080'
 const SITE = process.env.SITE_URL || 'http://127.0.0.1:18081'
 const PASSWORD = process.env.TEST_PASSWORD || 'a-long-password-1'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const sample = (name) => fs.readFileSync(path.join(__dirname, 'samples', name))
 
 async function login(page, user) {
   await page.waitForSelector('form.card')
   await page.fill('input[autocomplete=username]', user)
   await page.fill('input[type=password]', PASSWORD)
   await page.click('button[type=submit]')
-  // On a phone the network list is behind a button, so only wait for it to exist.
   await page.waitForSelector('.status.connected', { state: 'attached' })
 }
 const open = (page, name) => page.click(`button.name:has-text("${name}")`)
@@ -21,8 +26,13 @@ async function send(page, text) {
   await page.fill('#msg-input', text)
   await page.press('#msg-input', 'Enter')
 }
-const shot = async (page, name) => {
-  await page.screenshot({ path: `${OUT}/${name}.png` })
+/** Somebody else says something. The scripted network does the talking; the instruction itself is not echoed. */
+async function says(page, who, text) {
+  await send(page, `!as ${who} ${text}`)
+  await sleep(450)
+}
+const shot = async (target, name, opts = {}) => {
+  await target.screenshot({ path: `${OUT}/${name}.png`, ...opts })
   console.log('shot ' + name)
 }
 
@@ -33,61 +43,58 @@ const shot = async (page, name) => {
   })
   const ctx = (w = 1280, h = 800) => browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 })
 
-  const m = await (await ctx()).newPage()
+  const m = await (await ctx(1100, 1500)).newPage()
+  // What imgur, giphy and YouTube would have sent.
+  await m.route(/\/api\/media\?u=https%3A%2F%2Fmedia\.giphy\.com/, (r) => r.fulfill({ contentType: 'image/gif', body: sample('loop.gif') }))
+  await m.route(/\/api\/media\?u=https%3A%2F%2Fi\.imgur\.com/, (r) => r.fulfill({ contentType: 'image/png', body: sample('dashboard.png') }))
+  await m.route(/\/api\/media\?u=https%3A%2F%2Fi\.ytimg\.com/, (r) => r.fulfill({ contentType: 'image/png', body: sample('thumb.png') }))
+  await m.route(/\/api\/preview\?u=.*youtu/, (r) =>
+    r.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        url: 'https://youtu.be/dQw4w9WgXcQ',
+        kind: 'youtube',
+        id: 'dQw4w9WgXcQ',
+        title: 'Gestalt walkthrough: direct chat, voice and plugins',
+        site: 'YouTube',
+        image: '/api/media?u=https%3A%2F%2Fi.ytimg.com%2Fvi%2FdQw4w9WgXcQ%2Fhq.jpg',
+      }),
+    }),
+  )
   await m.goto(BASE + '/')
-  await m.waitForSelector('form.card')
-  await shot(m, '01-login')
   await login(m, 'matt')
+  // Dark theme for every picture.
+  await m.click('button[aria-label="Settings"]')
+  await m.getByRole('tab', { name: 'Appearance' }).click()
+  await m.selectOption('select >> nth=0', 'dark')
+  await m.keyboard.press('Escape')
+
+  // ---- media in a conversation, one thing per line
   await open(m, '#chat')
   await m.waitForSelector('.line:has-text("hello matt")')
-  await send(m, 'Morning all. Has anyone seen the release notes?')
-  // The scripted network answers a "!msg" line by having alice say the rest. The "!msg" line is the test's
-  // own command, so it is deleted again, which leaves a conversation that reads naturally.
-  await send(m, '!msg The notes are here: ' + SITE + '/page.html')
-  await m.waitForSelector('.card:has-text("An interesting article")', { timeout: 10000 })
-  const command = m.locator('.line.self:has-text("!msg The notes")').last()
-  await command.hover()
-  await command.getByRole('button', { name: 'Delete message' }).click()
-  await m.waitForSelector('.line.self:has-text("!msg The notes")', { state: 'detached' })
-  await send(m, 'Thanks, reading them now')
-  await sleep(800)
-  await shot(m, '02-channel-light')
-
-  // Dark theme and the settings dialog.
-  await m.click('button[aria-label="Settings"]')
-  await m.selectOption('select >> nth=0', 'dark')
+  await send(m, '/clear')
   await sleep(300)
-  await m.getByRole('button', { name: 'Use the example' }).click()
-  await m.getByRole('button', { name: 'Review…' }).click()
-  await m.waitForSelector('[aria-label="Allow this plugin"]')
-  await shot(m, '03-settings-plugin-review-dark')
-  await m.getByRole('button', { name: 'Install' }).click()
-  await m.locator('[data-plugin=greeter] [data-testid=plugin-status]').filter({ hasText: 'running' }).waitFor()
-  await shot(m, '04-settings-plugin-installed-dark')
-  await m.keyboard.press('Escape')
-  await send(m, '/greet everyone')
+  await says(m, 'bob', `Mockup for the release dashboard: ${SITE}/dashboard.png`)
+  await says(m, 'alice', 'The deploy this morning https://giphy.com/gifs/deploy-friday-xT9IgzoKnwFNmISR8I')
+  await says(m, 'carol', `And as a plain gif link: ${SITE}/loop.gif`)
+  await says(m, 'dave', 'From the archive https://imgur.com/AbCd123')
+  await m.waitForFunction(() => [...document.querySelectorAll('.messages img')].filter((i) => i.src.includes('/api/media')).every((i) => i.complete && i.naturalWidth > 0) && document.querySelectorAll('.messages img').length >= 4, null, { timeout: 20000 })
   await sleep(600)
-  await shot(m, '05-channel-dark')
+  await shot(m.locator('.messages'), 'media-images')
 
-  // The quick switcher and the network editor.
-  await m.keyboard.press('Control+k')
-  await m.waitForSelector('[role=dialog][aria-label^="Go to"]')
-  await m.keyboard.type('bu')
+  await send(m, '/clear')
   await sleep(300)
-  await shot(m, '12-quick-switcher')
-  await m.keyboard.press('Escape')
-  await m.click('button[aria-label="Settings"]')
-  const panel = m.getByTestId('networks-panel')
-  await panel.getByRole('button', { name: 'Add a network…' }).click()
-  await panel.getByLabel('Name', { exact: true }).fill('libera')
-  await panel.getByLabel('Server', { exact: true }).fill('irc.libera.chat')
-  await panel.getByLabel('Channels to join').fill('#gestalt')
-  await panel.scrollIntoViewIfNeeded()
-  await sleep(300)
-  await shot(m, '13-network-editor')
-  await m.keyboard.press('Escape')
+  await says(m, 'bob', `Listen to the demo: ${SITE}/tune.mp3`)
+  await says(m, 'alice', 'The talk from last week https://youtu.be/dQw4w9WgXcQ')
+  await says(m, 'carol', `Notes on the proxy: ${SITE}/page.html`)
+  await m.waitForSelector('.card:has-text("An interesting article")', { timeout: 15000 })
+  await m.waitForSelector('.card.video:has-text("Gestalt walkthrough")', { timeout: 15000 })
+  await m.waitForFunction(() => [...document.querySelectorAll('.card img.thumb')].every((i) => i.complete && i.naturalWidth > 0), null, { timeout: 15000 })
+  await sleep(600)
+  await shot(m.locator('.messages'), 'media-embeds')
 
-  // A direct chat with a file.
+  // ---- direct chat, with a file
+  await m.setViewportSize({ width: 1280, height: 800 })
   const j = await (await ctx()).newPage()
   await j.goto(BASE + '/')
   await login(j, 'jane')
@@ -95,7 +102,6 @@ const shot = async (page, name) => {
   await send(m, '/direct jane')
   await open(j, 'matt')
   await j.waitForSelector('.panel .status[data-state=incoming]')
-  await shot(j, '06-direct-request-callee')
   await j.getByRole('button', { name: 'Accept' }).click()
   await m.waitForSelector('.panel .status[data-state=connected]', { timeout: 20000 })
   await send(m, 'Sending you the draft now')
@@ -104,38 +110,86 @@ const shot = async (page, name) => {
   await j.waitForSelector('.transfers li[data-state=offered]')
   await j.locator('.transfers li').getByRole('button', { name: 'Accept' }).click()
   await j.waitForSelector('.transfers li[data-state=done]', { timeout: 30000 })
-  await m.getByRole('button', { name: 'Safety codes' }).click().catch(() => {})
-  await m.getByText('What is this?').click().catch(() => {})
   await sleep(500)
-  await shot(m, '07-direct-chat-transfer')
-  await shot(j, '08-direct-chat-callee-done')
+  await shot(m, 'direct-chat')
+  await m.getByRole('button', { name: 'Verify…' }).click()
+  await sleep(300)
+  await shot(m, 'direct-chat-verify')
   await m.getByRole('button', { name: 'Hang up' }).click()
 
-  // A voice room of three.
-  const k = await (await ctx()).newPage()
-  await k.goto(BASE + '/')
-  await login(k, 'kim')
-  for (const p of [m, j, k]) await open(p, '#chat')
-  await sleep(500)
-  for (const p of [m, j, k]) {
-    await p.getByRole('button', { name: /Join voice/ }).click()
-    await sleep(900)
-  }
-  for (const p of [m, j, k]) {
-    await p.waitForFunction(() => document.querySelectorAll('[data-testid=voice-person][data-state=connected]').length === 2, null, { timeout: 25000 })
-  }
-  await m.locator('[data-testid=voice-person].speaking').first().waitFor({ timeout: 15000 }).catch(() => {})
-  await shot(m, '09-voice-room')
+  await open(m, '#chat')
 
-  // A phone.
-  const ph = await (await ctx(390, 844)).newPage()
-  await ph.goto(BASE + '/')
-  await login(ph, 'matt')
-  await sleep(500)
-  await shot(ph, '10-phone-list')
-  await ph.click('button[aria-label="Show channels"]').catch(() => {})
+  // ---- managing servers
+  await m.setViewportSize({ width: 1280, height: 800 })
+  await send(m, '/clear')
+  await says(m, 'alice', 'Anyone around for the release call?')
+  await says(m, 'bob', 'Yes, joining in five')
+  for (const [name, password, off] of [['rizon', 'Rizon', false], ['snoonet', 'Snoonet', true]]) {
+    await m.getByRole('button', { name: 'Add a server' }).click()
+    const d = m.getByTestId('server-dialog')
+    await d.getByLabel('Name', { exact: true }).fill(name)
+    await d.getByLabel('Address').fill('127.0.0.1')
+    await d.getByLabel('Port').fill('16667')
+    await d.getByLabel('Use TLS (encrypted)').uncheck()
+    await d.getByLabel(/^Server password/).fill(password) // the scripted network takes this as the name it calls itself
+    await d.getByLabel(/^Channels to join/).fill('#chat')
+    if (name === 'rizon') await d.getByLabel(/^Highlight words/).fill('release gestalt')
+    await d.getByRole('button', { name: 'Add server' }).click()
+    await d.waitFor({ state: 'detached' })
+    await m.waitForFunction((n) => document.querySelector(`button.net[data-server=${n}][aria-label*=", connected"]`), name, { timeout: 20000 })
+    if (off) {
+      await m.locator(`button.net[data-server=${name}]`).click()
+      await m.getByRole('menuitem', { name: 'Switch off' }).click()
+      await m.locator(`button.net.off[data-server=${name}]`).waitFor()
+    }
+  }
+  await m.locator('button.net[data-server=libera]').click() // already the one on screen, so this opens its menu
+  await m.getByRole('menu').waitFor()
   await sleep(300)
-  await shot(ph, '11-phone-channels')
+  await shot(m, 'servers-menu')
+  await m.keyboard.press('Escape')
+
+  // The dialog, filled in as for a real network.
+  await m.setViewportSize({ width: 1280, height: 1100 })
+  await m.getByRole('button', { name: 'Add a server' }).click()
+  const dlg = m.getByTestId('server-dialog')
+  await dlg.getByLabel('Name', { exact: true }).fill('oftc')
+  await dlg.getByLabel('Address').fill('irc.oftc.net')
+  await dlg.getByLabel(/^Server password/).fill('not-needed-here')
+  await dlg.getByLabel('Nick', { exact: true }).fill('matt')
+  await dlg.getByLabel(/^Alternative nicks/).fill('matt_ matt__')
+  await dlg.getByLabel(/^SASL/).selectOption('PLAIN')
+  await dlg.getByLabel('Account', { exact: true }).fill('matt')
+  await dlg.getByLabel(/^Channels to join/).fill('#gestalt #help')
+  await dlg.getByLabel(/^Commands to run/).fill('MODE matt +i')
+  await dlg.getByLabel(/^Highlight words/).fill('gestalt release')
+  await dlg.getByLabel('Name', { exact: true }).scrollIntoViewIfNeeded()
+  await sleep(300)
+  await shot(dlg, 'servers-dialog')
+  await dlg.getByRole('button', { name: 'Cancel' }).click()
+  await m.setViewportSize({ width: 1280, height: 800 })
+
+  // ---- settings, every tab
+  await m.click('button[aria-label="Settings"]')
+  await m.getByRole('tab', { name: 'Plugins' }).click()
+  await m.getByRole('button', { name: 'Use the example' }).click()
+  await m.getByRole('button', { name: 'Review…' }).click()
+  await m.getByRole('button', { name: 'Install' }).click()
+  await m.locator('[data-plugin=greeter] [data-testid=plugin-status]').filter({ hasText: 'running' }).waitFor()
+  await m.getByRole('tab', { name: 'Highlights' }).click()
+  await m.getByLabel(/On every server/).fill('deploy\nrelease')
+  await m.getByLabel(/On every server/).blur()
+  await m.getByRole('tab', { name: 'Appearance' }).click()
+  await m.locator('input[aria-label=Nick]').fill('bob')
+  await m.locator('input[type=color]').fill('#e8a33d')
+  await m.getByRole('button', { name: 'Set', exact: true }).click()
+  const settings = m.getByTestId('settings')
+  for (const [tab, file] of [['General', 'settings-general'], ['Appearance', 'settings-appearance'], ['Notifications', 'settings-notifications'], ['Highlights', 'settings-highlights'], ['Media', 'settings-media'], ['Plugins', 'settings-plugins']]) {
+    await m.getByRole('tab', { name: tab }).click()
+    await sleep(250)
+    await shot(settings, file)
+  }
+  await m.keyboard.press('Escape')
 
   await browser.close()
 })().catch((e) => {

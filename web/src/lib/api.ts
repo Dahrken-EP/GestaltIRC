@@ -30,6 +30,9 @@ export interface NetworkDetail {
   has_server_password: boolean
   has_sasl_password: boolean
   has_certificate: boolean
+  has_nickserv_password: boolean
+  alt_nicks: string[]
+  perform: string[]
   join: string[]
   enabled: boolean
   connected: boolean
@@ -48,6 +51,9 @@ export interface NetworkRequest {
   sasl_user: string
   server_password?: string
   sasl_password?: string
+  nickserv_password?: string
+  alt_nicks: string[]
+  perform: string[]
   join: string[]
   enabled: boolean
 }
@@ -69,11 +75,15 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const payload = body === undefined ? undefined : JSON.stringify(body)
   const res = await fetch(path, {
     method,
     credentials: 'same-origin',
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: payload === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: payload,
+    // A small change made just before the page closes still gets to the bouncer. (Browsers refuse the flag
+    // for bodies over 64 KB, so larger ones are sent the ordinary way.)
+    keepalive: payload !== undefined && payload.length < 60_000,
   })
   let data: unknown = null
   try {
@@ -105,6 +115,12 @@ export const api = {
   addNetwork: (n: NetworkRequest) => request<{ ok: boolean }>('POST', '/api/networks', n),
   updateNetwork: (name: string, n: NetworkRequest) => request<{ ok: boolean }>('PUT', '/api/networks/' + encodeURIComponent(name), n),
   deleteNetwork: (name: string) => request<{ ok: boolean }>('DELETE', '/api/networks/' + encodeURIComponent(name)),
+  /** One of the account's stored documents, or null if it was never saved. */
+  async getDoc(name: string): Promise<Record<string, unknown> | null> {
+    const doc = await request<Record<string, unknown> | null>('GET', '/api/docs/' + encodeURIComponent(name))
+    return doc && typeof doc === 'object' && !Array.isArray(doc) ? doc : null
+  },
+  putDoc: (name: string, doc: Record<string, unknown>) => request<{ ok: boolean }>('PUT', '/api/docs/' + encodeURIComponent(name), doc),
   ice: () => request<{ iceServers: RTCIceServer[]; ttl: number }>('GET', '/api/ice'),
   pushKey: () => request<{ key: string }>('GET', '/api/push/key'),
   pushSubscribe: (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) =>

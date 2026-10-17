@@ -14,6 +14,8 @@
   import NetworkRail from './components/NetworkRail.svelte'
   import QuickSwitcher from './components/QuickSwitcher.svelte'
   import SearchBar from './components/SearchBar.svelte'
+  import ServerDialog from './components/ServerDialog.svelte'
+  import ServerMenu from './components/ServerMenu.svelte'
   import SettingsDialog from './components/SettingsDialog.svelte'
 
   import type { ChatMessage } from './lib/network.svelte'
@@ -127,7 +129,18 @@
       <InputBar {net} {buf} {reply} oncancelreply={() => (reply = null)} />
     </main>
   {:else}
-    <main class="blank"><p>This account has no networks yet. Ask the administrator to add one.</p></main>
+    <main class="blank">
+      <div class="welcome" data-testid="no-servers">
+        {#if app.configured.length === 0}
+          <h2>Add your first server</h2>
+          <p>Gestalt keeps you connected to IRC servers and shows them here. Add one to start chatting.</p>
+        {:else}
+          <h2>No server is switched on</h2>
+          <p>Click a dimmed server in the bar on the left to switch it on, or add another.</p>
+        {/if}
+        <button class="btn primary" onclick={() => app.openServerDialog()}>Add a server</button>
+      </div>
+    </main>
   {/if}
 </div>
 
@@ -135,6 +148,8 @@
 
 {#if app.showSettings}<SettingsDialog />{/if}
 {#if app.showSwitcher}<QuickSwitcher />{/if}
+{#if app.serverDialog}<ServerDialog />{/if}
+<ServerMenu />
 {/if}
 
 <style>
@@ -164,6 +179,20 @@
     display: grid;
     place-items: center;
     color: var(--fg-dim);
+  }
+  .welcome {
+    display: grid;
+    gap: 10px;
+    justify-items: center;
+    max-width: 360px;
+    text-align: center;
+  }
+  .welcome h2 {
+    margin: 0;
+    color: var(--fg);
+  }
+  .welcome p {
+    margin: 0;
   }
   .body {
     flex: 1;

@@ -50,6 +50,8 @@ type Config struct {
 	RealName string
 	// Password is the server password, sent with PASS. Leave empty if unused.
 	Password string
+	// AltNicks are tried in order when Nick is already in use. With none left, registration fails.
+	AltNicks []string
 	// SASL, if set, is run during registration. Registration fails if the
 	// server does not offer the mechanism.
 	SASL irc.SASLMechanism
@@ -109,6 +111,7 @@ func (c *Client) register(cfg Config) error {
 		return err
 	}
 
+	alts := append([]string(nil), cfg.AltNicks...)
 	for {
 		line, err := c.conn.ReadLine()
 		if err != nil {
@@ -146,7 +149,14 @@ func (c *Client) register(cfg Config) error {
 			c.mu.Unlock()
 			return nil
 		case "433": // ERR_NICKNAMEINUSE
-			return ErrNickInUse
+			if len(alts) == 0 {
+				return ErrNickInUse
+			}
+			next := alts[0]
+			alts = alts[1:]
+			if err := c.send(irc.New("NICK", next)); err != nil {
+				return err
+			}
 		case "464": // ERR_PASSWDMISMATCH
 			return ErrPasswordWrong
 		case "ERROR":

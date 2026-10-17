@@ -60,14 +60,17 @@ YAML
 chmod 600 "$work/bouncer.yaml"
 
 b() { "$work/bouncer" -config "$work/bouncer.yaml" "$@"; }
+# Screenshots show the name a person would give a real network.
+net=fake
+[ -z "${SHOTS:-}" ] || net=libera
 b init > /dev/null
 echo "$password" | b user add matt > /dev/null
-b network add matt fake --host 127.0.0.1 --port "$irc_port" --nick matt --join '#chat,#bulk' > /dev/null
+b network add matt "$net" --host 127.0.0.1 --port "$irc_port" --nick matt --join '#chat,#bulk' > /dev/null
 # A second person, for the tests where two browsers talk to each other.
 echo "$password" | b user add jane > /dev/null
-b network add jane fake --host 127.0.0.1 --port "$irc_port" --nick jane --join '#chat' > /dev/null
+b network add jane "$net" --host 127.0.0.1 --port "$irc_port" --nick jane --join '#chat' > /dev/null
 echo "$password" | b user add kim > /dev/null
-b network add kim fake --host 127.0.0.1 --port "$irc_port" --nick kim --join '#chat' > /dev/null
+b network add kim "$net" --host 127.0.0.1 --port "$irc_port" --nick kim --join '#chat' > /dev/null
 if [ -n "${VOICE_LOAD:-}" ]; then
   # Eleven more people for the voice room load test: ten fit, the eleventh is turned away.
   for i in $(seq -w 1 11); do
@@ -76,6 +79,8 @@ if [ -n "${VOICE_LOAD:-}" ]; then
   done
 fi
 
+# Screenshots name the scripted network something people recognise.
+[ -z "${SHOTS:-}" ] || export NETWORK_NAME=${NETWORK_NAME:-Libera.Chat}
 IRC_PORT=$irc_port python3 -I "$here/fake_irc.py" &
 pids+=($!)
 SITE_PORT=$site_port python3 -I "$here/site.py" &
