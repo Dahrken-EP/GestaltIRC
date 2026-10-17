@@ -4,16 +4,11 @@
 {$DOMAIN} {
 	encode zstd gzip
 
-	header {
-		Strict-Transport-Security "max-age=31536000"
-		X-Content-Type-Options "nosniff"
-		Referrer-Policy "no-referrer"
-		X-Frame-Options "DENY"
-		# The page already carries a content security policy; these cover what a
-		# meta tag cannot, and keep other sites from using the camera and microphone.
-		Permissions-Policy "camera=(), microphone=(self), geolocation=()"
-		-Server
-	}
+	# The bouncer sends the security headers itself (content security policy, frame rules, nosniff,
+	# referrer and permissions policies, and Strict-Transport-Security once sts_duration is set). They
+	# differ by page: only the plugin sandbox page may be framed. Setting any of them here would
+	# overwrite the bouncer's, so only the server banner is touched.
+	header -Server
 
 	reverse_proxy bouncer:8080 {
 		# Pushes and previews can take a while; a WebSocket must not be cut off.

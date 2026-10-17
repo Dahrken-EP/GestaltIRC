@@ -42,7 +42,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const replayed = await heapMB()
   console.log(`ten channels opened, with the replay each got: ${replayed.toFixed(1)} MB`)
 
-  // Then each one is scrolled to the start of its history, which loads the rest.
+  // Then each one is scrolled to the start of its history, which loads the rest. The start is checked
+  // for: the oldest message must be reachable, or the figure below would be of less than it claims.
+  let complete = 0
   for (let i = 1; i <= 10; i++) {
     await page.click(`button.name:has-text("#load${i}")`)
     for (let step = 0; step < 60; step++) {
@@ -51,7 +53,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
       await more.click()
       await sleep(250)
     }
+    await page.getByText('Start of history').waitFor({ timeout: 5000 }).catch(() => {})
+    // Scrolling to the very top shows the oldest message.
+    await page.evaluate(() => {
+      const el = document.querySelector('[role=log], .scroller, .virtual') || document.querySelector('.messages *')
+      void el
+      for (const e of document.querySelectorAll('*')) if (e.scrollHeight > e.clientHeight + 50 && getComputedStyle(e).overflowY !== 'visible') e.scrollTop = 0
+    })
+    await sleep(300)
+    if ((await page.locator(`.line:has-text("message 0 in #load${i}:")`).count()) > 0) complete++
   }
+  console.log(`channels whose oldest message was reached: ${complete} of 10`)
   await sleep(1000)
   const full = await heapMB()
   console.log(`all ten with their full history (${MSGS} messages each, ${10 * MSGS} in all): ${full.toFixed(1)} MB   (budget 60 MB)`)
