@@ -31,7 +31,7 @@ policy. Over HTTPS, `Strict-Transport-Security` is sent once `sts_duration` is s
 and page previews itself, refuses private, loopback and link-local addresses (checked at connect time, on the
 address actually dialled, so a redirect or a DNS answer that changes cannot get past it), judges the type by the
 bytes and not the server's header, refuses SVG and HTML as media, caps sizes, time and concurrency, and
-forwards no cookies. A YouTube or Streamable player loads only after you press play, in a sandboxed frame.
+forwards no cookies. A YouTube or Streamable player loads only after you press play, in a sandboxed frame, and is told this site's address (and nothing more of the page's) because YouTube will not play without one.
 
 **A network impersonating your IRC server.** The bouncer verifies a server's TLS certificate like a browser. A server
 can be set to accept an untrusted one (self-signed, or from a private authority). That setting is weaker: the first

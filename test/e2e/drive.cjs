@@ -32,6 +32,11 @@ async function openBuffer(page, name) {
   await page.click(`button.name:has-text("${name}")`)
 }
 
+/** The direct-chat or call window with `name`, which has a ⚡ or 📞 in front, not the ordinary conversation with the same nick. */
+async function openDirect(page, name) {
+  await page.click(`button.name:has-text("⚡ ${name}"), button.name:has-text("📞 ${name}")`)
+}
+
 async function send(page, text) {
   await page.fill('#msg-input', text)
   await page.press('#msg-input', 'Enter')
@@ -173,6 +178,7 @@ async function send(page, text) {
   ok((await page.locator('iframe').count()) === 0, 'a YouTube link shows a card and loads nothing from YouTube yet')
   await page.click('.card.video button:has-text("Play here")')
   await page.waitForSelector('iframe[src^="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"]')
+  ok((await page.locator('iframe').first().getAttribute('referrerpolicy')) === 'strict-origin-when-cross-origin', 'the player is sent this site\'s address, which YouTube needs to play (error 153 otherwise)')
   ok(true, 'pressing play loads the privacy-friendly player')
 
   // The point of the proxy: the browser asked only the bouncer, and YouTube only after the click.
@@ -487,6 +493,14 @@ async function send(page, text) {
   await openBuffer(page, 'jane')
   await page.waitForSelector('.line:not(.self):has-text("got it, plain reply")')
   ok(true, 'the reply comes back through the network to the sender')
+  // Reloading the page keeps the conversation, the lines in it unchanged and not repeated.
+  if (!process.env.NORELOAD) await page.reload()
+  await page.waitForSelector('.status.connected')
+  await page.waitForSelector('button.name:has-text("jane")', { timeout: 8000 })
+  await openBuffer(page, 'jane')
+  await page.waitForSelector('.line:has-text("got it, plain reply")')
+  const keptLines = await page.locator('.line:has-text("hello by plain irc"), .line:has-text("got it, plain reply")').count()
+  ok(keptLines === 2, 'after a reload the private conversation is still there, each line once (' + keptLines + ')')
   await page.locator('.list').getByRole('button', { name: 'Close jane' }).click()
   await jane.locator('.list').getByRole('button', { name: 'Close matt' }).click()
   await openBuffer(page, 'Status')
@@ -717,7 +731,7 @@ async function send(page, text) {
   await openBuffer(page, 'jane')
   await page.getByRole('button', { name: /Call/ }).first().click()
   await page.waitForSelector('.panel .call[data-state=calling]')
-  await openBuffer(vJane.p, 'matt')
+  await openDirect(vJane.p, 'matt')
   await vJane.p.waitForSelector('.panel .call[data-state=incoming]')
   ok((await vJane.p.locator('.panel .call').innerText()).includes('microphone stays off'), 'the callee is told the microphone is off until answering')
   ok((await vJane.p.locator('.panel .status[data-state=connected]').count()) === 0, 'ringing does not connect anything')
@@ -858,6 +872,47 @@ async function send(page, text) {
   const ticksThen = await page.locator('.line:has-text("[ticker] tick")').count()
   await sleep(2000)
   ok((await page.locator('.line:has-text("[ticker] tick")').count()) === ticksThen, 'turning a plugin off stops its timers')
+
+  // Windows a plugin opens: the page draws them and names the plugin, takes no answer in the first moment, and a
+  // plugin can be stopped from one.
+  await openSettings()
+  await installPlugin(bundle('asker', ['dialogs', 'output'], `
+    irc.alias('ask', async function () {
+      const name = await irc.prompt('Who are you?', 'anon');
+      irc.print('hello ' + name);
+    });
+    irc.alias('nag', function () { irc.confirm('Delete everything?'); });`))
+  await statusOf('asker').filter({ hasText: 'running' }).waitFor()
+  await closeSettings()
+  await send(page, '/ask')
+  await page.getByTestId('plugin-dialog').waitFor()
+  const said = await page.getByTestId('plugin-dialog').innerText()
+  ok(said.includes('asker') && said.includes('Who are you?'), 'a plugin window says which plugin it is from: ' + said.replace(/\s+/g, ' '))
+  await page.keyboard.press('Enter')
+  ok(await page.getByTestId('plugin-dialog').isVisible(), 'a window takes no answer in its first moment')
+  await sleep(700)
+  ok((await page.getByRole('alertdialog').getByLabel('Your answer').inputValue()) === 'anon', 'a prompt starts with the plugin\'s suggestion')
+  await page.getByRole('alertdialog').getByLabel('Your answer').fill('zed')
+  await page.keyboard.press('Enter')
+  await page.getByTestId('plugin-dialog').waitFor({ state: 'detached' })
+  await page.waitForSelector('.line:has-text("[asker] hello zed")')
+  ok(true, 'the answer goes back to the plugin')
+  await send(page, '/ask')
+  await page.getByTestId('plugin-dialog').waitFor()
+  await sleep(700)
+  await page.keyboard.press('Escape')
+  await page.getByTestId('plugin-dialog').waitFor({ state: 'detached' })
+  await page.waitForSelector('.line:has-text("[asker] hello null")')
+  ok(true, 'Escape cancels a prompt, and the plugin hears null')
+  await send(page, '/nag')
+  await page.getByTestId('plugin-dialog').waitFor()
+  await page.getByRole('button', { name: 'Stop this plugin' }).click()
+  await page.getByTestId('plugin-dialog').waitFor({ state: 'detached' })
+  await openSettings()
+  await statusOf('asker').filter({ hasText: 'stopped' }).waitFor()
+  ok(true, 'a plugin can be stopped from its window')
+  await entry('asker').getByRole('button', { name: 'Remove' }).click()
+  await closeSettings()
 
   // The sandbox. The probe asks for nothing and then tries to get out.
   await openSettings()

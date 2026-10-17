@@ -102,7 +102,7 @@ A plugin is one JSON document, pasted into **Settings, Plugins**; it is kept on 
       "source": "irc.alias('greet', function (args, ctx) { irc.send('Hello, ' + (args[0] || ctx.nick) + '!', ctx.buffer) })"
     }
 
-Plugins can react to messages, joins, parts, kicks, nick changes, topics and more, add their own commands, use timers and keep data. They cannot reach the network or the page, and cannot send commands that act on your browser or ask for passwords. **[Plugin guide and API reference](docs/PLUGINS.md)**
+Plugins can react to messages, joins, parts, kicks, nick changes, topics and more, add their own commands, use timers, keep data and, if you allow it, ask you questions in a window the client draws and labels. They cannot reach the network or the page, and cannot send commands that act on your browser or ask for passwords. **[Plugin guide and API reference](docs/PLUGINS.md)**
 
 ## Use other IRC clients
 The bouncer speaks IRCv3 to clients, and the web client is one of them. An IRCv3 client such as HexChat or WeeChat can log in as `user/network` with SASL PLAIN, get the history it missed, and share one network connection with the web client. This is tested with the project's own scripted clients and a real Ergo server, not yet with those programs themselves. **[docs/SERVER.md](docs/SERVER.md)** lists the capabilities offered and the ones deliberately not.
@@ -112,7 +112,7 @@ IRC text is never rendered as HTML, and the page has a strict content security p
 
 ## Roadmap
 Not built yet:
-- **Plugin dialogs, and plugins that run on the server.**
+- **Plugins that run on the server.**
 - **Multiline messages** (`draft/multiline`).
 - **DCC.** Direct chat and file transfer use WebRTC, so people on other IRC clients cannot be sent files this way.
 
