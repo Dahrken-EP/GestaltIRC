@@ -1114,7 +1114,7 @@ export class NetworkState {
       this.local(this.statusBuffer, 'info', `CTCP ${name} reply from ${from}: ${arg}`)
       return
     }
-    if (name === 'VERSION') this.send(`NOTICE ${from} :\x01VERSION irc-webclient\x01`)
+    if (name === 'VERSION') this.send(`NOTICE ${from} :\x01VERSION Gestalt\x01`)
     else if (name === 'PING') this.send(`NOTICE ${from} :\x01PING ${arg}\x01`)
     else return
     this.local(this.statusBuffer, 'info', `CTCP ${name} request from ${from}`)

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"irc-webclient/server/internal/irc"
+	"gestalt/server/internal/irc"
 )
 
 func sessionWithCaps(caps ...string) *Session {

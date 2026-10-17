@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"irc-webclient/server/internal/accounts"
-	"irc-webclient/server/internal/config"
-	"irc-webclient/server/internal/irc"
+	"gestalt/server/internal/accounts"
+	"gestalt/server/internal/config"
+	"gestalt/server/internal/irc"
 )
 
 func parse(t *testing.T, line string) *irc.Message {

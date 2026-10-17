@@ -8,7 +8,7 @@ import (
 	"errors"
 	"time"
 
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/store"
 )
 
 // SessionTTL is how long a web login lasts.

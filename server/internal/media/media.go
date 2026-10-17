@@ -21,9 +21,9 @@ import (
 	"sync"
 	"time"
 
-	"irc-webclient/server/internal/api"
-	"irc-webclient/server/internal/netguard"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/api"
+	"gestalt/server/internal/netguard"
+	"gestalt/server/internal/store"
 )
 
 // Defaults for the limits. A Proxy's fields can be changed before Register.
@@ -36,7 +36,7 @@ const (
 	perUserVideos     = 2
 	globalVideos      = 12
 	sniffLen          = 512
-	userAgent         = "irc-webclient-media-proxy/1 (+https://github.com/Dahrken-EP/wesite-stuff)"
+	userAgent         = "Gestalt-media-proxy/1 (+https://github.com/Dahrken-EP/Gestalt)"
 	maxRedirects      = 3
 	fetchTimeout      = 20 * time.Second
 	videoFetchTimeout = 10 * time.Minute

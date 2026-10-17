@@ -8,8 +8,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"irc-webclient/server/internal/irc"
-	"irc-webclient/server/internal/push"
+	"gestalt/server/internal/irc"
+	"gestalt/server/internal/push"
 )
 
 // Alert is a message that may deserve a push notification, seen while no

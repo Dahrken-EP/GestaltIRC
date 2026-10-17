@@ -41,7 +41,7 @@
   $effect(() => {
     const n = app.unread
     const m = app.mentionCount
-    document.title = m ? `(${m}) ● IRC` : n ? `(${n}) IRC` : 'IRC'
+    document.title = m ? `(${m}) ● Gestalt` : n ? `(${n}) Gestalt` : 'Gestalt'
   })
 
   // Reading position: coming back to the tab counts as reading the open buffer.

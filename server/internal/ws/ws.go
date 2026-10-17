@@ -11,7 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"irc-webclient/server/internal/irc"
+	"gestalt/server/internal/irc"
 )
 
 // Subprotocol is the IRCv3 WebSocket subprotocol name for text frames.

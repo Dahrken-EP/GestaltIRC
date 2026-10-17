@@ -15,9 +15,9 @@ import (
 
 	"golang.org/x/net/html"
 
-	"irc-webclient/server/internal/api"
-	"irc-webclient/server/internal/netguard"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/api"
+	"gestalt/server/internal/netguard"
+	"gestalt/server/internal/store"
 )
 
 const (

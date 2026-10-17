@@ -2,7 +2,7 @@
 
 package main
 
-import "irc-webclient/server/internal/netguard"
+import "gestalt/server/internal/netguard"
 
 // A binary built with -tags e2e lets the media proxy reach addresses on the local
 // machine, so the browser tests can serve pictures and pages from a test site on

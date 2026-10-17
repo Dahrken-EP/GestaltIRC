@@ -1,7 +1,11 @@
-# irc-webclient
+# Gestalt
 
-A self-hosted IRC bouncer and compact web client. See [DESIGN.md](DESIGN.md)
-for the architecture and roadmap.
+A self-hosted IRC bouncer and compact web client, with direct chat, file transfer, voice and
+plugins. A gestalt is a whole that is more than its parts: IRC, kept alive by the bouncer, seen
+through one client, with the people on it able to reach each other directly. See
+[DESIGN.md](DESIGN.md) for the architecture and roadmap.
+
+The server binary is still called `bouncer`, and its Go module `gestalt/server`.
 
 ## Status
 
@@ -241,7 +245,7 @@ go build -o bouncer ./cmd/bouncer
 echo 'a-long-password' | ./bouncer -config bouncer.yaml user add matt
 echo 'sasl-password'   | ./bouncer -config bouncer.yaml network add matt libera \
     --host irc.libera.chat --port 6697 --tls --nick matt \
-    --sasl PLAIN --join '#irc-webclient-test'
+    --sasl PLAIN --join '#gestalt-test'
 ./bouncer -config bouncer.yaml serve
 ```
 

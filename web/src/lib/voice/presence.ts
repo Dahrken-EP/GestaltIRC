@@ -8,7 +8,7 @@
 //   hello         sent to the channel by someone already in the room who lost touch (their IRC
 //                 connection dropped and came back), so people who do not have them answer
 
-export const VOICE_TAG = '+irc-webclient/voice'
+export const VOICE_TAG = '+gestalt/voice'
 
 /** Most people in one voice room. Every pair holds a connection, so this bounds the work each browser does. */
 export const MAX_VOICE = 10

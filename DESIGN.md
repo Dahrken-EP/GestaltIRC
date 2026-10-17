@@ -1,4 +1,4 @@
-# IRC Bouncer + Web Client: Design
+# Gestalt: Design (an IRC bouncer and web client)
 
 Status: draft for review. Nothing is implemented yet.
 
@@ -285,7 +285,7 @@ Targets to measure in phase 6:
 ## 10. Repository layout (proposed)
 
 ```
-irc-webclient/
+gestalt/
   DESIGN.md
   server/            Go bouncer (cmd/bouncer, internal/irc, internal/store, internal/media)
   web/               Svelte client (src/lib/irc, src/lib/voice, src/lib/p2p, src/lib/plugins)
@@ -293,8 +293,7 @@ irc-webclient/
   test/              integration tests against Ergo
 ```
 
-The repository is standalone at `/home/matt/irc-webclient`, separate from the
-Hugo blog. Phase 1 lives in `server/`.
+The repository is standalone (Gestalt), separate from the Hugo blog. Phase 1 lives in `server/`.
 
 ## 11. Phases
 

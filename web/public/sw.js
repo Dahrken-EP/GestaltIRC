@@ -11,7 +11,7 @@ self.addEventListener('push', (event) => {
   } catch {
     data = { body: event.data ? event.data.text() : '' }
   }
-  const title = typeof data.title === 'string' && data.title ? data.title : 'IRC'
+  const title = typeof data.title === 'string' && data.title ? data.title : 'Gestalt'
   event.waitUntil(
     self.registration.showNotification(title, {
       body: typeof data.body === 'string' ? data.body : '',

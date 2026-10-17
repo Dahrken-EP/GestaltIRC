@@ -17,12 +17,12 @@ import (
 	"testing"
 	"time"
 
-	"irc-webclient/server/internal/accounts"
-	"irc-webclient/server/internal/api"
-	"irc-webclient/server/internal/config"
-	"irc-webclient/server/internal/netguard"
-	"irc-webclient/server/internal/secret"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/accounts"
+	"gestalt/server/internal/api"
+	"gestalt/server/internal/config"
+	"gestalt/server/internal/netguard"
+	"gestalt/server/internal/secret"
+	"gestalt/server/internal/store"
 )
 
 // Real file headers, enough for sniffing.

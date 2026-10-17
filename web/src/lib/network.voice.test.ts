@@ -171,7 +171,7 @@ describe('voice in a network', () => {
     const sentBefore = n.alice!.sent.length
     // mallory is not in #lounge, and sends an offer for its room and a private "here".
     const offer = btoa(JSON.stringify({ k: 'voice', t: 'offer', room: '#lounge', sdp: 'v=0' })).replace(/=+$/, '')
-    n.alice!.net.handleMessage(parse(`@+irc-webclient/p2p=abcdef12.0.1.${offer} :mallory!u@h TAGMSG alice`)!)
+    n.alice!.net.handleMessage(parse(`@+gestalt/p2p=abcdef12.0.1.${offer} :mallory!u@h TAGMSG alice`)!)
     n.alice!.net.handleMessage(parse(`@${VOICE_TAG}=here:#lounge :mallory!u@h TAGMSG alice`)!)
     await settle()
     expect(a.voice!.participants).toEqual([])
@@ -182,7 +182,7 @@ describe('voice in a network', () => {
     const n = lounge(['alice'])
     const offer = btoa(JSON.stringify({ k: 'voice', t: 'offer', sdp: 'v=0' })).replace(/=+$/, '')
     for (let i = 0; i < 12; i++) {
-      n.alice!.net.handleMessage(parse(`@+irc-webclient/p2p=zz${String(i).padStart(2, '0')}abcd.0.1.${offer} :stranger${i}!u@h TAGMSG alice`)!)
+      n.alice!.net.handleMessage(parse(`@+gestalt/p2p=zz${String(i).padStart(2, '0')}abcd.0.1.${offer} :stranger${i}!u@h TAGMSG alice`)!)
     }
     await settle(2000)
     expect(n.alice!.net.buffers.filter((b) => b.kind === 'p2p').length).toBe(8)

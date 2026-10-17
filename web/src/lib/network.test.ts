@@ -91,7 +91,7 @@ describe('NetworkState', () => {
     const { net, feed, sent } = setup()
     feed(':bob!u@h PRIVMSG #c :\x01ACTION waves\x01', ':bob!u@h PRIVMSG me :\x01VERSION\x01')
     expect(net.find('#c')!.messages[0]).toMatchObject({ kind: 'action', text: 'waves' })
-    expect(sent).toContain('NOTICE bob :\x01VERSION irc-webclient\x01')
+    expect(sent).toContain('NOTICE bob :\x01VERSION Gestalt\x01')
   })
 
   it('puts server notices in the status buffer', () => {

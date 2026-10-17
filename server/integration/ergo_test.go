@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"irc-webclient/server/internal/irc"
-	"irc-webclient/server/internal/upstream"
-	"irc-webclient/server/internal/ws"
+	"gestalt/server/internal/irc"
+	"gestalt/server/internal/upstream"
+	"gestalt/server/internal/ws"
 )
 
 const (

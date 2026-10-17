@@ -16,10 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"irc-webclient/server/internal/accounts"
-	"irc-webclient/server/internal/irc"
-	"irc-webclient/server/internal/store"
-	"irc-webclient/server/internal/upstream"
+	"gestalt/server/internal/accounts"
+	"gestalt/server/internal/irc"
+	"gestalt/server/internal/store"
+	"gestalt/server/internal/upstream"
 )
 
 const (

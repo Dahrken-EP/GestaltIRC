@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"irc-webclient/server/internal/irc"
+	"gestalt/server/internal/irc"
 )
 
 // scriptConn is an in-memory irc.LineConn. Each line the client writes is

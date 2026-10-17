@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"time"
 
-	"irc-webclient/server/internal/api"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/api"
+	"gestalt/server/internal/store"
 )
 
 // Service issues ICE server lists.

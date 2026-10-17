@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"irc-webclient/server/internal/accounts"
-	"irc-webclient/server/internal/config"
-	"irc-webclient/server/internal/ratelimit"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/accounts"
+	"gestalt/server/internal/config"
+	"gestalt/server/internal/ratelimit"
+	"gestalt/server/internal/store"
 )
 
 // CookieName is the session cookie.

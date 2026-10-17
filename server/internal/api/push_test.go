@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"testing"
 
-	"irc-webclient/server/internal/config"
-	"irc-webclient/server/internal/push"
+	"gestalt/server/internal/config"
+	"gestalt/server/internal/push"
 )
 
 type fakePush struct {

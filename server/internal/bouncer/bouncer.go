@@ -10,13 +10,13 @@ import (
 	"sync"
 	"time"
 
-	"irc-webclient/server/internal/accounts"
-	"irc-webclient/server/internal/api"
-	"irc-webclient/server/internal/config"
-	"irc-webclient/server/internal/irc"
-	"irc-webclient/server/internal/push"
-	"irc-webclient/server/internal/store"
-	"irc-webclient/server/internal/ws"
+	"gestalt/server/internal/accounts"
+	"gestalt/server/internal/api"
+	"gestalt/server/internal/config"
+	"gestalt/server/internal/irc"
+	"gestalt/server/internal/push"
+	"gestalt/server/internal/store"
+	"gestalt/server/internal/ws"
 )
 
 // syncInterval is how often the bouncer checks the database for networks to start or stop.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"irc-webclient/server/internal/config"
+	"gestalt/server/internal/config"
 )
 
 func get(t *testing.T, b *Bouncer, path string) (int, string) {

@@ -8,9 +8,9 @@ import (
 	"regexp"
 	"strings"
 
-	"irc-webclient/server/internal/auth"
-	"irc-webclient/server/internal/secret"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/auth"
+	"gestalt/server/internal/secret"
+	"gestalt/server/internal/store"
 )
 
 // ErrExists and ErrNotFound are returned for duplicate and missing names.

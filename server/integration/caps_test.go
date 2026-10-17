@@ -15,14 +15,14 @@ import (
 	"testing"
 	"time"
 
-	"irc-webclient/server/internal/accounts"
-	"irc-webclient/server/internal/bouncer"
-	"irc-webclient/server/internal/config"
-	"irc-webclient/server/internal/irc"
-	"irc-webclient/server/internal/secret"
-	"irc-webclient/server/internal/store"
-	"irc-webclient/server/internal/upstream"
-	"irc-webclient/server/internal/ws"
+	"gestalt/server/internal/accounts"
+	"gestalt/server/internal/bouncer"
+	"gestalt/server/internal/config"
+	"gestalt/server/internal/irc"
+	"gestalt/server/internal/secret"
+	"gestalt/server/internal/store"
+	"gestalt/server/internal/upstream"
+	"gestalt/server/internal/ws"
 )
 
 const baseCaps = "message-tags server-time batch echo-message chathistory message-ids"

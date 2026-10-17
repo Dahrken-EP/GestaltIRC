@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"irc-webclient/server/internal/accounts"
+	"gestalt/server/internal/accounts"
 )
 
 // serverCert makes a certificate for 127.0.0.1 and a pool that trusts it.

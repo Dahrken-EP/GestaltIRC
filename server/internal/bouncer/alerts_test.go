@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"irc-webclient/server/internal/push"
-	"irc-webclient/server/internal/push/pushtest"
-	"irc-webclient/server/internal/secret"
+	"gestalt/server/internal/push"
+	"gestalt/server/internal/push/pushtest"
+	"gestalt/server/internal/secret"
 )
 
 // alertRig is a bouncer whose "matt/fake" network pushes to a fake browser.

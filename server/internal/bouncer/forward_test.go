@@ -6,9 +6,9 @@ import (
 	"sync"
 	"testing"
 
-	"irc-webclient/server/internal/accounts"
-	"irc-webclient/server/internal/irc"
-	"irc-webclient/server/internal/upstream"
+	"gestalt/server/internal/accounts"
+	"gestalt/server/internal/irc"
+	"gestalt/server/internal/upstream"
 )
 
 // fakeUpstream is an irc.LineConn standing in for an IRC network. It completes
