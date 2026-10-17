@@ -158,6 +158,11 @@ async def handle(reader, writer):
                 # "!as" lines are instructions to this script, not conversation, so they are not echoed back.
                 if not text.startswith('!as '):
                     send(f'{tags({k: esc(v) for k, v in client.items()})}:{n}!u@h PRIVMSG {target} :{text}')
+                if target.startswith('#') and not text.startswith('!'):
+                    # What is said in a channel reaches everyone else in it, as on a real network.
+                    for who, other in list(channels.get(target.lower(), {}).items()):
+                        if who != n.lower():
+                            other(f'{tags({k: esc(v) for k, v in client.items()})}:{n}!u@h PRIVMSG {target} :{text}')
                 peer = clients.get(target.lower())
                 if peer and target.lower() != n.lower():
                     peer(f'{tags({k: esc(v) for k, v in client.items()})}:{n}!u@h PRIVMSG {target} :{text}')

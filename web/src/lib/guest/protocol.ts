@@ -34,3 +34,52 @@ export function parseGuestEvent(value: string): GuestEvent | null {
 
 /** How a guest is named on screen. */
 export const guestLabel = (name: string) => `${name} (guest)`
+
+/** The tag the host sends a guest to say who is in the room. */
+export const ROSTER_TAG = '+gestalt/roster'
+
+export interface RosterEntry {
+  name: string
+  /** Here by a link. */
+  guest: boolean
+  /** The person who made the link and is relaying the room. */
+  host: boolean
+  speaking: boolean
+}
+
+const MAX_ROSTER = 24
+
+function toBase64Url(bytes: Uint8Array): string {
+  let bin = ''
+  for (const b of bytes) bin += String.fromCharCode(b)
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function fromBase64Url(s: string): Uint8Array {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4))
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0))
+}
+
+/** The roster as a tag value: base64url of a short JSON list. */
+export function encodeRoster(entries: RosterEntry[]): string {
+  const list = entries.slice(0, MAX_ROSTER).map((e) => ({ n: e.name.slice(0, 40), ...(e.guest ? { g: 1 } : {}), ...(e.host ? { h: 1 } : {}), ...(e.speaking ? { s: 1 } : {}) }))
+  return toBase64Url(new TextEncoder().encode(JSON.stringify(list)))
+}
+
+/** Reads a roster. Anything that is not a list of names comes out as nothing. */
+export function parseRoster(value: string): RosterEntry[] {
+  try {
+    const list: unknown = JSON.parse(new TextDecoder().decode(fromBase64Url(value)))
+    if (!Array.isArray(list)) return []
+    const out: RosterEntry[] = []
+    for (const e of list.slice(0, MAX_ROSTER)) {
+      if (!e || typeof e !== 'object' || typeof (e as { n?: unknown }).n !== 'string') continue
+      const o = e as { n: string; g?: unknown; h?: unknown; s?: unknown }
+      const name = o.n.replace(/[^\p{L}\p{N} _.'-]/gu, '').trim().slice(0, 24)
+      if (name) out.push({ name, guest: o.g === 1, host: o.h === 1, speaking: o.s === 1 })
+    }
+    return out
+  } catch {
+    return []
+  }
+}

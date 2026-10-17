@@ -29,3 +29,29 @@ describe('parseGuestEvent', () => {
 describe('guestLabel', () => {
   it('says it is a guest', () => expect(guestLabel('Sam')).toBe('Sam (guest)'))
 })
+
+describe('the roster', () => {
+  it('round-trips names, and who is a guest, the host or speaking', async () => {
+    const { encodeRoster, parseRoster } = await import('./protocol')
+    const entries = [
+      { name: 'matt', guest: false, host: true, speaking: true },
+      { name: 'alice', guest: false, host: false, speaking: false },
+      { name: 'Sam Smith', guest: true, host: false, speaking: false },
+      { name: 'Zoë', guest: true, host: false, speaking: true },
+    ]
+    const value = encodeRoster(entries)
+    expect(value).toMatch(/^[A-Za-z0-9_-]+$/)
+    expect(parseRoster(value)).toEqual(entries)
+  })
+  it('keeps a long room within one tag', async () => {
+    const { encodeRoster, parseRoster } = await import('./protocol')
+    const many = Array.from({ length: 60 }, (_, i) => ({ name: 'person' + i, guest: false, host: false, speaking: false }))
+    const value = encodeRoster(many)
+    expect(value.length).toBeLessThan(2000)
+    expect(parseRoster(value).length).toBe(24)
+  })
+  it('reads nothing from anything else', async () => {
+    const { parseRoster } = await import('./protocol')
+    for (const v of ['', 'not base64!', btoa('{"a":1}'), btoa('[1,"x",null,{"n":5}]'), btoa('[{"n":"<>"}]')]) expect(parseRoster(v), v).toEqual([])
+  })
+})

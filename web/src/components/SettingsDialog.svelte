@@ -161,9 +161,16 @@
             />
             Let people without Gestalt reach me through a one-time link
           </label>
+          {#if app.guests.enabled}
+            <label class="check">
+              <input type="checkbox" bind:checked={settings.announceVoice} onchange={() => settings.save()} />
+              Say in a channel, with a link, when I join its voice chat
+            </label>
+          {/if}
           <p class="note">
-            When someone does not answer a direct chat or call, they are sent a link to a web page where they can enter a name and
-            talk to you from their browser. Turn this off and every open link stops working.
+            Joining a voice chat makes a link, and says so in the channel, so anyone can join from a browser. A direct chat or call
+            that nobody's client answers sends the other person a one-time link. They enter a name and talk to you from their browser.
+            Turn this off and every open link stops working.
           </p>
           {#if guestError}<p class="note error" role="alert">{guestError}</p>{/if}
           {#if app.guests.enabled && app.guestInvites.length}

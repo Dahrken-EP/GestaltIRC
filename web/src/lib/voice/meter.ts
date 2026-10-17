@@ -22,6 +22,11 @@ function audio(): AudioContext | null {
   return context
 }
 
+/** The page's AudioContext, or null where there is none. */
+export function audioContext(): AudioContext | null {
+  return audio()
+}
+
 /** Prepares audio inside a click, before any waiting, so the browser lets it run. */
 export function primeAudio(): void {
   audio()

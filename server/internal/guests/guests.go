@@ -441,8 +441,11 @@ type frame struct {
 	Value string `json:"value,omitempty"`
 }
 
-// allowedTags are the tags a guest and the browser may pass to each other.
-var allowedTags = map[string]bool{"+gestalt/p2p": true, "+gestalt/roster": true}
+// What may cross, in each direction. A guest can only signal; the host can also say who is in the room.
+var (
+	tagsToHost  = map[string]bool{"+gestalt/p2p": true}
+	tagsToGuest = map[string]bool{"+gestalt/p2p": true, "+gestalt/roster": true}
+)
 
 func (g *guest) send(v any) {
 	data, err := json.Marshal(v)
@@ -579,7 +582,7 @@ func (h *Hub) run(ctx context.Context, cancel context.CancelFunc, c *websocket.C
 		}
 		switch f.T {
 		case "tag":
-			if !allowedTags[f.Key] || len(f.Value) == 0 || len(f.Value) > maxTagValue {
+			if !tagsToHost[f.Key] || len(f.Value) == 0 || len(f.Value) > maxTagValue {
 				continue
 			}
 			nick := g.nick
@@ -672,7 +675,7 @@ func (h *Hub) FromHost(networkID int64, nick string, tags []irc.Tag) bool {
 		return false
 	}
 	for _, t := range tags {
-		if allowedTags[t.Key] && t.Value != "" && len(t.Value) <= maxTagValue {
+		if tagsToGuest[t.Key] && t.Value != "" && len(t.Value) <= maxTagValue {
 			g.send(frame{T: "tag", Key: t.Key, Value: t.Value})
 		}
 	}
