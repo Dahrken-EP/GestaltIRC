@@ -70,10 +70,17 @@
     })
   })
 
+  /** Where the view was at the last scroll event, to tell the reader scrolling up from the list growing. */
+  let lastTop = 0
+
   function onscroll() {
     if (!el) return
     scrollTop = el.scrollTop
-    stick = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+    // At the bottom means following. Leaving it takes the reader scrolling up: a picture loading below the
+    // view makes the list taller without the view moving, and must not stop it following the newest message.
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) stick = true
+    else if (el.scrollTop < lastTop - 1) stick = false
+    lastTop = el.scrollTop
     atBottom = stick
     if (el.scrollTop < 120) onreachtop?.()
   }
@@ -83,6 +90,7 @@
     stick = true
     atBottom = true
     el.scrollTop = el.scrollHeight
+    lastTop = el.scrollTop
   }
 
   const nodes = new Set<HTMLElement>()
