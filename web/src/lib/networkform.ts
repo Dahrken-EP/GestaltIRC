@@ -11,6 +11,11 @@ export interface NetworkForm {
   host: string
   port: string
   tls: boolean
+  /** Accept a certificate the usual authorities do not vouch for (self-signed, or from a private authority). */
+  tlsInsecure: boolean
+  /** The certificate the bouncer remembered, and a request to forget it. */
+  tlsFingerprint: string
+  forgetTlsPin: boolean
   nick: string
   /** Other nicks to try, separated by spaces or commas, when the first is taken. */
   altNicks: string
@@ -38,7 +43,7 @@ export interface NetworkForm {
 
 export function blankForm(nick = ''): NetworkForm {
   return {
-    editing: '', name: '', host: '', port: '6697', tls: true, nick, altNicks: '', ident: '', realname: '',
+    editing: '', name: '', host: '', port: '6697', tls: true, tlsInsecure: false, tlsFingerprint: '', forgetTlsPin: false, nick, altNicks: '', ident: '', realname: '',
     serverPassword: '', clearServerPassword: false, sasl: '', saslUser: '', saslPassword: '', clearSaslPassword: false,
     nickservPassword: '', clearNickservPassword: false, channels: '', perform: '', enabled: true,
     hasServerPassword: false, hasSaslPassword: false, hasNickservPassword: false, certificate: false,
@@ -48,6 +53,7 @@ export function blankForm(nick = ''): NetworkForm {
 export function formFromNetwork(n: NetworkDetail): NetworkForm {
   return {
     editing: n.name, name: n.name, host: n.host, port: String(n.port), tls: n.tls, nick: n.nick,
+    tlsInsecure: n.tls_insecure, tlsFingerprint: n.tls_fingerprint, forgetTlsPin: false,
     altNicks: n.alt_nicks.join(' '),
     ident: n.ident === n.nick ? '' : n.ident, realname: n.realname === n.nick ? '' : n.realname,
     serverPassword: '', clearServerPassword: false,
@@ -91,6 +97,7 @@ export function checkForm(f: NetworkForm): string {
   if (/\s/.test(f.host.trim())) return 'The server address cannot contain spaces.'
   const port = Number(f.port)
   if (!Number.isInteger(port) || port < 1 || port > 65535) return 'The port must be a number from 1 to 65535.'
+  if (f.tlsInsecure && !f.tls) return 'Accepting an untrusted certificate needs TLS.'
   if (!f.nick.trim()) return 'Enter the nick to use.'
   if (/\s/.test(f.nick.trim())) return 'A nick cannot contain spaces.'
   if (parseNicks(f.altNicks).length > 5) return 'Give at most five alternative nicks.'
@@ -108,6 +115,7 @@ export function toRequest(f: NetworkForm): NetworkRequest {
     host: f.host.trim(),
     port: Number(f.port),
     tls: f.tls,
+    tls_insecure: f.tls && f.tlsInsecure,
     nick: f.nick.trim(),
     ident: f.ident.trim(),
     realname: f.realname.trim(),
@@ -118,6 +126,7 @@ export function toRequest(f: NetworkForm): NetworkRequest {
     join: parseChannels(f.channels),
     enabled: f.enabled,
   }
+  if (f.forgetTlsPin) req.forget_tls_pin = true
   if (!f.editing) req.name = f.name.trim()
   if (f.serverPassword) req.server_password = f.serverPassword
   else if (f.clearServerPassword) req.server_password = ''

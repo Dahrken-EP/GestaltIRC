@@ -4,6 +4,7 @@ package bouncer
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -231,7 +232,7 @@ func (n *Network) watchdog(c *upstream.Client, done <-chan struct{}) {
 
 // connect dials the network and registers. Registration runs under a deadline.
 func (n *Network) connect(ctx context.Context) (*upstream.Client, error) {
-	conn, err := dialUpstream(ctx, n.spec)
+	conn, err := dialUpstream(ctx, n.spec, n.rememberCertificate)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +273,36 @@ var upstreamRootCAs *x509.CertPool
 // with a self-signed certificate. Call it before starting the bouncer.
 func SetUpstreamRootCAs(pool *x509.CertPool) { upstreamRootCAs = pool }
 
-func dialUpstream(ctx context.Context, nc accounts.NetworkSpec) (net.Conn, error) {
+// ErrCertificateChanged is returned for a network that accepts an untrusted certificate when the one it presents
+// is not the one the bouncer first saw there.
+var ErrCertificateChanged = errors.New("the server's certificate is not the one the bouncer remembered; if it was replaced on purpose, edit the server and choose to forget the remembered certificate")
+
+// certFingerprint is the SHA-256 of a DER certificate, in the usual colon-separated form.
+func certFingerprint(der []byte) string {
+	sum := sha256.Sum256(der)
+	parts := make([]string, len(sum))
+	for i, b := range sum {
+		parts[i] = fmt.Sprintf("%02X", b)
+	}
+	return strings.Join(parts, ":")
+}
+
+// rememberCertificate keeps the fingerprint of the certificate first seen on a network that accepts an untrusted one.
+func (n *Network) rememberCertificate(fingerprint string) {
+	n.mu.Lock()
+	n.spec.TLSFingerprint = fingerprint
+	n.mu.Unlock()
+	if err := n.store.SetNetworkFingerprint(n.id, fingerprint); err != nil {
+		log.Printf("%s: remember certificate: %v", n.name, err)
+		return
+	}
+	log.Printf("%s: remembered the server's certificate %s", n.name, fingerprint)
+}
+
+// dialUpstream opens the connection to a network. For a network set to accept an untrusted certificate, nothing
+// about the certificate is checked by the usual rules; instead the first one seen is remembered (through
+// remember) and every later connection must present the same one.
+func dialUpstream(ctx context.Context, nc accounts.NetworkSpec, remember func(fingerprint string)) (net.Conn, error) {
 	d := &net.Dialer{Timeout: 20 * time.Second}
 	if nc.Guarded {
 		// Checked as the socket connects, so a name that resolves to a private address, or one that
@@ -287,6 +317,24 @@ func dialUpstream(ctx context.Context, nc accounts.NetworkSpec) (net.Conn, error
 		return raw, nil
 	}
 	conf := &tls.Config{ServerName: nc.Host, MinVersion: tls.VersionTLS12, RootCAs: upstreamRootCAs}
+	if nc.TLSInsecure {
+		conf.InsecureSkipVerify = true // the check below replaces the usual one
+		conf.VerifyPeerCertificate = func(raw [][]byte, _ [][]*x509.Certificate) error {
+			if len(raw) == 0 {
+				return errors.New("the server presented no certificate")
+			}
+			fp := certFingerprint(raw[0])
+			switch {
+			case nc.TLSFingerprint == "":
+				if remember != nil {
+					remember(fp)
+				}
+			case !strings.EqualFold(nc.TLSFingerprint, fp):
+				return ErrCertificateChanged
+			}
+			return nil
+		}
+	}
 	if nc.ClientCert != "" {
 		cert, err := accounts.ParseClientCert(nc.ClientCert, nc.ClientKey)
 		if err != nil {

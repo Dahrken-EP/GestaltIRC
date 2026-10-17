@@ -55,6 +55,10 @@ type NetworkInput struct {
 	AltNicks         []string
 	Perform          []string
 	NickServPassword string
+	// TLSInsecure accepts a certificate the usual authorities do not vouch for (self-signed, or from a private
+	// authority). The bouncer remembers the first one it sees (TLSFingerprint) and refuses a different one later.
+	TLSInsecure    bool
+	TLSFingerprint string
 }
 
 // NetworkSpec is a network with its secrets decrypted. Only the bouncer uses it.
@@ -79,6 +83,8 @@ type NetworkSpec struct {
 	AltNicks         []string
 	Perform          []string
 	NickServPassword string
+	TLSInsecure      bool
+	TLSFingerprint   string
 	// Guarded is set by the bouncer, not stored: the connection may reach public addresses only.
 	Guarded bool
 }
@@ -263,6 +269,12 @@ func validateNetwork(in *NetworkInput) error {
 			return fmt.Errorf("bad alternative nick %q", n)
 		}
 	}
+	if in.TLSInsecure && !in.TLS {
+		return errors.New("accepting an untrusted certificate needs TLS")
+	}
+	if !in.TLSInsecure {
+		in.TLSFingerprint = ""
+	}
 	if strings.ContainsAny(in.NickServPassword, "\r\n\x00") {
 		return errors.New("the NickServ password cannot contain a line break")
 	}
@@ -324,6 +336,8 @@ func (s *Service) AddNetwork(user string, in NetworkInput) (int64, error) {
 		AltNicks:         in.AltNicks,
 		Perform:          in.Perform,
 		NickServPassword: sealedNickServ,
+		TLSInsecure:      in.TLSInsecure,
+		TLSFingerprint:   in.TLSFingerprint,
 	})
 	if errors.Is(err, ErrExists) {
 		return 0, fmt.Errorf("%s already has a network named %s", user, in.Name)
@@ -344,6 +358,7 @@ func (s *Service) UpdateNetwork(user string, in NetworkInput) error {
 		UserName: user, Name: in.Name, Host: in.Host, Port: in.Port, TLS: in.TLS, Nick: in.Nick,
 		Ident: in.Ident, RealName: in.RealName, SASLMech: strings.ToUpper(in.SASLMech), SASLUser: in.SASLUser,
 		Join: in.Join, Enabled: !in.Disabled, ViaWeb: in.ViaWeb, AltNicks: in.AltNicks, Perform: in.Perform,
+		TLSInsecure: in.TLSInsecure, TLSFingerprint: in.TLSFingerprint,
 	}
 	var err error
 	if row.ServerPassword, err = s.box.Seal(in.ServerPassword); err != nil {
@@ -451,6 +466,8 @@ func (s *Service) decryptAll(rows []store.NetworkRow) ([]NetworkSpec, error) {
 			AltNicks:         r.AltNicks,
 			Perform:          r.Perform,
 			NickServPassword: nickserv,
+			TLSInsecure:      r.TLSInsecure,
+			TLSFingerprint:   r.TLSFingerprint,
 		})
 	}
 	return out, nil

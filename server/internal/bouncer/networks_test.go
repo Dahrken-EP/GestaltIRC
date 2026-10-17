@@ -117,11 +117,11 @@ func TestAGuardedNetworkCannotConnectToThisMachine(t *testing.T) {
 	spec := accounts.NetworkSpec{Host: "127.0.0.1", Port: ln.Addr().(*net.TCPAddr).Port}
 
 	spec.Guarded = true
-	if _, err := dialUpstream(context.Background(), spec); !errors.Is(err, netguard.ErrBlocked) {
+	if _, err := dialUpstream(context.Background(), spec, nil); !errors.Is(err, netguard.ErrBlocked) {
 		t.Errorf("guarded dial of loopback = %v, want a block", err)
 	}
 	spec.Guarded = false
-	c, err := dialUpstream(context.Background(), spec)
+	c, err := dialUpstream(context.Background(), spec, nil)
 	if err != nil {
 		t.Fatalf("unguarded dial: %v", err)
 	}

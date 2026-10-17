@@ -143,6 +143,7 @@ func networkAdd(acc *accounts.Service, args []string) error {
 	fs.StringVar(&in.Host, "host", "", "server host name")
 	fs.IntVar(&in.Port, "port", 0, "server port (default 6697 with --tls, else 6667)")
 	fs.BoolVar(&in.TLS, "tls", false, "connect with TLS")
+	fs.BoolVar(&in.TLSInsecure, "tls-insecure", false, "accept a server certificate the usual authorities do not vouch for (self-signed, or from a private authority); the first one seen is remembered and must not change")
 	fs.StringVar(&in.Nick, "nick", "", "nickname on this network")
 	fs.StringVar(&in.Ident, "ident", "", "user name (default: nick)")
 	fs.StringVar(&in.RealName, "realname", "", "real name (default: nick)")
