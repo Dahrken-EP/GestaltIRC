@@ -34,7 +34,10 @@ jobs:
       - run: npm ci && npm audit --omit=dev --audit-level=high
         working-directory: web
 
+  # Code scanning is free for public repositories. A private one needs GitHub Advanced Security, which a personal
+  # account does not have, so this is skipped until the repository is public.
   codeql:
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     strategy:
       # One language failing (for instance because code scanning is not switched on for the repository) must not

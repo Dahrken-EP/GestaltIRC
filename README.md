@@ -84,7 +84,7 @@ Plugins can react to messages, joins, parts, kicks, nick changes, topics and mor
 The bouncer speaks IRCv3 to clients, and the web client is one of them. An IRCv3 client such as HexChat or WeeChat can log in as `user/network` with SASL PLAIN, get the history it missed, and share one network connection with the web client. This is tested with the project's own scripted clients and a real Ergo server, not yet with those programs themselves. **[docs/SERVER.md](docs/SERVER.md)** lists the capabilities offered and the ones deliberately not.
 
 ## Security
-IRC text is never rendered as HTML, and the page has a strict content security policy. Passwords are hashed with argon2id, saved network passwords are encrypted, and the bouncer fetches links for you but refuses to reach private addresses. Plugins run in a sandbox that cannot connect anywhere, and the browser tests try to get out of it. Dependencies and code are scanned daily. To report a problem privately, and to see what is and is not covered, read **[SECURITY.md](SECURITY.md)**.
+IRC text is never rendered as HTML, and the page has a strict content security policy. Passwords are hashed with argon2id, saved network passwords are encrypted, and the bouncer fetches links for you but refuses to reach private addresses. Plugins run in a sandbox that cannot connect anywhere, and the browser tests try to get out of it. Dependencies are scanned daily, and the code is scanned with CodeQL once the repository is public. To report a problem privately, and to see what is and is not covered, read **[SECURITY.md](SECURITY.md)**.
 
 ## Roadmap
 Not built yet:
