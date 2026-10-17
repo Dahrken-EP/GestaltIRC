@@ -66,7 +66,7 @@
 <section
   class="panel"
   class:dragging
-  aria-label="Direct chat with {buf.name}"
+  aria-label="Direct chat with {buf.title}"
   ondragover={(e) => {
     // Always claimed, or the browser would open a dropped file in this tab and leave the chat.
     if (e.dataTransfer?.types.includes('Files')) {
@@ -82,11 +82,11 @@
       <span>Not connected.</span>
       <button class="btn primary" onclick={() => void chat.invite()}>Connect</button>
     {:else if st === 'calling'}
-      <span>Waiting for {buf.name} to accept…</span>
+      <span>Waiting for {buf.title} to accept…</span>
       <button class="btn" onclick={() => chat.hangUp()}>Cancel</button>
     {:else if st === 'incoming'}
       <span>
-        <strong>{buf.name}</strong> wants to chat directly. If you accept, your browsers connect to each other, and
+        <strong>{buf.title}</strong> wants to chat directly. If you accept, your browsers connect to each other, and
         they will be able to see your network address.
       </span>
       <button class="btn primary" onclick={() => void chat.acceptIncoming()}>Accept</button>
@@ -95,7 +95,7 @@
       <span>Connecting…</span>
       <button class="btn" onclick={() => chat.hangUp()}>Cancel</button>
     {:else if st === 'connected'}
-      <span>Connected directly to {buf.name}.</span>
+      <span>Connected directly to {buf.title}.</span>
       <button class="btn" onclick={() => picker.click()}>Send file…</button>
       <button class="btn" onclick={() => chat.hangUp()}>Hang up</button>
     {:else}
@@ -116,7 +116,7 @@
         {#if connected && view}<p>Safety code <code data-testid="safety-code">{view.code}</code></p>{/if}
         {#if cs === 'connected' && cv}<p>Call safety code <code data-testid="call-code">{cv.code}</code></p>{/if}
         <p>
-          Ask {buf.name} to read their safety code to you by a way other than this IRC network (a phone call, or in
+          Ask {buf.title} to read their safety code to you by a way other than this IRC network (a phone call, or in
           person). If it matches, nobody on the way, including the server and the bouncer, changed the connection.
           If it does not match, hang up.
         </p>
@@ -129,23 +129,23 @@
   {/if}
 
   {#if net.canVoice}
-    <div class="call" data-state={cs} role="status" aria-label="Voice call with {buf.name}">
+    <div class="call" data-state={cs} role="status" aria-label="Voice call with {buf.title}">
       {#if cs === 'incoming'}
         <span>
-          📞 <strong>{buf.name}</strong> is calling. Your microphone stays off until you answer. Answering shares your network
+          📞 <strong>{buf.title}</strong> is calling. Your microphone stays off until you answer. Answering shares your network
           address with them.
         </span>
         <button class="btn primary" onclick={() => void call.accept()}>Answer</button>
         <button class="btn" onclick={() => call.decline()}>Decline</button>
       {:else if cs === 'calling'}
-        <span>📞 Calling {buf.name}…</span>
+        <span>📞 Calling {buf.title}…</span>
         <button class="btn" onclick={() => call.hangUp()}>Cancel</button>
       {:else if cs === 'connecting'}
         <span>📞 Connecting…</span>
         <button class="btn" onclick={() => call.hangUp()}>Cancel</button>
       {:else if cs === 'connected' && cv}
         <span class="who" class:speaking={cv.remoteSpeaking} data-testid="remote-speaking">
-          <span class="dot" aria-hidden="true"></span>📞 In a call with {buf.name}
+          <span class="dot" aria-hidden="true"></span>📞 In a call with {buf.title}
         </span>
         <span class="who me" class:speaking={cv.speaking} data-testid="call-me-speaking"><span class="dot" aria-hidden="true"></span>You{cv.muted ? ' (muted)' : ''}</span>
         <button class="btn" aria-pressed={cv.muted} onclick={() => call.setMuted(!cv.muted)}>{cv.muted ? 'Unmute' : 'Mute'}</button>
@@ -190,7 +190,7 @@
     {/if}
   {/if}
 
-  {#if dragging}<div class="drop">Drop files to send them to {buf.name}</div>{/if}
+  {#if dragging}<div class="drop">Drop files to send them to {buf.title}</div>{/if}
 </section>
 
 <style>

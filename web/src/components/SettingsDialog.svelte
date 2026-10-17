@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import { app } from '../lib/app.svelte'
   import { install } from '../lib/install.svelte'
   import PluginsPanel from './PluginsPanel.svelte'
@@ -61,6 +62,23 @@
       notifyMsg = ''
     }
     settings.save()
+  }
+
+  // Links may have been made, or ended, from another browser since the last look.
+  onMount(() => void app.loadGuests())
+
+  let guestBusy = $state(false)
+  let guestError = $state('')
+  async function toggleGuests(on: boolean) {
+    guestBusy = true
+    guestError = ''
+    try {
+      await app.setGuests(on)
+    } catch (e) {
+      guestError = e instanceof Error ? e.message : 'That did not work.'
+    } finally {
+      guestBusy = false
+    }
   }
 
   const overrides = $derived(Object.entries(settings.nickColors))
@@ -129,6 +147,42 @@
             To install Gestalt as an app, use your browser's menu (look for <strong>Install</strong> or <strong>Add to Home screen</strong>).
             Browsers only offer it on a page served over HTTPS.
           </p>
+        {/if}
+
+        {#if app.guests.available}
+          <h3>Guests</h3>
+          <label class="check">
+            <input
+              type="checkbox"
+              data-testid="guests-toggle"
+              checked={app.guests.enabled}
+              disabled={guestBusy}
+              onchange={(e) => void toggleGuests((e.currentTarget as HTMLInputElement).checked)}
+            />
+            Let people without Gestalt reach me through a one-time link
+          </label>
+          {#if app.guests.enabled}
+            <label class="check">
+              <input type="checkbox" bind:checked={settings.announceVoice} onchange={() => settings.save()} />
+              Say in a channel, with a link, when I join its voice chat
+            </label>
+          {/if}
+          <p class="note">
+            Joining a voice chat makes a link, and says so in the channel, so anyone can join from a browser. A direct chat or call
+            that nobody's client answers sends the other person a one-time link. They enter a name and talk to you from their browser.
+            Turn this off and every open link stops working.
+          </p>
+          {#if guestError}<p class="note error" role="alert">{guestError}</p>{/if}
+          {#if app.guests.enabled && app.guestInvites.length}
+            <ul class="links" data-testid="guest-links">
+              {#each app.guestInvites as inv (inv.id)}
+                <li>
+                  <span class="grow">{inv.kind === 'room' ? `Voice room ${inv.target}` : `Direct chat for ${inv.target}`} <span class="dim">on {inv.network}</span></span>
+                  <button class="btn" onclick={() => void app.revokeGuestInvite(inv.id)}>End link</button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
         {/if}
 
         <h3>Servers</h3>
@@ -354,6 +408,22 @@
     border-radius: 6px;
     background: var(--bg);
     font-weight: 400;
+  }
+  .links {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .links li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .note.error {
+    color: var(--danger);
   }
   .note {
     margin: 0;

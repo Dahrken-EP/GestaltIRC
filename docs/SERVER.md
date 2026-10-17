@@ -55,7 +55,7 @@ or `--cert-file` and `--key-file` for a certificate you already have.
 ## Limits you can tune
 
 `history_limit` (messages kept per buffer), `replay_limit` (replayed to a client on attach), `command_burst` and
-`command_rate` (how fast a client may send), `turn_ttl`, `sts_duration` and `allow_private_networks`.
+`command_rate` (how fast a client may send), `turn_ttl`, `sts_duration`, `allow_private_networks` and `disable_guests` (see [GUESTS.md](GUESTS.md)).
 
 ## Using other IRC clients
 

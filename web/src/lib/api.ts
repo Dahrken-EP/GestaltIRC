@@ -104,6 +104,24 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return data as T
 }
 
+/** A link someone without Gestalt can open to reach this user's browser. */
+export interface GuestInvite {
+  id: string
+  token: string
+  /** The path of the page, such as /guest/abc. */
+  path: string
+  network: string
+  kind: 'room' | 'direct'
+  target: string
+  expires: string
+}
+
+export interface GuestSettings {
+  /** False when the bouncer's operator has switched guest links off for everyone. */
+  available: boolean
+  enabled: boolean
+}
+
 export const api = {
   /** The current session, or null when not logged in. */
   async session(): Promise<SessionInfo | null> {
@@ -128,6 +146,11 @@ export const api = {
   },
   putDoc: (name: string, doc: Record<string, unknown>) => request<{ ok: boolean }>('PUT', '/api/docs/' + encodeURIComponent(name), doc),
   ice: () => request<{ iceServers: RTCIceServer[]; ttl: number }>('GET', '/api/ice'),
+  getGuests: () => request<GuestSettings>('GET', '/api/guests'),
+  putGuests: (enabled: boolean) => request<GuestSettings>('PUT', '/api/guests', { enabled }),
+  listGuestInvites: () => request<{ invites: GuestInvite[] }>('GET', '/api/guests/invites'),
+  createGuestInvite: (req: { network: string; kind: 'room' | 'direct'; target: string }) => request<GuestInvite>('POST', '/api/guests/invites', req),
+  revokeGuestInvite: (id: string) => request<null>('DELETE', '/api/guests/invites/' + encodeURIComponent(id)),
   pushKey: () => request<{ key: string }>('GET', '/api/push/key'),
   pushSubscribe: (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
     request<{ ok: boolean }>('POST', '/api/push/subscribe', sub),

@@ -33,6 +33,14 @@ address actually dialled, so a redirect or a DNS answer that changes cannot get 
 bytes and not the server's header, refuses SVG and HTML as media, caps sizes, time and concurrency, and
 forwards no cookies. A YouTube or Streamable player loads only after you press play, in a sandboxed frame, and is told this site's address (and nothing more of the page's) because YouTube will not play without one.
 
+**A guest, or someone who finds a guest link.** Guest links are off until a user switches them on, and the operator can
+switch them off with `disable_guests`. A link is 144 random bits, wrong ones are counted per address and block it, a direct
+link works for one person, and a room link for four, for as long as its host is in the room. A guest reaches only the host's
+browser, through the bouncer, with nothing but signalling and a room roster: no IRC, account or history. Lines about guests that
+come from the network are dropped, so nobody can pose as one, and a guest's name is reduced to plain text and shown as a guest.
+Joining shows the guest that their address is shared with the host, and a link shows the host's address to whoever opens it, which is
+what making the link means. See [docs/GUESTS.md](docs/GUESTS.md).
+
 **A network impersonating your IRC server.** The bouncer verifies a server's TLS certificate like a browser. A server
 can be set to accept an untrusted one (self-signed, or from a private authority). That setting is weaker: the first
 connection cannot tell the real server from an impostor. So the bouncer remembers the SHA-256 of the first certificate it

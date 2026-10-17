@@ -7,6 +7,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"gestalt/server/internal/accounts"
 	"gestalt/server/internal/api"
 	"gestalt/server/internal/config"
+	"gestalt/server/internal/guests"
 	"gestalt/server/internal/irc"
 	"gestalt/server/internal/push"
 	"gestalt/server/internal/store"
@@ -38,6 +40,8 @@ type Bouncer struct {
 	accounts *accounts.Service
 	api      *api.API
 	push     *push.Service // nil until SetPush
+	guests   *guests.Hub
+	iceFn    func(name string) any
 	keywords keywordCache
 
 	mu      sync.Mutex
@@ -60,6 +64,29 @@ func New(conf *config.Config, st *store.Store, acc *accounts.Service) *Bouncer {
 		running:  map[int64]*runningNetwork{},
 	}
 	b.api = api.New(acc, b, conf)
+	b.guests = guests.New(guests.Options{
+		Host:    b,
+		Global:  !conf.DisableGuests,
+		Origins: conf.AllowedOrigins,
+		Allowed: func(userID int64) bool {
+			v, err := st.GetKV(guestsKey(userID))
+			return err == nil && v == 1
+		},
+		SetAllowed: func(userID int64, on bool) error {
+			v := int64(0)
+			if on {
+				v = 1
+			}
+			return st.SetKV(guestsKey(userID), v)
+		},
+		ICE: func(name string) any {
+			if b.iceFn == nil {
+				return nil
+			}
+			return b.iceFn(name)
+		},
+	})
+	b.guests.Register(b.api)
 	b.api.NetworksChanged = func() {
 		b.mu.Lock()
 		started := b.ctx != nil
@@ -69,6 +96,43 @@ func New(conf *config.Config, st *store.Store, acc *accounts.Service) *Bouncer {
 		}
 	}
 	return b
+}
+
+func guestsKey(userID int64) string { return fmt.Sprintf("guests:%d", userID) }
+
+// SetICE tells the bouncer how to make the ICE server list a guest is given.
+func (b *Bouncer) SetICE(f func(name string) any) { b.iceFn = f }
+
+// Network, Deliver and Attached let the guest hub reach a user's networks. They implement guests.Host.
+func (b *Bouncer) Network(userName, name string) (int64, string, bool) {
+	spec, err := b.accounts.GetNetwork(userName, name)
+	if err != nil {
+		return 0, "", false
+	}
+	n := b.network(spec.ID)
+	if n == nil {
+		return 0, "", false
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return spec.ID, n.nick, true
+}
+
+func (b *Bouncer) Deliver(networkID int64, m *irc.Message) {
+	if n := b.network(networkID); n != nil {
+		n.mu.Lock()
+		n.broadcastLocked(m)
+		n.mu.Unlock()
+	}
+}
+
+func (b *Bouncer) Attached(networkID int64) int {
+	if n := b.network(networkID); n != nil {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		return len(n.sessions)
+	}
+	return 0
 }
 
 // API returns the HTTP API, so other packages can add routes to it.
@@ -138,6 +202,7 @@ func (b *Bouncer) sync() {
 		}
 		ctx, cancel := context.WithCancel(b.ctx)
 		n := NewNetwork(spec, b.store, b.conf.HistoryLimit, b.conf.ReplayLimit)
+		n.guests = b.guests
 		go n.Run(ctx)
 		b.running[id] = &runningNetwork{net: n, cancel: cancel, spec: spec}
 		log.Printf("started network %s/%s", spec.UserName, spec.Name)
@@ -200,7 +265,14 @@ func (b *Bouncer) routes() http.Handler {
 	mux.Handle("/ws", b.api.WithIdentity(wsHandler))
 	mux.Handle("/api/", b.api.Handler())
 	if b.conf.WebDir != "" {
-		mux.Handle("/", http.FileServer(http.Dir(b.conf.WebDir)))
+		files := http.FileServer(http.Dir(b.conf.WebDir))
+		// A guest's link is the web client, which looks at its address to see it is a guest. The page says
+		// nothing about who made the link, and is not kept, so a link that is revoked is not shown from a cache.
+		mux.HandleFunc("GET /guest/{token}", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			http.ServeFile(w, r, filepath.Join(b.conf.WebDir, "index.html"))
+		})
+		mux.Handle("/", files)
 		return mux
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

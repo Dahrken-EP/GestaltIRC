@@ -2,6 +2,10 @@
   // Plays the audio of every voice room and call. It lives at the top of the page, not in a
   // channel's window, so the sound carries on when the user looks at another buffer.
   import { app } from '../lib/app.svelte'
+  import type { NetworkState } from '../lib/network.svelte'
+
+  // The networks whose audio to play. The page of a guest has one of its own.
+  let { nets }: { nets?: readonly NetworkState[] } = $props()
 
   interface Source {
     id: string
@@ -11,7 +15,7 @@
 
   const sources = $derived.by(() => {
     const out: Source[] = []
-    for (const net of app.networks) {
+    for (const net of nets ?? app.networks) {
       for (const buf of net.buffers) {
         for (const p of buf.voice?.participants ?? []) {
           if (p.stream) out.push({ id: `${net.id}/${buf.key}/${p.nick}`, stream: p.stream, volume: p.volume })

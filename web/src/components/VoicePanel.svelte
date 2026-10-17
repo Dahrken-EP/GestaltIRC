@@ -86,6 +86,14 @@
       {#if v?.error}<span class="error" role="alert">{v.error}</span>{/if}
     </div>
 
+    {#if active && buf.guestLink}
+      <div class="guestlink" data-testid="guest-link">
+        <span class="dim">Guests can join from any browser:</span>
+        <input readonly value={buf.guestLink} aria-label="Guest link" onfocus={(e) => e.currentTarget.select()} />
+        <button class="btn" onclick={() => void navigator.clipboard?.writeText(buf.guestLink).catch(() => {})}>Copy</button>
+      </div>
+    {/if}
+
     {#if active}
       {#if v!.participants.length === 0}
         <p class="dim alone">Nobody else is in the voice room yet.{hint.length ? '' : ' Others can join with the button in this channel.'}</p>
@@ -94,14 +102,15 @@
         {#each v!.participants as p (p.nick)}
           <li class:speaking={p.speaking} data-state={p.state} data-testid="voice-person">
             <span class="dot" aria-hidden="true"></span>
-            <span class="nick" style:color={nickColor(p.nick, settings.nickColors)}>{p.nick}</span>
+            <span class="nick" style:color={nickColor(p.label, settings.nickColors)}>{p.label}</span>
+            {#if p.guest}<span class="guest" data-testid="guest-badge">guest{p.via ? `, with ${p.via}` : ''}</span>{/if}
             <span class="dim state">{p.state === 'connected' ? (p.speaking ? 'speaking' : '') : p.state === 'failed' ? 'could not connect' : 'connecting…'}</span>
-            {#if p.state === 'connected'}
+            {#if p.state === 'connected' && p.stream}
               <label class="vol">
                 <span class="visually-hidden">Volume for {p.nick}</span>
                 <input type="range" min="0" max="1" step="0.05" value={p.volume} oninput={(e) => room().setVolume(p.nick, Number(e.currentTarget.value))} />
               </label>
-              {#if showCodes}<code title="Compare with {p.nick} out loud">{p.code}</code>{/if}
+              {#if showCodes && p.code}<code title="Compare with {p.label} out loud">{p.code}</code>{/if}
             {/if}
           </li>
         {/each}
@@ -114,6 +123,29 @@
 {/if}
 
 <style>
+  .guestlink {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0 4px;
+  }
+  .guestlink input {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    padding: 3px 6px;
+    font-family: var(--mono);
+    font-size: 0.9em;
+  }
+  .guest {
+    font-size: 0.75em;
+    padding: 0 5px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--fg-dim);
+  }
   .voice {
     padding: 4px 10px;
     border-bottom: 1px solid var(--border);

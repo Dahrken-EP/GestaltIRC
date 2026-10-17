@@ -117,6 +117,11 @@ export class PeerSession {
     await this.pc.setRemoteDescription({ type: 'answer', sdp })
   }
 
+  /** Swaps the audio we send for another track, without making a new offer. */
+  async replaceAudio(track: MediaStreamTrack): Promise<void> {
+    for (const sender of this.pc.getSenders?.() ?? []) if (sender.track?.kind === 'audio') await sender.replaceTrack(track)
+  }
+
   close(): void {
     if (this.state === 'closed') return
     this.state = 'closed'

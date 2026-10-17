@@ -55,3 +55,9 @@ func TestTheWebAppManifestIsServedWithItsOwnType(t *testing.T) {
 		t.Errorf("a .webmanifest file would be served as %q, and browsers would not install the page", got)
 	}
 }
+
+func httpGet(b *Bouncer, path string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	b.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	return rec
+}
