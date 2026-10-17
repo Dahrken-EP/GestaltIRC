@@ -162,7 +162,9 @@ export class DirectChat {
   hangUp(): void {
     if (this.view.state === 'idle' || this.view.state === 'ended') return
     this.o.signal(this.sid, { k: 'chat', t: 'bye' })
-    this.end('You closed the chat.')
+    // Also say it on the connection, which arrives before the connection is seen to drop.
+    this.control({ t: 'bye', id: newId() })
+    this.end('You closed the chat.', true)
   }
 
   dispose(): void {
@@ -280,12 +282,15 @@ export class DirectChat {
     const sid = this.sid
     const servers = await this.o.iceServers().catch(() => [] as RTCIceServer[])
     if (this.sid !== sid) throw new Error('superseded')
-    const session = new PeerSession({
+    // A connection that was replaced can still report in (it closes a moment after hang-up).
+    // Only the current one may affect the chat.
+    const current = () => this.session === session
+    const session: PeerSession = new PeerSession({
       iceServers: servers,
       createConnection: this.o.createConnection,
-      send: (d) => this.o.signal(sid, { k: 'chat', t: d.t, sdp: d.sdp }),
-      onChannel: (ch) => this.onChannel(ch),
-      onState: (s) => this.onPeerState(s),
+      send: (d) => current() && this.o.signal(sid, { k: 'chat', t: d.t, sdp: d.sdp }),
+      onChannel: (ch) => (current() ? this.onChannel(ch) : ch.close()),
+      onState: (s) => current() && this.onPeerState(s),
     })
     this.session = session
     return session
@@ -371,6 +376,9 @@ export class DirectChat {
         }
         return
       }
+      case 'bye':
+        this.end('They closed the chat.')
+        return
       case 'file-done': {
         const t = this.transfer(c.id)
         if (t?.dir === 'out' && t.state === 'active') {
@@ -468,9 +476,9 @@ export class DirectChat {
     }, this.o.inviteTimeoutMs ?? 60_000)
   }
 
-  private end(reason: string): void {
+  private end(reason: string, graceful = false): void {
     clearTimeout(this.timer)
-    this.teardown()
+    this.teardown(graceful)
     // Transfers that were running cannot finish now.
     const transfers = this.view.transfers.map((t): Transfer =>
       t.state === 'active' || t.state === 'waiting' ? { ...t, state: 'failed', error: 'the connection closed' } : t.state === 'offered' ? { ...t, state: 'cancelled' } : t,
@@ -478,13 +486,16 @@ export class DirectChat {
     this.update({ state: 'ended', reason, transfers })
   }
 
-  private teardown(): void {
+  /** `graceful` gives a goodbye just sent on the connection a moment to get out before it is closed. */
+  private teardown(graceful = false): void {
     for (const l of this.live.values()) {
       l.tx?.cancel()
       l.rx?.cancel()
     }
     this.live.clear()
-    this.session?.close()
+    const session = this.session
+    if (session && graceful) setTimeout(() => session.close(), 300)
+    else session?.close()
     this.session = null
     this.chat = null
     this.pending = null

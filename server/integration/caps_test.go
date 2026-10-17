@@ -395,3 +395,54 @@ func TestSASLExternalWithAnUnregisteredCertificateFails(t *testing.T) {
 		t.Error("the bouncer connected with a certificate the network does not know")
 	}
 }
+
+// The web client's direct chats send their connection offers as one client-only tag on a
+// TAGMSG to a nick. This runs a full-size one through the bouncer and a real network, in
+// both directions, to show the tag arrives unchanged.
+func TestDirectChatSignallingTagsSurviveTheNetwork(t *testing.T) {
+	srv := startErgo(t)
+	registerNick(t, srv, account, password)
+	registerNick(t, srv, "bob", bobPassword)
+	_, _, _, url := newTestBouncer(t, srv)
+
+	bob := connectUpstream(t, srv, "bob", bobPassword)
+	joinAndWaitForAlice(t, bob)
+
+	alice := loginCaps(t, url, "")
+
+	// A chunk as the client builds them: an id, two counters, and 1800 characters of base64url.
+	value := "abcdef12.0.1." + strings.Repeat("Ab-_0", 360)
+	const tag = "+irc-webclient/p2p"
+
+	alice.send(t, "@"+tag+"="+value+" TAGMSG bob")
+	var got *irc.Message
+	deadline := time.After(10 * time.Second)
+	for got == nil {
+		select {
+		case m := <-bob.Events():
+			if m != nil && m.Command == "TAGMSG" {
+				got = m
+			}
+		case <-deadline:
+			t.Fatal("bob never received the TAGMSG")
+		}
+	}
+	if v, ok := got.Tag(tag); !ok || v != value {
+		t.Errorf("the tag changed on the way to bob: present=%v, len(got)=%d, len(want)=%d", ok, len(v), len(value))
+	}
+	if got.Nick() != account {
+		t.Errorf("TAGMSG came from %q, want %q", got.Nick(), account)
+	}
+	drain(bob)
+
+	// And back: bob answers, and alice gets it with the tag.
+	reply := irc.New("TAGMSG", account)
+	reply.SetTag(tag, value)
+	if err := bob.Send(reply); err != nil {
+		t.Fatal(err)
+	}
+	back := waitFor(t, alice.msgs, "TAGMSG from bob", func(m *irc.Message) bool { return m.Command == "TAGMSG" && m.Nick() == "bob" })
+	if v, ok := back.Tag(tag); !ok || v != value {
+		t.Errorf("the tag changed on the way back: present=%v, len=%d", ok, len(v))
+	}
+}

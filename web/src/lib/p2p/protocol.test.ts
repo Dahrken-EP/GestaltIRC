@@ -14,6 +14,7 @@ describe('parseControl', () => {
     expect(parseControl('{"t":"file-accept","id":"abc123"}')).toEqual({ t: 'file-accept', id: 'abc123' })
     expect(parseControl('{"t":"file-reject","id":"abc123"}')).toEqual({ t: 'file-reject', id: 'abc123' })
     expect(parseControl('{"t":"file-cancel","id":"abc123"}')).toEqual({ t: 'file-cancel', id: 'abc123' })
+    expect(parseControl('{"t":"bye","id":"abc123"}')).toEqual({ t: 'bye', id: 'abc123' })
     expect(parseControl('{"t":"file-done","id":"abc123","ok":true}')).toEqual({ t: 'file-done', id: 'abc123', ok: true })
   })
 

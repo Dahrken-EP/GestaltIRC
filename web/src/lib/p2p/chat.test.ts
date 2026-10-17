@@ -148,6 +148,21 @@ describe('DirectChat connection', () => {
     expect(p.b.view.state).toBe('connected')
   })
 
+  it('is not ended by the late close of a connection that was already hung up', async () => {
+    const p = pair()
+    await connect(p)
+    p.a.chat.hangUp()
+    // Straight away asks again, before the old connection has finished closing.
+    void p.a.chat.invite()
+    await settle(500)
+    expect(p.b.view.state).toBe('incoming')
+    expect(p.a.view.state).toBe('calling')
+    void p.b.chat.acceptIncoming()
+    await settle(500)
+    expect(p.a.view.state).toBe('connected')
+    expect(p.b.view.state).toBe('connected')
+  })
+
   it('resolves two people calling each other at once in favour of exactly one', async () => {
     const p = pair()
     void p.a.chat.invite()

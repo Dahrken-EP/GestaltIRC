@@ -59,6 +59,9 @@ b() { "$work/bouncer" -config "$work/bouncer.yaml" "$@"; }
 b init > /dev/null
 echo "$password" | b user add matt > /dev/null
 b network add matt fake --host 127.0.0.1 --port "$irc_port" --nick matt --join '#chat,#bulk' > /dev/null
+# A second person, for the tests where two browsers talk to each other.
+echo "$password" | b user add jane > /dev/null
+b network add jane fake --host 127.0.0.1 --port "$irc_port" --nick jane --join '#chat' > /dev/null
 
 IRC_PORT=$irc_port python3 -I "$here/fake_irc.py" &
 pids+=($!)
@@ -75,6 +78,14 @@ for _ in $(seq 1 50); do
 done
 # The bouncer connects to the network a few seconds after it starts.
 sleep 6
+
+# Playwright's headless shell does not honour a notification permission grant, which the push test
+# needs, so prefer a full Chromium when one is installed.
+if [ -z "${CHROMIUM_PATH:-}" ]; then
+  for c in "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"/chromium-*/chrome-linux/chrome; do
+    [ -x "$c" ] && export CHROMIUM_PATH="$c" && break
+  done
+fi
 
 out=${OUT_DIR:-$work/out}
 mkdir -p "$out"

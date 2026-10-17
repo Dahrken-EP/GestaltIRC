@@ -21,6 +21,8 @@ export type Control =
   | { t: 'file-reject'; id: string }
   | { t: 'file-cancel'; id: string }
   | { t: 'file-done'; id: string; ok: boolean }
+  /** The other person closed the chat. Sent on the connection itself, which is faster than the IRC network. */
+  | { t: 'bye'; id: string }
 
 export const isId = (s: unknown): s is string => typeof s === 'string' && /^[a-z0-9]{6,16}$/.test(s)
 
@@ -53,6 +55,7 @@ export function parseControl(text: string): Control | null {
     case 'file-accept':
     case 'file-reject':
     case 'file-cancel':
+    case 'bye':
       return { t: m.t, id: m.id }
     case 'file-done':
       return typeof m.ok === 'boolean' ? { t: 'file-done', id: m.id, ok: m.ok } : null

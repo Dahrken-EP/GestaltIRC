@@ -38,11 +38,39 @@ The web client (DESIGN.md phase 3) is in `web/`. It is Svelte 5 and TypeScript, 
 - desktop notifications while the page is open, and background notifications through Web
   Push when no client is connected
 
+Phase 5 adds pictures, video, link previews and direct chat:
+
+- **Media.** Pictures and video in links are shown inline, and other links get a title and
+  picture. The browser never contacts the linked site: the bouncer fetches it
+  (`/api/media`, `/api/preview`), refuses private addresses (checked at connect time, so a
+  redirect or DNS trick cannot get past it), sniffs the bytes instead of trusting the
+  server's content type, refuses SVG and HTML, and caps size and concurrency. YouTube and
+  Streamable show a card, and nothing loads from them until you press play. Three switches
+  in Settings turn media, previews and players off.
+- **Direct chat and file transfer.** `/direct NICK`, or the "Direct chat" button in a query,
+  asks the other person to connect browser to browser over WebRTC. The IRC network only
+  carries the offer and answer, as client-only message tags. Nothing is connected until they
+  accept, so no network address is revealed before that. Chat lines and files then go
+  straight between the browsers and are not stored anywhere. Files are accepted one by one,
+  streamed with back-pressure, checked against the size that was offered and a SHA-256, and
+  held in memory until you save them (up to 512 MB each). Both sides see a safety code made
+  from both certificate fingerprints; if you read it out to each other over another channel
+  and it matches, nobody in between, including the IRC server and the bouncer, altered the
+  connection. Without a TURN server (below) it only connects when a direct path exists.
+- **STUN and TURN.** `/api/ice` gives a logged-in browser the servers from `stun_uris` and
+  `turn_uris`, with TURN credentials that expire (`turn_ttl`) and are derived from a secret
+  shared with coturn. `deploy/` has a Docker Compose setup with the bouncer, Caddy for HTTPS
+  and coturn. See `deploy/README.md` for what was and was not run.
+
+Things to know about direct chat: the same account logged in on two devices gets the request
+on both, and the first to accept connects. Chat is not kept after the page closes. A browser
+tab that sleeps (a phone with the screen off) may drop the connection.
+
 Message text is never inserted as HTML. Only `http` and `https` links are clickable.
 
 Limits to know about: replying, reacting and deleting appear when you hover a message, so a
-touch screen has no way to reach them yet. Inline media waits for the media proxy (phase 5).
-Reactions, replies and typing need the network to support message tags.
+touch screen has no way to reach them yet. Reactions, replies and typing need the network
+to support message tags.
 
 To run it:
 
