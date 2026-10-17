@@ -1,0 +1,11 @@
+# The settings inside the image when you run it on its own (docker run). Plain HTTP on 8080: publish
+# the port to localhost only, or put a TLS proxy in front. docker-compose.yml uses bouncer.yaml.template
+# instead, which is for running behind Caddy.
+listen: ":8080"
+web_dir: "/srv/web"
+data_dir: "/data"
+secret_key_file: "/data/secret.key"
+history_limit: 2000
+replay_limit: 200
+# "auto": the Secure flag is set when the request arrives over HTTPS, and not on plain http://localhost.
+cookie_secure: auto

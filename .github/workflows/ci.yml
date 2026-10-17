@@ -15,7 +15,7 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: server/go.mod
@@ -30,7 +30,7 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -45,7 +45,7 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: server/go.mod
@@ -62,7 +62,7 @@ jobs:
   browser:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: server/go.mod
@@ -75,7 +75,39 @@ jobs:
         working-directory: web
       - run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
         working-directory: web
-      - run: test/e2e/run.sh
+      # Failed checks are repeated as annotations, so they show on the run's summary page without opening the log.
+      - run: |
+          set -o pipefail
+          test/e2e/run.sh 2>&1 | tee e2e.log || {
+            grep -E '^(FAIL|SCRIPT ERROR)|^    at ' e2e.log | head -8 | sed 's/^/::error::/'
+            echo "::error::last lines: $(tail -n 14 e2e.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            exit 1
+          }
         env:
           CI: "1"
           PLAYWRIGHT_MODULE: ${{ github.workspace }}/web/node_modules/playwright
+
+  # The image and the whole stack, built and started for real.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -t gestalt:ci .
+      - name: The image on its own creates its data, takes a user, logs in and passes its health check
+        run: |
+          docker run -d --name gestalt -p 127.0.0.1:8080:8080 gestalt:ci
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:8080/ > /dev/null && break; sleep 1; done
+          echo 'a-long-password' | docker exec -i gestalt bouncer user add alice
+          curl -fsS -X POST -H 'Content-Type: application/json' -d '{"user":"alice","password":"a-long-password"}' http://127.0.0.1:8080/api/login
+          docker exec gestalt bouncer healthcheck
+          docker rm -f gestalt
+      - name: The full stack comes up behind HTTPS
+        run: |
+          printf 'DOMAIN=localhost\n' > .env
+          docker compose up -d --build
+          for i in $(seq 1 60); do curl -fsk https://localhost/ -o /dev/null && break; sleep 2; done
+          curl -fsk https://localhost/ -o /dev/null
+          test "$(curl -sk -o /dev/null -w '%{http_code}' http://localhost/)" = 308
+          docker compose ps
+          docker compose logs coturn | tail -5
+          docker compose down -v

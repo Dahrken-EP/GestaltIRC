@@ -1,0 +1,15 @@
+# For a server that already has a reverse proxy terminating HTTPS: Gestalt without Caddy. The bouncer is published
+# on 127.0.0.1 only, for your proxy to forward to.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d
+#
+# Set BOUNCER_PORT in .env if 8081 is taken. Your proxy must forward WebSockets, and must set X-Forwarded-Proto
+# and X-Forwarded-For (see deploy/README.md). coturn is unchanged and still needs its own ports open.
+
+services:
+  caddy:
+    # Never started: the profile is not one anyone turns on.
+    profiles: ["unused"]
+  bouncer:
+    ports:
+      - "${BOUNCER_BIND:-127.0.0.1}:${BOUNCER_PORT:-8081}:8080"

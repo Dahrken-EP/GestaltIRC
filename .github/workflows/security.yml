@@ -9,13 +9,12 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   govulncheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: server/go.mod
@@ -26,7 +25,7 @@ jobs:
   npm-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -34,18 +33,5 @@ jobs:
       - run: npm ci && npm audit --omit=dev --audit-level=high
         working-directory: web
 
-  codeql:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        language: [go, javascript-typescript]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v7
-        if: matrix.language == 'go'
-        with:
-          go-version-file: server/go.mod
-      - uses: github/codeql-action/init@v3
-        with:
-          languages: ${{ matrix.language }}
-      - uses: github/codeql-action/analyze@v3
+  # Code scanning (CodeQL) is not a job here: it runs through the repository's own "default setup" (Settings, Advanced
+  # Security, Code scanning). GitHub refuses results from a workflow while that is switched on.

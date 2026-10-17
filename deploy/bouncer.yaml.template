@@ -1,4 +1,5 @@
-# Written by setup.sh from this template. Edit the result, not this file.
+# Written into the config volume by init-config.sh the first time the stack starts. Edit the copy in the
+# volume (see deploy/README.md), not this file: it is only filled in when the volume has none.
 listen: ":8080"
 web_dir: "/srv/web"
 data_dir: "/data"
@@ -21,5 +22,5 @@ turn_uris:
   # Turn this on together with the cert and pkey lines in turnserver.conf (see deploy/README.md).
   # Listed without a certificate it only makes browsers wait for a connection that cannot work.
   # - "turns:@TURN_HOST@:5349?transport=tcp"
-turn_secret_file: "/run/secrets/turn_secret"
+turn_secret_file: "/config/turn_secret"
 turn_ttl: 86400

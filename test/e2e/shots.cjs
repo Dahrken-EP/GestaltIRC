@@ -41,8 +41,15 @@ const shot = async (page, name) => {
   await open(m, '#chat')
   await m.waitForSelector('.line:has-text("hello matt")')
   await send(m, 'Morning all. Has anyone seen the release notes?')
-  await send(m, '!msg look: ' + SITE + '/pic.png and ' + SITE + '/page.html')
+  // The scripted network answers a "!msg" line by having alice say the rest. The "!msg" line is the test's
+  // own command, so it is deleted again, which leaves a conversation that reads naturally.
+  await send(m, '!msg The notes are here: ' + SITE + '/page.html')
   await m.waitForSelector('.card:has-text("An interesting article")', { timeout: 10000 })
+  const command = m.locator('.line.self:has-text("!msg The notes")').last()
+  await command.hover()
+  await command.getByRole('button', { name: 'Delete message' }).click()
+  await m.waitForSelector('.line.self:has-text("!msg The notes")', { state: 'detached' })
+  await send(m, 'Thanks, reading them now')
   await sleep(800)
   await shot(m, '02-channel-light')
 
@@ -61,6 +68,24 @@ const shot = async (page, name) => {
   await send(m, '/greet everyone')
   await sleep(600)
   await shot(m, '05-channel-dark')
+
+  // The quick switcher and the network editor.
+  await m.keyboard.press('Control+k')
+  await m.waitForSelector('[role=dialog][aria-label^="Go to"]')
+  await m.keyboard.type('bu')
+  await sleep(300)
+  await shot(m, '12-quick-switcher')
+  await m.keyboard.press('Escape')
+  await m.click('button[aria-label="Settings"]')
+  const panel = m.getByTestId('networks-panel')
+  await panel.getByRole('button', { name: 'Add a network…' }).click()
+  await panel.getByLabel('Name', { exact: true }).fill('libera')
+  await panel.getByLabel('Server', { exact: true }).fill('irc.libera.chat')
+  await panel.getByLabel('Channels to join').fill('#gestalt')
+  await panel.scrollIntoViewIfNeeded()
+  await sleep(300)
+  await shot(m, '13-network-editor')
+  await m.keyboard.press('Escape')
 
   // A direct chat with a file.
   const j = await (await ctx()).newPage()
