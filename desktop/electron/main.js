@@ -206,6 +206,21 @@ app.whenReady().then(async () => {
     cb((permission === mine || permission === 'notifications') && (origin === allowed || wc.getURL().startsWith('file://')))
   })
 
+  // The page asks about permissions as well as for them: Notification.permission is a check, and with no answer it
+  // says "default" until the user is asked, which is not how a desktop app should behave.
+  session.defaultSession.setPermissionCheckHandler((wc, permission) => {
+    const url = wc?.getURL() || ''
+    const here = url.startsWith('file://') || (() => {
+      try {
+        return new URL(url).origin === allowed
+      } catch {
+        return false
+      }
+    })()
+    return here && (permission === mine || permission === 'notifications')
+  })
+  ipcMain.on('gestalt:show', showWindow)
+
   win = new BrowserWindow({
     width: 1200,
     height: 800,

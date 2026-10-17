@@ -8,3 +8,7 @@ if (location.protocol === 'file:') {
     core: { invoke: (name, args) => ipcRenderer.invoke('gestalt:' + name, args ?? {}) },
   })
 }
+
+// What every page the window shows may know about the app: that it is the desktop app, and a way to bring a hidden window
+// forward (a notification's click does it). Neither reaches anything else.
+contextBridge.exposeInMainWorld('gestaltDesktop', { desktop: true, show: () => ipcRenderer.send('gestalt:show') })
