@@ -1,0 +1,23 @@
+# Written by setup.sh from this template. Edit the result, not this file.
+listen: ":8080"
+web_dir: "/srv/web"
+data_dir: "/data"
+secret_key_file: "/data/secret.key"
+history_limit: 2000
+replay_limit: 200
+
+# Caddy terminates TLS and sets X-Forwarded-For, so trust it for client addresses.
+trust_proxy: true
+cookie_secure: always
+# Tell clients to keep using HTTPS for a day. Raise it once everything works.
+sts_duration: 86400
+sts_port: 443
+push_contact: "mailto:@ADMIN_EMAIL@"
+
+stun_uris:
+  - "stun:@TURN_HOST@:3478"
+turn_uris:
+  - "turn:@TURN_HOST@:3478?transport=udp"
+  - "turns:@TURN_HOST@:5349?transport=tcp"
+turn_secret_file: "/run/secrets/turn_secret"
+turn_ttl: 3600

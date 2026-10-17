@@ -24,6 +24,7 @@ import (
 	"irc-webclient/server/internal/auth"
 	"irc-webclient/server/internal/bouncer"
 	"irc-webclient/server/internal/config"
+	"irc-webclient/server/internal/ice"
 	"irc-webclient/server/internal/media"
 	"irc-webclient/server/internal/push"
 	"irc-webclient/server/internal/secret"
@@ -145,6 +146,7 @@ func serve(cfg *config.Config) error {
 	b.SetPush(pushSvc)
 	b.API().EnablePush(pushSvc)
 	media.New().Register(b.API())
+	ice.New(cfg.StunURIs, cfg.TurnURIs, cfg.TurnSecret, time.Duration(cfg.TurnTTL)*time.Second).Register(b.API())
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

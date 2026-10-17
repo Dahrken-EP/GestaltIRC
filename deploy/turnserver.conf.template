@@ -1,0 +1,42 @@
+# Written by setup.sh from this template. Edit the result, not this file.
+listening-port=3478
+tls-listening-port=5349
+realm=@TURN_HOST@
+server-name=@TURN_HOST@
+@EXTERNAL_IP_LINE@
+
+# Credentials are issued by the bouncer, which shares this secret. They expire.
+use-auth-secret
+static-auth-secret=@TURN_SECRET@
+
+fingerprint
+no-cli
+no-multicast-peers
+no-tcp-relay
+
+# A TURN server relays to any address a client names. Without these lines it could
+# be used to reach machines on its own network, so refuse every private range.
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.0.0.0-192.0.0.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=198.18.0.0-198.19.255.255
+denied-peer-ip=::1
+denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+
+# Limit what one user can take. The relay uses this range of UDP ports; open it in the firewall.
+min-port=49152
+max-port=49252
+user-quota=12
+total-quota=100
+stale-nonce=600
+
+# For turns: (TLS), point these at a certificate for @TURN_HOST@, for example one
+# mounted from Caddy's data volume, then uncomment.
+#cert=/etc/coturn/tls.crt
+#pkey=/etc/coturn/tls.key

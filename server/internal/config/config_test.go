@@ -77,3 +77,39 @@ func TestExampleConfigLoads(t *testing.T) {
 		t.Errorf("the example config sets surprising values: %+v", c)
 	}
 }
+
+func TestICEOptions(t *testing.T) {
+	c, err := load(t, "stun_uris: [\"stun:t.example.org:3478\"]\nturn_uris: [\"turn:t.example.org:3478?transport=udp\", \"turns:t.example.org:5349?transport=tcp\"]\nturn_secret: s3cret\nturn_ttl: 600")
+	if err != nil || c.TurnTTL != 600 || len(c.TurnURIs) != 2 {
+		t.Fatalf("valid ICE config: %+v, %v", c, err)
+	}
+	if d, _ := load(t, ""); d.TurnTTL != 3600 {
+		t.Errorf("default TTL = %d", d.TurnTTL)
+	}
+	bad := map[string]string{
+		"turn without a secret": "turn_uris: [\"turn:t.example.org\"]",
+		"wrong stun scheme":     "stun_uris: [\"turn:t.example.org\"]",
+		"wrong turn scheme":     "turn_uris: [\"http://t.example.org\"]\nturn_secret: x",
+		"tiny ttl":              "turn_ttl: 5",
+	}
+	for name, yaml := range bad {
+		if _, err := load(t, yaml); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+}
+
+func TestTurnSecretFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "turn.secret")
+	if err := os.WriteFile(path, []byte("from-the-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := load(t, "turn_uris: [\"turn:t.example.org\"]\nturn_secret_file: "+path)
+	if err != nil || c.TurnSecret != "from-the-file" {
+		t.Errorf("secret = %q, %v (the trailing newline must go)", c.TurnSecret, err)
+	}
+	if _, err := load(t, "turn_uris: [\"turn:t.example.org\"]\nturn_secret_file: "+filepath.Join(dir, "missing")); err == nil {
+		t.Error("a missing secret file was accepted")
+	}
+}
