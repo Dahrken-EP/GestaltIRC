@@ -10,6 +10,10 @@ interface Stored {
   theme: Theme
   density: Density
   keywords: string[]
+  /** Extra highlight words for one network, by the name it was given. */
+  networkKeywords: Record<string, string[]>
+  /** Networks whose mentions do not raise a desktop notification. */
+  networkMuted: Record<string, boolean>
   nickColors: Record<string, string>
   showMembers: boolean
   showBufferList: boolean
@@ -25,6 +29,8 @@ const DEFAULTS: Stored = {
   theme: 'system',
   density: 'compact',
   keywords: [],
+  networkKeywords: {},
+  networkMuted: {},
   nickColors: {},
   showMembers: true,
   showBufferList: true,
@@ -37,7 +43,7 @@ const DEFAULTS: Stored = {
 }
 
 /** The keys saved to the bouncer. */
-const SYNCED = ['theme', 'density', 'keywords', 'nickColors', 'showMembers', 'showBufferList', 'timestamps', 'sendTyping', 'inlineMedia', 'embeds', 'previews'] as const
+const SYNCED = ['theme', 'density', 'keywords', 'networkKeywords', 'networkMuted', 'nickColors', 'showMembers', 'showBufferList', 'timestamps', 'sendTyping', 'inlineMedia', 'embeds', 'previews'] as const
 
 const KEY = 'irc:settings'
 const PUSH_DELAY_MS = 800
@@ -55,6 +61,10 @@ function load(): Stored {
 const isTheme = (v: unknown): v is Theme => v === 'system' || v === 'light' || v === 'dark'
 const isDensity = (v: unknown): v is Density => v === 'compact' || v === 'comfortable'
 const isStringList = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string')
+const isKeywordMap = (v: unknown): v is Record<string, string[]> =>
+  !!v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every(isStringList)
+const isFlagMap = (v: unknown): v is Record<string, boolean> =>
+  !!v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((x) => typeof x === 'boolean')
 const isColorMap = (v: unknown): v is Record<string, string> =>
   !!v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((x) => typeof x === 'string')
 
@@ -62,6 +72,8 @@ class Settings {
   theme = $state<Theme>(DEFAULTS.theme)
   density = $state<Density>(DEFAULTS.density)
   keywords = $state<string[]>([])
+  networkKeywords = $state<Record<string, string[]>>({})
+  networkMuted = $state<Record<string, boolean>>({})
   nickColors = $state<Record<string, string>>({})
   showMembers = $state(true)
   showBufferList = $state(true)
@@ -86,6 +98,8 @@ class Settings {
     if (isTheme(s.theme)) this.theme = s.theme
     if (isDensity(s.density)) this.density = s.density
     if (isStringList(s.keywords)) this.keywords = s.keywords
+    if (isKeywordMap(s.networkKeywords)) this.networkKeywords = s.networkKeywords
+    if (isFlagMap(s.networkMuted)) this.networkMuted = s.networkMuted
     if (isColorMap(s.nickColors)) this.nickColors = s.nickColors
     if (typeof s.showMembers === 'boolean') this.showMembers = s.showMembers
     if (typeof s.showBufferList === 'boolean') this.showBufferList = s.showBufferList
@@ -148,6 +162,33 @@ class Settings {
     clearTimeout(this.timer)
     // Several quick changes, such as typing a keyword list, become one request.
     this.timer = setTimeout(() => this.remote?.(this.synced()), PUSH_DELAY_MS)
+  }
+
+  /** The words that highlight a line on this network: the global ones and the network's own. */
+  keywordsFor(network: string): string[] {
+    return [...this.keywords, ...(this.networkKeywords[network] ?? [])]
+  }
+
+  setNetworkKeywords(network: string, words: string[]): void {
+    const next = { ...this.networkKeywords }
+    if (words.length) next[network] = words
+    else delete next[network]
+    this.networkKeywords = next
+    this.save()
+  }
+
+  setNetworkMuted(network: string, muted: boolean): void {
+    const next = { ...this.networkMuted }
+    if (muted) next[network] = true
+    else delete next[network]
+    this.networkMuted = next
+    this.save()
+  }
+
+  /** Forgets what was kept for a network that no longer exists. */
+  forgetNetwork(network: string): void {
+    this.setNetworkKeywords(network, [])
+    this.setNetworkMuted(network, false)
   }
 
   setNickColor(nick: string, color: string | null): void {

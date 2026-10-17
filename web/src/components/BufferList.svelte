@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { app } from '../lib/app.svelte'
   import type { NetworkState } from '../lib/network.svelte'
 
   let { net, onpick }: { net: NetworkState; onpick?: () => void } = $props()
@@ -32,6 +33,16 @@
     <span class="netname" title={net.statusDetail || net.status}>
       <span class="status {net.status}" aria-hidden="true"></span>{net.label}
     </span>
+    <button
+      class="more"
+      title="Server menu: edit, switch off, remove"
+      aria-label="Server menu"
+      aria-haspopup="menu"
+      onclick={(e) => {
+        const box = e.currentTarget.getBoundingClientRect()
+        app.openServerMenu(net.name, box.left - 150, box.bottom + 4)
+      }}>⋯</button
+    >
   </header>
 
   <ul>
@@ -90,6 +101,18 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .more {
+    background: none;
+    border: 0;
+    color: var(--fg-dim);
+    font-size: 1.2em;
+    line-height: 1;
+    padding: 0 4px;
+    cursor: pointer;
+  }
+  .more:hover {
+    color: var(--fg);
   }
   .status {
     display: inline-block;

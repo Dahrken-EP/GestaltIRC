@@ -275,3 +275,136 @@ describe('PluginManager', () => {
     expect(sent).toContain('BETA')
   })
 })
+
+describe('PluginManager kept on the bouncer', () => {
+  const env = { network: () => undefined, active: () => undefined }
+  const plugin = (name: string, enabled = true) => ({
+    manifest: { name, version: '1.0.0', description: 'x', permissions: ['storage'] },
+    source: '// nothing',
+    granted: ['storage'],
+    enabled,
+  })
+
+  function remote(initial: Record<string, unknown> | null) {
+    const saved: unknown[] = []
+    return {
+      saved,
+      load: vi.fn(async () => initial),
+      save: vi.fn(async (doc: unknown) => void saved.push(doc)),
+    }
+  }
+
+  function manager(r: ReturnType<typeof remote>) {
+    const m = new PluginManager()
+    m.makeSandbox = vmSandbox
+    m.init('matt', env, r)
+    return m
+  }
+
+  it('adopts the plugins and data the bouncer holds', async () => {
+    const r = remote({ plugins: [plugin('from-bouncer')], data: { 'from-bouncer': { n: '3' } } })
+    const m = manager(r)
+    await flush()
+    expect(m.entries.map((e) => e.plugin.manifest.name)).toEqual(['from-bouncer'])
+    expect(localStorage.getItem('irc:plugin-data:matt:from-bouncer')).toBe('{"n":"3"}')
+  })
+
+  it('replaces what this browser had with what the account has', async () => {
+    const a = new PluginManager()
+    a.makeSandbox = vmSandbox
+    a.init('matt', env)
+    a.install(bundle('// nothing', [], 'local-only'), [])
+    const m = manager(remote({ updated: Date.now() + 1000, plugins: [plugin('shared')], data: {} }))
+    await flush()
+    expect(m.entries.map((e) => e.plugin.manifest.name)).toEqual(['shared'])
+  })
+
+  it('uploads this browser\'s plugins when the bouncer has none yet', async () => {
+    const a = new PluginManager()
+    a.makeSandbox = vmSandbox
+    a.init('matt', env)
+    a.install(bundle('// nothing', [], 'carried-over'), [])
+    const r = remote(null)
+    const m = new PluginManager()
+    m.makeSandbox = vmSandbox
+    m.init('matt', env, r)
+    await flush()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(r.save).toHaveBeenCalledTimes(1)
+    expect((r.saved[0] as { plugins: { manifest: { name: string } }[] }).plugins.map((p) => p.manifest.name)).toEqual(['carried-over'])
+  })
+
+  it('uploads after an install, once, however many changes there are', async () => {
+    const r = remote({ plugins: [], data: {} })
+    const m = manager(r)
+    await flush()
+    m.install(bundle('// nothing', [], 'one'), [])
+    m.install(bundle('// nothing', [], 'two'), [])
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(r.save).toHaveBeenCalledTimes(1)
+    expect((r.saved[0] as { plugins: unknown[] }).plugins).toHaveLength(2)
+  })
+
+  it('does not overwrite the bouncer before it has read what is there', async () => {
+    let release!: (v: Record<string, unknown> | null) => void
+    const r = { save: vi.fn(async () => {}), load: () => new Promise<Record<string, unknown> | null>((res) => (release = res)) }
+    const m = new PluginManager()
+    m.makeSandbox = vmSandbox
+    m.init('matt', env, r)
+    m.install(bundle('// nothing', [], 'early'), [])
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(r.save).not.toHaveBeenCalled()
+    release({ updated: Date.now() + 1000, plugins: [plugin('theirs')], data: {} })
+    await flush()
+    expect(m.entries.map((e) => e.plugin.manifest.name)).toEqual(['theirs'])
+  })
+
+  it('keeps working with local plugins, and uploads nothing, when the bouncer cannot be reached', async () => {
+    const a = new PluginManager()
+    a.makeSandbox = vmSandbox
+    a.init('matt', env)
+    a.install(bundle('// nothing', [], 'local'), [])
+    const r = { save: vi.fn(async () => {}), load: vi.fn(async () => { throw new Error('offline') }) }
+    const m = new PluginManager()
+    m.makeSandbox = vmSandbox
+    m.init('matt', env, r)
+    await flush()
+    m.install(bundle('// nothing', [], 'another'), [])
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(m.entries.map((e) => e.plugin.manifest.name).sort()).toEqual(['another', 'local'])
+    expect(r.save).not.toHaveBeenCalled()
+  })
+
+  it('ignores a bouncer document with junk in it', async () => {
+    const m = manager(remote({ plugins: ['x', 5, { manifest: {} }, plugin('ok')], data: 'nope' }))
+    await flush()
+    expect(m.entries.map((e) => e.plugin.manifest.name)).toEqual(['ok'])
+  })
+
+  it('keeps this browser\'s plugins, and sends them, when they changed after the bouncer\'s copy', async () => {
+    const a = new PluginManager()
+    a.makeSandbox = vmSandbox
+    a.init('matt', env)
+    a.install(bundle('// nothing', [], 'newer-here'), [])
+    const r = remote({ updated: Date.now() - 60_000, plugins: [plugin('older-there')], data: {} })
+    const m = new PluginManager()
+    m.makeSandbox = vmSandbox
+    m.init('matt', env, r)
+    await flush()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(m.entries.map((e) => e.plugin.manifest.name)).toEqual(['newer-here'])
+    expect(r.save).toHaveBeenCalledTimes(1)
+  })
+
+  it('sends a waiting change straight away when asked, as the page closes', async () => {
+    const r = remote({ updated: 0, plugins: [], data: {} })
+    const m = manager(r)
+    await flush()
+    m.install(bundle('// nothing', [], 'late'), [])
+    m.flush()
+    await flush()
+    expect(r.save).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(r.save).toHaveBeenCalledTimes(1)
+  })
+})

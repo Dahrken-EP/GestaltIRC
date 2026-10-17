@@ -274,6 +274,8 @@ export interface NetworkHooks {
 export class NetworkState {
   readonly id: string
   readonly login: string
+  /** The name this network was given when it was added, which is not the name the network calls itself. */
+  readonly name: string
   label = $state('')
   nick = $state('')
   status = $state<Status>('connecting')
@@ -315,6 +317,7 @@ export class NetworkState {
   constructor(id: string, login: string, nick: string, send: (line: string) => void, hooks: NetworkHooks) {
     this.id = id
     this.login = login
+    this.name = login.split('/')[1] ?? login
     this.label = login.split('/')[1] ?? login
     this.nick = nick
     this.send = send
@@ -1040,7 +1043,7 @@ export class NetworkState {
     // Someone who sends a message has stopped typing.
     if (!self) buf.setTyping(from, false)
 
-    const words = [this.nick, ...settings.keywords]
+    const words = [this.nick, ...settings.keywordsFor(this.name)]
     const isQuery = buf.kind === 'query'
     const mention = !self && buf.kind !== 'status' && (isQuery || mentions(text, words))
 

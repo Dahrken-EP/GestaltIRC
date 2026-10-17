@@ -250,6 +250,7 @@ func (n *Network) connect(ctx context.Context) (*upstream.Client, error) {
 
 	client, err := upstream.Connect(irc.NewNetConn(conn), upstream.Config{
 		Nick:     n.spec.Nick,
+		AltNicks: n.spec.AltNicks,
 		User:     n.spec.Ident,
 		RealName: n.spec.RealName,
 		Password: n.spec.ServerPassword,
@@ -315,12 +316,45 @@ func (n *Network) attachUpstream(c *upstream.Client) {
 	n.channels = map[string]*channelState{}
 	n.pending = map[string][]member{}
 
+	n.onConnectLocked(c)
 	for _, display := range n.wanted {
 		if err := c.Send(irc.New("JOIN", display)); err != nil {
 			log.Printf("rejoin %s: %v", display, err)
 		}
 	}
 	n.broadcastLocked(notice(n.nick, fmt.Sprintf("Connected to %s as %s.", n.name, n.nick)))
+}
+
+// onConnectLocked identifies to NickServ (on a network where SASL did not already do it) and runs the lines
+// the user asked to have sent after connecting, before any channel is joined.
+func (n *Network) onConnectLocked(c *upstream.Client) {
+	if n.spec.NickServPassword != "" && n.spec.SASLMech == "" {
+		if err := c.Send(irc.New("PRIVMSG", "NickServ", "IDENTIFY "+n.spec.NickServPassword)); err != nil {
+			log.Printf("identify on %s: %v", n.name, err)
+		}
+	}
+	for _, line := range n.spec.Perform {
+		m, err := irc.Parse(performLine(line))
+		if err != nil {
+			log.Printf("%s: skipping command to run on connect %q: %v", n.name, line, err)
+			continue
+		}
+		if err := c.Send(m); err != nil {
+			log.Printf("%s: command to run on connect: %v", n.name, err)
+		}
+	}
+}
+
+// performLine turns what a person typed into a line to send: a leading "/" is dropped, and "msg TARGET text"
+// becomes a PRIVMSG, as it would in a client.
+func performLine(line string) string {
+	line = strings.TrimPrefix(strings.TrimSpace(line), "/")
+	if cmd, rest, ok := strings.Cut(line, " "); ok && strings.EqualFold(cmd, "msg") {
+		if target, text, ok := strings.Cut(strings.TrimSpace(rest), " "); ok {
+			return "PRIVMSG " + target + " :" + strings.TrimSpace(text)
+		}
+	}
+	return line
 }
 
 // detachUpstream clears the live connection. Channel membership is rebuilt when we rejoin.

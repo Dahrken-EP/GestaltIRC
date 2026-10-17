@@ -173,6 +173,23 @@ ALTER TABLE networks ADD COLUMN client_key  TEXT NOT NULL DEFAULT '';
 	`
 ALTER TABLE networks ADD COLUMN via_web INTEGER NOT NULL DEFAULT 0;
 `,
+	// 3: other nicks to try when the first is taken, lines to send after connecting, and a NickServ password
+	// (sealed, like the other secrets).
+	`
+ALTER TABLE networks ADD COLUMN alt_nicks TEXT NOT NULL DEFAULT '';
+ALTER TABLE networks ADD COLUMN perform TEXT NOT NULL DEFAULT '';
+ALTER TABLE networks ADD COLUMN nickserv_password TEXT NOT NULL DEFAULT '';
+`,
+	// 4: small documents a user keeps on the bouncer (the plugins they installed, and their data).
+	`
+CREATE TABLE user_docs (
+	user_id    INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+	name       TEXT    NOT NULL,
+	json       TEXT    NOT NULL,
+	updated_ms INTEGER NOT NULL,
+	PRIMARY KEY (user_id, name)
+);
+`,
 }
 
 // upgrade applies any migrations the database has not seen.

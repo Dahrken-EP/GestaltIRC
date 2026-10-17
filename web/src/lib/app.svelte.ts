@@ -3,6 +3,7 @@
 // session cookie, so no password is kept in the page after the login form.
 
 import { api, websocketUrl, type NetworkInfo, type SessionInfo } from './api'
+import { formFromNetwork, toRequest } from './networkform'
 import { Connection } from './irc/connection'
 import { NetworkState, type Buffer, type ChatMessage } from './network.svelte'
 import { pageUnfocused, showNotification } from './notify'
@@ -36,6 +37,12 @@ class App {
   showSettings = $state(false)
   /** The quick switcher (Ctrl+K) is open. */
   showSwitcher = $state(false)
+  /** Every network the account has, including the ones switched off, which have no connection. */
+  configured = $state.raw<NetworkInfo[]>([])
+  /** The server dialog: adding a server (`edit` is null) or editing one by its name. Null when closed. */
+  serverDialog = $state<{ edit: string | null } | null>(null)
+  /** The menu for one server (edit, switch off, remove), anchored to where it was asked for. Null when closed. */
+  serverMenu = $state<{ name: string; x: number; y: number } | null>(null)
   /** Why the last login failed, or why the session ended. Shown on the login form. */
   loginError = $state('')
   loginBusy = $state(false)
@@ -61,6 +68,11 @@ class App {
     if (this.started) return
     this.started = true
     this.listenForNotificationClicks()
+    // A plugin change made just before the page closes is sent now rather than after its short delay.
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pagehide', () => plugins.flush())
+      document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && plugins.flush())
+    }
     try {
       const session = await api.session()
       if (session) this.begin(session)
@@ -106,11 +118,17 @@ class App {
       })
     })
     this.phase = 'ready'
+    this.configured = session.networks
     for (const n of session.networks) if (n.enabled) this.start(n)
-    plugins.init(session.user, {
-      network: (label) => this.networks.find((n) => n.label === label),
-      active: () => this.active,
-    })
+    plugins.init(
+      session.user,
+      {
+        network: (label) => this.networks.find((n) => n.label === label),
+        active: () => this.active,
+      },
+      // The plugins an account installed, and what they stored, are kept on the bouncer.
+      { load: () => api.getDoc('plugins'), save: (doc) => api.putDoc('plugins', doc as unknown as Record<string, unknown>).then(() => undefined) },
+    )
 
     const open = this.takeDeepLink()
     const first = this.networks[0]
@@ -131,6 +149,7 @@ class App {
       return
     }
     if (!session || this.phase !== 'ready') return
+    this.configured = session.networks
     const wanted = new Set(session.networks.filter((n) => n.enabled).map((n) => `${this.user}/${n.name}`))
     for (const net of this.networks) {
       if (wanted.has(net.login)) continue
@@ -148,6 +167,43 @@ class App {
     }
   }
 
+  /** Opens the dialog to add a server, or to edit the one with this name. */
+  openServerDialog(edit: string | null = null): void {
+    this.serverMenu = null
+    this.serverDialog = { edit }
+  }
+
+  /** Opens the menu for a server, near where the click was. */
+  openServerMenu(name: string, x: number, y: number): void {
+    this.serverMenu = { name, x, y }
+  }
+
+  /** Switches a server on or off, keeping everything else about it. */
+  async setServerEnabled(name: string, enabled: boolean): Promise<void> {
+    this.serverMenu = null
+    const list = await api.listNetworks()
+    const detail = list.networks.find((n) => n.name === name)
+    if (!detail) return
+    const form = formFromNetwork(detail)
+    form.enabled = enabled
+    await api.updateNetwork(name, toRequest(form))
+    await this.resync()
+  }
+
+  /** Removes a server and its history, and what this browser's account kept for it. */
+  async removeServer(name: string): Promise<void> {
+    this.serverMenu = null
+    await api.deleteNetwork(name)
+    settings.forgetNetwork(name)
+    await this.resync()
+  }
+
+  /** Brings the server with this name on screen, if it is connected. */
+  showServer(name: string): void {
+    const net = this.networks.find((n) => n.name === name)
+    if (net) this.activate(net.id)
+  }
+
   /** Drops every connection and returns to the login form. */
   private teardown(reason: string): void {
     plugins.dispose()
@@ -159,6 +215,9 @@ class App {
     this.user = ''
     this.showSettings = false
     this.showSwitcher = false
+    this.configured = []
+    this.serverDialog = null
+    this.serverMenu = null
     settings.disconnectRemote()
     this.loginError = reason
     this.phase = 'login'
@@ -306,7 +365,7 @@ class App {
   }
 
   private notifyMention(net: NetworkState, buf: Buffer, msg: ChatMessage): void {
-    if (!settings.notify || !pageUnfocused()) return
+    if (!settings.notify || settings.networkMuted[net.name] || !pageUnfocused()) return
     const title = buf.kind === 'query' || buf.kind === 'p2p' ? msg.nick : `${msg.nick} in ${buf.name}`
     const body = msg.kind === 'action' ? `* ${msg.nick} ${msg.text}` : msg.text
     showNotification(title, body, () => this.goto(net.id, buf.key))

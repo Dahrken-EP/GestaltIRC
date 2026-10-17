@@ -74,6 +74,32 @@ func (s *Service) SetPrefs(userID int64, js string) error {
 	return s.store.SetPrefs(userID, js)
 }
 
+// MaxDocBytes caps one stored document.
+const MaxDocBytes = 2 << 20
+
+// DocNames are the documents a user may keep on the bouncer. A fixed list keeps the table from being used as
+// general storage.
+var DocNames = map[string]bool{"plugins": true}
+
+// Doc returns a stored document, and whether there is one.
+func (s *Service) Doc(userID int64, name string) (string, bool, error) {
+	if !DocNames[name] {
+		return "", false, errors.New("no such document")
+	}
+	return s.store.GetDoc(userID, name)
+}
+
+// SetDoc stores a document.
+func (s *Service) SetDoc(userID int64, name, js string) error {
+	if !DocNames[name] {
+		return errors.New("no such document")
+	}
+	if len(js) > MaxDocBytes {
+		return errors.New("that document is too large")
+	}
+	return s.store.SetDoc(userID, name, js)
+}
+
 // NetworkInfo is what the web client may see about a network. It has no secrets.
 type NetworkInfo struct {
 	ID      int64

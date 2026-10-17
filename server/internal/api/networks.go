@@ -34,6 +34,9 @@ type networkView struct {
 	HasSASLPassword   bool     `json:"has_sasl_password"`
 	HasCertificate    bool     `json:"has_certificate"`
 	Join              []string `json:"join"`
+	AltNicks          []string `json:"alt_nicks"`
+	Perform           []string `json:"perform"`
+	HasNickServ       bool     `json:"has_nickserv_password"`
 	Enabled           bool     `json:"enabled"`
 	Connected         bool     `json:"connected"`
 }
@@ -52,6 +55,9 @@ type networkRequest struct {
 	ServerPassword *string   `json:"server_password"`
 	SASLPassword   *string   `json:"sasl_password"`
 	Join           *[]string `json:"join"`
+	AltNicks       *[]string `json:"alt_nicks"`
+	Perform        *[]string `json:"perform"`
+	NickServ       *string   `json:"nickserv_password"`
 	Enabled        *bool     `json:"enabled"`
 }
 
@@ -69,8 +75,11 @@ func (a *API) viewOf(spec accounts.NetworkSpec) networkView {
 		HasServerPassword: spec.ServerPassword != "", HasSASLPassword: spec.SASLPassword != "",
 		HasCertificate: spec.ClientCert != "", Join: spec.Join, Enabled: true,
 	}
-	if v.Join == nil {
-		v.Join = []string{}
+	v.AltNicks, v.Perform, v.HasNickServ = spec.AltNicks, spec.Perform, spec.NickServPassword != ""
+	for _, list := range []*[]string{&v.Join, &v.AltNicks, &v.Perform} {
+		if *list == nil {
+			*list = []string{}
+		}
 	}
 	return v
 }
@@ -121,7 +130,7 @@ func (a *API) checkAddress(host string, port int) error {
 
 func (a *API) createNetwork(w http.ResponseWriter, r *http.Request, u store.User) {
 	var req networkRequest
-	if !readJSON(w, r, 16<<10, &req) {
+	if !readJSON(w, r, 32<<10, &req) {
 		return
 	}
 	existing, err := a.Accounts.ListNetworkInfo(u.Name)
@@ -155,6 +164,15 @@ func (a *API) createNetwork(w http.ResponseWriter, r *http.Request, u store.User
 	if req.Join != nil {
 		in.Join = *req.Join
 	}
+	if req.AltNicks != nil {
+		in.AltNicks = *req.AltNicks
+	}
+	if req.Perform != nil {
+		in.Perform = *req.Perform
+	}
+	if req.NickServ != nil {
+		in.NickServPassword = *req.NickServ
+	}
 	in.Disabled = req.Enabled != nil && !*req.Enabled
 	if _, err := a.Accounts.AddNetwork(u.Name, in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -167,7 +185,7 @@ func (a *API) createNetwork(w http.ResponseWriter, r *http.Request, u store.User
 func (a *API) updateNetwork(w http.ResponseWriter, r *http.Request, u store.User) {
 	name := r.PathValue("name")
 	var req networkRequest
-	if !readJSON(w, r, 16<<10, &req) {
+	if !readJSON(w, r, 32<<10, &req) {
 		return
 	}
 	cur, err := a.Accounts.GetNetwork(u.Name, name)
@@ -196,6 +214,7 @@ func (a *API) updateNetwork(w http.ResponseWriter, r *http.Request, u store.User
 		RealName: req.RealName, SASLMech: strings.ToUpper(req.SASLMech), SASLUser: req.SASLUser,
 		ServerPassword: cur.ServerPassword, SASLPassword: cur.SASLPassword,
 		ClientCert: cur.ClientCert, ClientKey: cur.ClientKey, Join: cur.Join,
+		AltNicks: cur.AltNicks, Perform: cur.Perform, NickServPassword: cur.NickServPassword,
 		Disabled: disabled, ViaWeb: cur.ViaWeb,
 	}
 	if req.ServerPassword != nil {
@@ -206,6 +225,15 @@ func (a *API) updateNetwork(w http.ResponseWriter, r *http.Request, u store.User
 	}
 	if req.Join != nil {
 		in.Join = *req.Join
+	}
+	if req.AltNicks != nil {
+		in.AltNicks = *req.AltNicks
+	}
+	if req.Perform != nil {
+		in.Perform = *req.Perform
+	}
+	if req.NickServ != nil {
+		in.NickServPassword = *req.NickServ
 	}
 	if req.Enabled != nil {
 		in.Disabled = !*req.Enabled

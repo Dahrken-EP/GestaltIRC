@@ -58,7 +58,9 @@ message, topic, reason or mode), `target` (the victim of a kick, or the new nick
   plugin that does not answer for five seconds, crashes, or floods is stopped and switched off, with the reason
   shown.
 
-Plugins and their data are kept in this browser, per account. They are not synced to your other devices. A plugin
+Plugins and what they store are kept on your bouncer account (and cached in this browser), so they follow you to
+other browsers. The bouncer's copy replaces a browser's own when you log in. That also means the bouncer holds the
+code of your plugins, and anyone who can act as your account can change it. A plugin
 with `events` can read your channels, and with `send` can speak as you, so only install code you trust.
 
 ## Not built

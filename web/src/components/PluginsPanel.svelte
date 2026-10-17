@@ -54,7 +54,7 @@
 <div class="plugins">
   <p class="note">
     A plugin is code that runs in your browser, in a sandbox with no access to the page or the network. It can only do what
-    you allow here. Plugins are kept in this browser, not on the bouncer.
+    you allow here. Plugins, and what they store, are kept on your bouncer account, so they follow you to other browsers.
   </p>
 
   {#if plugins.entries.length === 0}

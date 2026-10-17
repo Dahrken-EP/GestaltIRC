@@ -50,27 +50,35 @@ type NetworkInput struct {
 	Disabled bool
 	// ViaWeb marks a network whose address was chosen in the web editor.
 	ViaWeb bool
+	// AltNicks are tried in order when Nick is taken. Perform lines are sent to the network after connecting.
+	// NickServPassword is used to identify to NickServ on networks without SASL.
+	AltNicks         []string
+	Perform          []string
+	NickServPassword string
 }
 
 // NetworkSpec is a network with its secrets decrypted. Only the bouncer uses it.
 type NetworkSpec struct {
-	ID             int64
-	UserName       string
-	Name           string
-	Host           string
-	Port           int
-	TLS            bool
-	Nick           string
-	Ident          string
-	RealName       string
-	ServerPassword string
-	SASLMech       string
-	SASLUser       string
-	SASLPassword   string
-	ClientCert     string // PEM, decrypted
-	ClientKey      string // PEM, decrypted
-	Join           []string
-	ViaWeb         bool
+	ID               int64
+	UserName         string
+	Name             string
+	Host             string
+	Port             int
+	TLS              bool
+	Nick             string
+	Ident            string
+	RealName         string
+	ServerPassword   string
+	SASLMech         string
+	SASLUser         string
+	SASLPassword     string
+	ClientCert       string // PEM, decrypted
+	ClientKey        string // PEM, decrypted
+	Join             []string
+	ViaWeb           bool
+	AltNicks         []string
+	Perform          []string
+	NickServPassword string
 	// Guarded is set by the bouncer, not stored: the connection may reach public addresses only.
 	Guarded bool
 }
@@ -165,6 +173,33 @@ func (s *Service) DeleteUser(name string) error {
 	return s.store.DeleteUser(name)
 }
 
+// MaxAltNicks, MaxPerformLines and MaxPerformLine limit what a network's settings may hold.
+const (
+	MaxAltNicks     = 5
+	MaxPerformLines = 10
+	MaxPerformLine  = 400
+)
+
+// refusedOnConnect are commands the bouncer sends itself while registering, or that would undo it.
+var refusedOnConnect = map[string]bool{"PASS": true, "USER": true, "CAP": true, "AUTHENTICATE": true, "QUIT": true}
+
+// validatePerform checks the lines sent to a network after connecting: one IRC command per line.
+func validatePerform(lines []string) error {
+	if len(lines) > MaxPerformLines {
+		return fmt.Errorf("at most %d commands to run on connect", MaxPerformLines)
+	}
+	for _, l := range lines {
+		if strings.TrimSpace(l) == "" || len(l) > MaxPerformLine || strings.ContainsAny(l, "\r\n\x00") {
+			return fmt.Errorf("bad command to run on connect: %q", l)
+		}
+		cmd := strings.ToUpper(strings.Fields(strings.TrimPrefix(strings.TrimSpace(l), "/"))[0])
+		if refusedOnConnect[cmd] {
+			return fmt.Errorf("%s cannot be used in the commands to run on connect", cmd)
+		}
+	}
+	return nil
+}
+
 // validateNetwork checks a network's settings and fills in the defaults.
 func validateNetwork(in *NetworkInput) error {
 	if !networkNameRe.MatchString(in.Name) {
@@ -220,6 +255,20 @@ func validateNetwork(in *NetworkInput) error {
 			return fmt.Errorf("bad channel name %q", ch)
 		}
 	}
+	if len(in.AltNicks) > MaxAltNicks {
+		return fmt.Errorf("at most %d alternative nicks", MaxAltNicks)
+	}
+	for _, n := range in.AltNicks {
+		if n == "" || strings.ContainsAny(n, " \t\r\n\x00,") {
+			return fmt.Errorf("bad alternative nick %q", n)
+		}
+	}
+	if strings.ContainsAny(in.NickServPassword, "\r\n\x00") {
+		return errors.New("the NickServ password cannot contain a line break")
+	}
+	if err := validatePerform(in.Perform); err != nil {
+		return err
+	}
 	if in.Ident == "" {
 		in.Ident = in.Nick
 	}
@@ -250,24 +299,31 @@ func (s *Service) AddNetwork(user string, in NetworkInput) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	sealedNickServ, err := s.box.Seal(in.NickServPassword)
+	if err != nil {
+		return 0, err
+	}
 	id, err := s.store.CreateNetwork(store.NetworkRow{
-		UserName:       user,
-		Name:           in.Name,
-		Host:           in.Host,
-		Port:           in.Port,
-		TLS:            in.TLS,
-		Nick:           in.Nick,
-		Ident:          in.Ident,
-		RealName:       in.RealName,
-		ServerPassword: serverPw,
-		SASLMech:       strings.ToUpper(in.SASLMech),
-		SASLUser:       in.SASLUser,
-		SASLPassword:   saslPw,
-		ClientCert:     sealedCert,
-		ClientKey:      sealedKey,
-		Join:           in.Join,
-		Enabled:        !in.Disabled,
-		ViaWeb:         in.ViaWeb,
+		UserName:         user,
+		Name:             in.Name,
+		Host:             in.Host,
+		Port:             in.Port,
+		TLS:              in.TLS,
+		Nick:             in.Nick,
+		Ident:            in.Ident,
+		RealName:         in.RealName,
+		ServerPassword:   serverPw,
+		SASLMech:         strings.ToUpper(in.SASLMech),
+		SASLUser:         in.SASLUser,
+		SASLPassword:     saslPw,
+		ClientCert:       sealedCert,
+		ClientKey:        sealedKey,
+		Join:             in.Join,
+		Enabled:          !in.Disabled,
+		ViaWeb:           in.ViaWeb,
+		AltNicks:         in.AltNicks,
+		Perform:          in.Perform,
+		NickServPassword: sealedNickServ,
 	})
 	if errors.Is(err, ErrExists) {
 		return 0, fmt.Errorf("%s already has a network named %s", user, in.Name)
@@ -287,7 +343,7 @@ func (s *Service) UpdateNetwork(user string, in NetworkInput) error {
 	row := store.NetworkRow{
 		UserName: user, Name: in.Name, Host: in.Host, Port: in.Port, TLS: in.TLS, Nick: in.Nick,
 		Ident: in.Ident, RealName: in.RealName, SASLMech: strings.ToUpper(in.SASLMech), SASLUser: in.SASLUser,
-		Join: in.Join, Enabled: !in.Disabled, ViaWeb: in.ViaWeb,
+		Join: in.Join, Enabled: !in.Disabled, ViaWeb: in.ViaWeb, AltNicks: in.AltNicks, Perform: in.Perform,
 	}
 	var err error
 	if row.ServerPassword, err = s.box.Seal(in.ServerPassword); err != nil {
@@ -300,6 +356,9 @@ func (s *Service) UpdateNetwork(user string, in NetworkInput) error {
 		return err
 	}
 	if row.ClientKey, err = s.box.Seal(in.ClientKey); err != nil {
+		return err
+	}
+	if row.NickServPassword, err = s.box.Seal(in.NickServPassword); err != nil {
 		return err
 	}
 	return s.store.UpdateNetwork(row)
@@ -367,24 +426,31 @@ func (s *Service) decryptAll(rows []store.NetworkRow) ([]NetworkSpec, error) {
 		if err != nil {
 			return nil, fmt.Errorf("network %s/%s: client key: %w", r.UserName, r.Name, err)
 		}
+		nickserv, err := s.box.Open(r.NickServPassword)
+		if err != nil {
+			return nil, fmt.Errorf("network %s/%s: NickServ password: %w", r.UserName, r.Name, err)
+		}
 		out = append(out, NetworkSpec{
-			ID:             r.ID,
-			UserName:       r.UserName,
-			Name:           r.Name,
-			Host:           r.Host,
-			Port:           r.Port,
-			TLS:            r.TLS,
-			Nick:           r.Nick,
-			Ident:          r.Ident,
-			RealName:       r.RealName,
-			ServerPassword: serverPw,
-			SASLMech:       r.SASLMech,
-			SASLUser:       r.SASLUser,
-			SASLPassword:   saslPw,
-			ClientCert:     cert,
-			ClientKey:      key,
-			Join:           r.Join,
-			ViaWeb:         r.ViaWeb,
+			ID:               r.ID,
+			UserName:         r.UserName,
+			Name:             r.Name,
+			Host:             r.Host,
+			Port:             r.Port,
+			TLS:              r.TLS,
+			Nick:             r.Nick,
+			Ident:            r.Ident,
+			RealName:         r.RealName,
+			ServerPassword:   serverPw,
+			SASLMech:         r.SASLMech,
+			SASLUser:         r.SASLUser,
+			SASLPassword:     saslPw,
+			ClientCert:       cert,
+			ClientKey:        key,
+			Join:             r.Join,
+			ViaWeb:           r.ViaWeb,
+			AltNicks:         r.AltNicks,
+			Perform:          r.Perform,
+			NickServPassword: nickserv,
 		})
 	}
 	return out, nil

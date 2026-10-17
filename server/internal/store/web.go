@@ -68,6 +68,26 @@ ON CONFLICT(user_id) DO UPDATE SET json = excluded.json, updated_ms = excluded.u
 	return err
 }
 
+// --- documents ---
+
+// GetDoc returns one of the user's stored documents. ok is false when it was never saved.
+func (s *Store) GetDoc(userID int64, name string) (js string, ok bool, err error) {
+	err = s.db.QueryRow(`SELECT json FROM user_docs WHERE user_id = ? AND name = ?`, userID, name).Scan(&js)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return js, err == nil, err
+}
+
+// SetDoc replaces one of the user's stored documents.
+func (s *Store) SetDoc(userID int64, name, js string) error {
+	_, err := s.db.Exec(`
+INSERT INTO user_docs (user_id, name, json, updated_ms) VALUES (?, ?, ?, ?)
+ON CONFLICT(user_id, name) DO UPDATE SET json = excluded.json, updated_ms = excluded.updated_ms`,
+		userID, name, js, time.Now().UnixMilli())
+	return err
+}
+
 // --- read markers ---
 
 // ReadMarker is the time of the newest message the user has read in one buffer.

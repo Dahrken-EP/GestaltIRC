@@ -4,9 +4,9 @@
 import { BUILTIN_COMMANDS } from '../commands'
 import type { Buffer, NetworkState, PluginBus } from '../network.svelte'
 import { PluginInstance, type SandboxFactory, type Status } from './host'
-import { parseBundle } from './manifest'
+import { parseBundle, parseStored } from './manifest'
 import { createSandbox } from './sandbox'
-import { deleteData, loadData, loadPlugins, saveData, savePlugins } from './store'
+import { deleteData, loadData, loadPlugins, loadStamp, saveData, savePlugins, saveStamp } from './store'
 import type { EventName, InstalledPlugin, Permission, PluginEvent } from './types'
 
 export interface PluginLog {
@@ -27,6 +27,23 @@ export interface PluginEntry {
 const MAX_LOG = 200
 const MAX_PLUGINS = 20
 
+/** Everything about the installed plugins that is kept on the bouncer, so it follows the account. */
+export interface PluginDoc {
+  /** When it was last changed, in milliseconds. The newer copy wins when a browser and the bouncer disagree. */
+  updated: number
+  plugins: InstalledPlugin[]
+  data: Record<string, Record<string, string>>
+}
+
+/** Where the plugin document lives. `load` gives null when nothing was saved yet. */
+export interface PluginRemote {
+  load(): Promise<Record<string, unknown> | null>
+  save(doc: PluginDoc): Promise<void>
+}
+
+/** Several quick changes (a plugin counting mentions, say) become one upload. */
+const UPLOAD_DELAY_MS = 1500
+
 export interface Env {
   /** The network with this name, if there is one. */
   network(label: string): NetworkState | undefined
@@ -45,19 +62,119 @@ class PluginManager implements PluginBus {
   private lastNetwork = new Map<string, string>()
   private env: Env = { network: () => undefined, active: () => undefined }
   makeSandbox: SandboxFactory = createSandbox
+  private remote: PluginRemote | null = null
+  /** True once the bouncer's copy has been read, so a stale local copy cannot overwrite it. */
+  private synced = false
+  private uploadTimer: ReturnType<typeof setTimeout> | undefined
+  private uploadWanted = false
+  /** When the plugins or their data last changed here. */
+  private stamp = 0
 
   /** Called once the user is logged in. Starts the plugins that are switched on. */
-  init(user: string, env: Env): void {
+  init(user: string, env: Env, remote: PluginRemote | null = null): void {
     this.dispose()
     this.user = user
     this.env = env
+    this.remote = remote
     this.list = loadPlugins(user)
+    this.stamp = loadStamp(user)
+    for (const p of this.list) if (p.enabled) this.run(p)
+    this.refresh()
+    if (remote) void this.sync(user, remote)
+  }
+
+  /**
+   * Reconciles with the bouncer. What it holds replaces what this browser has, so plugins follow the
+   * account; when it holds nothing yet, this browser's plugins are uploaded, so existing ones carry over.
+   * If the bouncer cannot be reached, local plugins keep working and nothing is uploaded.
+   */
+  private async sync(user: string, remote: PluginRemote): Promise<void> {
+    let doc: Record<string, unknown> | null
+    try {
+      doc = await remote.load()
+    } catch {
+      return
+    }
+    if (this.user !== user) return // logged out, or another account, while waiting
+    this.synced = true
+    if (doc === null) {
+      if (this.list.length > 0 || this.uploadWanted) this.scheduleUpload()
+      return
+    }
+    // Whichever copy changed last is the one to keep: a change made here a moment before the page was closed may
+    // not have reached the bouncer, and must not be undone by what is there.
+    const remoteStamp = typeof doc.updated === 'number' ? doc.updated : 0
+    if (this.stamp > remoteStamp) {
+      this.scheduleUpload()
+      return
+    }
+    const remoteList: InstalledPlugin[] = []
+    for (const item of Array.isArray(doc.plugins) ? doc.plugins : []) {
+      const p = parseStored(item)
+      if (p && !remoteList.some((o) => o.manifest.name === p.manifest.name)) remoteList.push(p)
+    }
+    const data = doc.data && typeof doc.data === 'object' && !Array.isArray(doc.data) ? (doc.data as Record<string, unknown>) : {}
+    for (const i of this.instances.values()) i.stop()
+    this.instances.clear()
+    for (const old of this.list) deleteData(user, old.manifest.name)
+    this.list = remoteList.slice(0, MAX_PLUGINS)
+    this.stamp = remoteStamp
+    saveStamp(user, this.stamp)
+    savePlugins(user, this.list)
+    for (const p of this.list) {
+      const d = data[p.manifest.name]
+      if (d && typeof d === 'object' && !Array.isArray(d)) {
+        const clean: Record<string, string> = {}
+        for (const [k, v] of Object.entries(d)) if (typeof v === 'string') clean[k] = v
+        saveData(user, p.manifest.name, clean)
+      }
+    }
     for (const p of this.list) if (p.enabled) this.run(p)
     this.refresh()
   }
 
+  /** Records that something changed here, and arranges for the bouncer to be told. */
+  private changed(): void {
+    this.stamp = Date.now()
+    saveStamp(this.user, this.stamp)
+    this.scheduleUpload()
+  }
+
+  /** Sends any change that is still waiting, now. For when the page is about to close. */
+  flush(): void {
+    if (!this.uploadWanted || !this.synced) return
+    clearTimeout(this.uploadTimer)
+    void this.upload()
+  }
+
+  private scheduleUpload(): void {
+    if (!this.remote) return
+    this.uploadWanted = true
+    if (!this.synced) return // sync() uploads once it has seen what the bouncer has
+    clearTimeout(this.uploadTimer)
+    this.uploadTimer = setTimeout(() => void this.upload(), UPLOAD_DELAY_MS)
+  }
+
+  private async upload(): Promise<void> {
+    const remote = this.remote
+    if (!remote || !this.synced) return
+    this.uploadWanted = false
+    const data: PluginDoc['data'] = {}
+    for (const p of this.list) data[p.manifest.name] = loadData(this.user, p.manifest.name)
+    try {
+      await remote.save({ updated: this.stamp, plugins: this.list.map((p) => ({ ...p })), data })
+    } catch {
+      this.uploadWanted = true // tried again with the next change
+    }
+  }
+
   /** Stops everything, as at logout. */
   dispose(): void {
+    clearTimeout(this.uploadTimer)
+    this.remote = null
+    this.synced = false
+    this.uploadWanted = false
+    this.stamp = 0
     for (const i of this.instances.values()) i.stop()
     this.instances.clear()
     this.logs.clear()
@@ -151,7 +268,10 @@ class PluginManager implements PluginBus {
           net.local((buffer && net.find(buffer)) || net.active, 'info', `[${name}] ${text}`)
         },
         loadStorage: () => loadData(this.user, name),
-        saveStorage: (all) => void saveData(this.user, name, all),
+        saveStorage: (all) => {
+          void saveData(this.user, name, all)
+          this.changed()
+        },
         isBuiltin: (n) => BUILTIN_COMMANDS.has(n),
         log: (text, kind) => this.log(name, kind, text),
         onStop: (reason) => {
@@ -178,6 +298,7 @@ class PluginManager implements PluginBus {
 
   private persist(): void {
     savePlugins(this.user, this.list)
+    this.changed()
   }
 
   private refresh(): void {

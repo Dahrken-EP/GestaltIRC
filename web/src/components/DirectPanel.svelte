@@ -12,6 +12,10 @@
   let picker: HTMLInputElement
   let dragging = $state(false)
   let showDetails = $state(false)
+  // The codes are for the moment someone wants to check them; each new connection starts with them out of sight.
+  $effect(() => {
+    if (!connected && cs !== 'connected') showDetails = false
+  })
   const cv = $derived(buf.call)
   const cs = $derived(cv?.state ?? 'idle')
   const call = $derived(net.callFor(buf.name))
@@ -100,22 +104,26 @@
     {/if}
   </div>
 
-  {#if connected && view}
+  {#if (connected && view) || (cs === 'connected' && cv)}
     <div class="verify">
-      <span>Safety code <code data-testid="safety-code">{view.code}</code></span>
+      <span>🔒 Encrypted, browser to browser</span>
       <button class="link" aria-expanded={showDetails} onclick={() => (showDetails = !showDetails)}>
-        {showDetails ? 'Hide' : 'What is this?'}
+        {showDetails ? 'Hide' : 'Verify…'}
       </button>
     </div>
     {#if showDetails}
-      <div class="details">
+      <div class="details" data-testid="verify-details">
+        {#if connected && view}<p>Safety code <code data-testid="safety-code">{view.code}</code></p>{/if}
+        {#if cs === 'connected' && cv}<p>Call safety code <code data-testid="call-code">{cv.code}</code></p>{/if}
         <p>
           Ask {buf.name} to read their safety code to you by a way other than this IRC network (a phone call, or in
           person). If it matches, nobody on the way, including the server and the bouncer, changed the connection.
           If it does not match, hang up.
         </p>
-        <p class="fp">Your certificate: <code>{view.fingerprints.local}</code></p>
-        <p class="fp">Theirs: <code>{view.fingerprints.remote}</code></p>
+        {#if connected && view}
+          <p class="fp">Your certificate: <code>{view.fingerprints.local}</code></p>
+          <p class="fp">Theirs: <code>{view.fingerprints.remote}</code></p>
+        {/if}
       </div>
     {/if}
   {/if}
@@ -145,7 +153,6 @@
           <input type="range" min="0" max="1" step="0.05" value={cv.volume} oninput={(e) => call.setVolume(Number(e.currentTarget.value))} />
         </label>
         <button class="btn" onclick={() => call.hangUp()}>Hang up</button>
-        <span class="dim small">Safety code <code data-testid="call-code">{cv.code}</code></span>
       {:else}
         <button class="btn" onclick={() => void call.invite()}>📞 {cs === 'ended' ? 'Call again' : 'Call'}</button>
         {#if cs === 'ended' && cv?.reason}<span class="dim">{cv.reason}</span>{/if}
@@ -241,9 +248,6 @@
   }
   .vol input {
     width: 6em;
-  }
-  .small {
-    font-size: 0.85em;
   }
   .dim {
     color: var(--fg-dim);

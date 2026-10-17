@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -355,5 +356,72 @@ func TestWithIdentity(t *testing.T) {
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	if got.User != "" {
 		t.Errorf("forged cookie produced identity %+v", got)
+	}
+}
+
+func TestStoredDocumentsRoundTripAndAreLimited(t *testing.T) {
+	e := newEnv(t, config.Config{}, fakeStatus{})
+	c := e.login(t)
+
+	req, _ := http.NewRequest("GET", e.srv.URL+"/api/docs/plugins", nil)
+	req.AddCookie(c)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || strings.TrimSpace(string(raw)) != "null" {
+		t.Errorf("nothing saved yet = %d %q, want 200 null", resp.StatusCode, raw)
+	}
+	doc := `{"plugins":[{"manifest":{"name":"greeter"}}],"data":{"greeter":{"n":"1"}}}`
+	if resp, out := e.do(t, "PUT", "/api/docs/plugins", doc, nil, c); resp.StatusCode != 200 {
+		t.Fatalf("put = %d %v", resp.StatusCode, out)
+	}
+	resp, out := e.do(t, "GET", "/api/docs/plugins", "", nil, c)
+	if resp.StatusCode != 200 || out["plugins"] == nil || out["data"] == nil {
+		t.Errorf("get = %d %v", resp.StatusCode, out)
+	}
+
+	// Only the documents the client knows about, only objects, and not without a login.
+	if resp, _ := e.do(t, "PUT", "/api/docs/anything-else", `{}`, nil, c); resp.StatusCode != 404 {
+		t.Errorf("unknown document = %d, want 404", resp.StatusCode)
+	}
+	if resp, _ := e.do(t, "GET", "/api/docs/anything-else", "", nil, c); resp.StatusCode != 404 {
+		t.Errorf("unknown document read = %d, want 404", resp.StatusCode)
+	}
+	if resp, _ := e.do(t, "PUT", "/api/docs/plugins", `[1,2]`, nil, c); resp.StatusCode != 400 {
+		t.Errorf("an array = %d, want 400", resp.StatusCode)
+	}
+	big := `{"x":"` + strings.Repeat("a", accounts.MaxDocBytes) + `"}`
+	if resp, _ := e.do(t, "PUT", "/api/docs/plugins", big, nil, c); resp.StatusCode != 413 {
+		t.Errorf("too large = %d, want 413", resp.StatusCode)
+	}
+	if resp, _ := e.do(t, "GET", "/api/docs/plugins", "", nil, nil); resp.StatusCode != 401 {
+		t.Errorf("no session = %d, want 401", resp.StatusCode)
+	}
+	if resp, _ := e.do(t, "PUT", "/api/docs/plugins", doc, map[string]string{"Origin": "https://evil.example"}, c); resp.StatusCode != 403 {
+		t.Errorf("cross-origin = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestStoredDocumentsBelongToTheAccount(t *testing.T) {
+	e := newEnv(t, config.Config{}, fakeStatus{})
+	if err := e.acc.CreateUser("eve", "another-long-password"); err != nil {
+		t.Fatal(err)
+	}
+	c := e.login(t)
+	if resp, _ := e.do(t, "PUT", "/api/docs/plugins", `{"plugins":[]}`, nil, c); resp.StatusCode != 200 {
+		t.Fatal("setup")
+	}
+	resp, _ := e.do(t, "POST", "/api/login", `{"user":"eve","password":"another-long-password"}`, nil, nil)
+	var eve *http.Cookie
+	for _, ck := range resp.Cookies() {
+		if ck.Name == CookieName {
+			eve = ck
+		}
+	}
+	if resp, out := e.do(t, "GET", "/api/docs/plugins", "", nil, eve); resp.StatusCode != 200 || out != nil {
+		t.Errorf("eve can see matt's plugins: %d %v", resp.StatusCode, out)
 	}
 }

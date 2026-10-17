@@ -119,6 +119,14 @@ describe('NetworkState', () => {
     expect(net.find('#a')!.mentionCount).toBe(1)
   })
 
+  it('uses a network\'s own highlight words only on that network', () => {
+    const { net, feed } = setup() // this network was added as "libera"
+    settings.networkKeywords = { libera: ['gestalt'], oftc: ['elsewhere'] }
+    feed(':me!u@h JOIN #a', `${T}:x!u@h PRIVMSG #a :gestalt rocks`, `${T}:x!u@h PRIVMSG #a :elsewhere too`)
+    expect(net.find('#a')!.mentionCount).toBe(1)
+    settings.networkKeywords = {}
+  })
+
   it('does not notify or count history, and ignores duplicates', () => {
     const { net, feed, mentioned } = setup()
     feed(':me!u@h JOIN #a')
