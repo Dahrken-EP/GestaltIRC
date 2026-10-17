@@ -75,7 +75,10 @@ jobs:
         working-directory: web
       - run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
         working-directory: web
-      - run: test/e2e/run.sh
+      # Failed checks are repeated as annotations, so they show on the run's summary page without opening the log.
+      - run: |
+          set -o pipefail
+          test/e2e/run.sh 2>&1 | tee e2e.log || { grep -E '^(FAIL|SCRIPT ERROR)|^    at ' e2e.log | head -20 | sed 's/^/::error::/'; exit 1; }
         env:
           CI: "1"
           PLAYWRIGHT_MODULE: ${{ github.workspace }}/web/node_modules/playwright
