@@ -1,0 +1,73 @@
+name: desktop
+
+# Builds the desktop app, with the bouncer it carries. Linux uses Electron, because Linux's own web view has no WebRTC on
+# Ubuntu and Debian; Windows uses Tauri and WebView2. It runs for changes to the app, by hand, and for a version tag.
+on:
+  pull_request:
+    paths: ['desktop/**', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: The bouncer and the web client it carries
+        run: |
+          npm --prefix desktop ci
+          desktop/build-sidecar.sh
+      - name: Smoke test, in the real app
+        working-directory: desktop
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          xvfb-run -a node test/electron-smoke.cjs
+      - name: Build the AppImage
+        working-directory: desktop
+        run: npx electron-builder --linux AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gestalt-desktop-linux
+          path: desktop/dist-electron/*.AppImage
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: The bouncer and the web client it carries
+        shell: bash
+        run: |
+          npm --prefix desktop ci
+          desktop/build-sidecar.sh
+      - name: Build the app
+        working-directory: desktop
+        run: npx tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gestalt-desktop-windows
+          path: desktop/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error

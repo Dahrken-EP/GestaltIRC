@@ -1,0 +1,50 @@
+{
+  "name": "gestalt-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "tauri": "tauri",
+    "sidecar": "./build-sidecar.sh",
+    "build": "./build-sidecar.sh && tauri build",
+    "dev": "./build-sidecar.sh && tauri dev",
+    "electron": "electron .",
+    "build:linux": "./build-sidecar.sh && electron-builder --linux AppImage",
+    "test:electron": "xvfb-run -a node test/electron-smoke.cjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "playwright-core": "^1.64.1"
+  },
+  "main": "electron/main.js",
+  "build": {
+    "appId": "net.gestalt.desktop",
+    "productName": "Gestalt",
+    "files": [
+      "electron/**",
+      "ui/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "src-tauri/resources",
+        "to": "resources",
+        "filter": [
+          "**/*",
+          "!.gitkeep"
+        ]
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Network",
+      "icon": "src-tauri/icons/icon.png"
+    },
+    "directories": {
+      "output": "dist-electron"
+    }
+  }
+}

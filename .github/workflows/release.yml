@@ -1,0 +1,122 @@
+name: release
+
+# Makes a release: the web client, the Linux AppImage and the Windows installer, attached to a tag. Run it by hand from
+# the Actions tab with the version (for example 0.1.0), on the branch to release (normally master). The tag is made
+# for you, at the commit it ran on.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version, without the v (for example 0.1.0). It must match desktop/package.json and desktop/src-tauri/tauri.conf.json.'
+        required: true
+        default: '0.1.0'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: The version matches the apps
+        run: |
+          v='${{ inputs.version }}'
+          test "$(node -p "require('./desktop/package.json').version")" = "$v"
+          test "$(node -p "require('./desktop/src-tauri/tauri.conf.json').version")" = "$v"
+          ! git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null 2>&1
+
+  web:
+    needs: check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: |
+          npm --prefix web ci
+          npm --prefix web run build
+          cd web/dist && zip -r "$GITHUB_WORKSPACE/gestalt-web-${{ inputs.version }}.zip" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: gestalt-web-*.zip
+          if-no-files-found: error
+
+  linux:
+    needs: check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: |
+          npm --prefix desktop ci
+          desktop/build-sidecar.sh
+      - working-directory: desktop
+        run: npx electron-builder --linux AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: desktop/dist-electron/*.AppImage
+          if-no-files-found: error
+
+  windows:
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - shell: bash
+        run: |
+          npm --prefix desktop ci
+          desktop/build-sidecar.sh
+      - working-directory: desktop
+        run: npx tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: desktop/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+  publish:
+    needs: [web, linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: files
+          merge-multiple: true
+      - name: Make the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l files
+          gh release create "v${{ inputs.version }}" files/* \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Gestalt ${{ inputs.version }}" \
+            --notes "The first release of the bouncer's clients.
+
+          - **gestalt-web-${{ inputs.version }}.zip**: the web client, for serving with the bouncer's \`web_dir\` (the Docker image already includes it).
+          - **Gestalt-${{ inputs.version }}.AppImage**: the Linux desktop app (Electron). \`chmod +x\` it and run it. On a recent distribution you may need \`libfuse2\`.
+          - **Gestalt_${{ inputs.version }}_x64-setup.exe**: the Windows desktop app (Tauri). It is not signed, so SmartScreen will warn.
+
+          Both desktop apps connect to a bouncer you run elsewhere, or start one of their own on your computer. The bouncer itself is run with Docker: see the README."

@@ -48,33 +48,120 @@ The server dialog has the server's details first, then who you are (with alterna
   <img src="docs/assets/screenshot-settings-plugins.png" alt="Settings, Plugins" width="300">
 </p>
 
-## Try it
-You need Docker. This runs the bouncer and web client on your own machine:
+## Get it
+Gestalt has two parts: the **bouncer** (a small server that stays connected to IRC for you, and serves the web client) and the
+**clients** that show it: any web browser, or the desktop apps. Everything is on the **[releases page](https://github.com/Dahrken-EP/GestaltIRC/releases/latest)**.
 
-    docker build -t gestalt .
+| You want | Get |
+|---|---|
+| to run the bouncer (a server, or your own computer) | **Docker**, below, from this repository |
+| the web client, to host it yourself | `gestalt-web-<version>.zip` on the releases page (the bouncer serves it with `web_dir`; the Docker image already includes it) |
+| a desktop app for Linux | `Gestalt-<version>.AppImage` on the releases page |
+| a desktop app for Windows | `Gestalt_<version>_x64-setup.exe` on the releases page |
+
+## Desktop apps
+Both desktop apps connect to a bouncer you run elsewhere (the address is remembered), or start a bouncer of their own on your
+computer, which is connected to IRC only while the app is open. Linux uses Electron and Windows uses Tauri; see **[docs/DESKTOP.md](docs/DESKTOP.md)**.
+
+- **Linux:** download **[Gestalt-0.1.0.AppImage](https://github.com/Dahrken-EP/GestaltIRC/releases/download/v0.1.0/Gestalt-0.1.0.AppImage)**, then `chmod +x Gestalt-0.1.0.AppImage && ./Gestalt-0.1.0.AppImage`. On a recent distribution you may need FUSE 2 (`sudo apt install libfuse2`).
+- **Windows:** download **[Gestalt_0.1.0_x64-setup.exe](https://github.com/Dahrken-EP/GestaltIRC/releases/download/v0.1.0/Gestalt_0.1.0_x64-setup.exe)** and run it. The installer is not signed yet, so Windows SmartScreen will warn: choose *More info*, then *Run anyway*.
+- Newer versions are always on the **[releases page](https://github.com/Dahrken-EP/GestaltIRC/releases/latest)**.
+
+## Run the bouncer with Docker
+You need Docker with the Compose plugin (`docker compose version`), and `git`.
+
+### Try it on your own machine
+One container, no HTTPS, reachable only from this computer:
+
+    docker build -t gestalt https://github.com/Dahrken-EP/GestaltIRC.git
     docker run -d --name gestalt -p 127.0.0.1:8080:8080 -v gestalt-data:/data gestalt
     echo 'a-long-password' | docker exec -i gestalt bouncer user add alice
 
-Open <http://localhost:8080>, log in as `alice`, and press **Add a server** (Libera is `irc.libera.chat`, port 6697, TLS). The first start creates the database and secret key in the `gestalt-data` volume. Back that volume up: the key protects your saved passwords.
+Open <http://localhost:8080>, log in as `alice`, and press **Add a server** (Libera is `irc.libera.chat`, port 6697, TLS). The first
+start creates the database and secret key in the `gestalt-data` volume. Back that volume up: the key protects your saved passwords.
 
-## Run it on a server
-`docker-compose.yml` runs the whole stack: the bouncer and web client, [Caddy](https://caddyserver.com) for HTTPS (it gets and renews the certificate by itself), and [coturn](https://github.com/coturn/coturn) so that direct chat, file transfer and voice work between people behind NATs.
+### On a server, with HTTPS and voice
+`docker-compose.yml` runs the whole stack: the bouncer and web client, [Caddy](https://caddyserver.com) for HTTPS (it gets and
+renews the certificate by itself), and [coturn](https://github.com/coturn/coturn) so that direct chat, file transfer and voice work
+between people behind NATs. Step by step:
 
-    cp .env.example .env            # set DOMAIN, and PUBLIC_IP if the server is behind NAT
+1. **Get a server and a name.** Any Linux machine with Docker and a public address will do. Make a DNS record (for example
+   `irc.example.org`) that points at it. Caddy cannot get a certificate until the name resolves.
+2. **Open the firewall.** With `ufw` (note the colon in a port range, and `sudo`):
+
+        sudo ufw allow 80/tcp
+        sudo ufw allow 443
+        sudo ufw allow 3478
+        sudo ufw allow 49152:49252/udp
+
+   | Port | Used by | For |
+   |---|---|---|
+   | 80/tcp | Caddy | the certificate challenge, and the redirect to HTTPS |
+   | 443/tcp and 443/udp | Caddy | the web client (udp is HTTP/3) |
+   | 3478/udp and 3478/tcp | coturn | STUN and TURN |
+   | 49152-49252/udp | coturn | the relay range for media that cannot go direct |
+   | 5349/tcp | coturn | TURN over TLS, once you give it a certificate (optional) |
+
+   The bouncer's own port, 8080, is never published. A cloud provider's own firewall (security groups) needs the same ports.
+3. **Get the code and configure it.**
+
+        git clone https://github.com/Dahrken-EP/GestaltIRC.git
+        cd GestaltIRC
+        cp .env.example .env
+        nano .env
+
+   Set `DOMAIN` to your name. Set `PUBLIC_IP` to the server's public address if it sits behind NAT, as most cloud servers do (the
+   provider's dashboard shows it); without it voice and file transfer fail for people on other networks. `ADMIN_EMAIL` is the
+   contact push services are given. The other lines are explained in the file.
+4. **Start it.**
+
+        docker compose up -d
+        docker compose ps
+
+   The first start builds the image, creates the database and secret key in a volume, and writes the bouncer's and coturn's
+   configuration. `docker compose logs -f bouncer` shows it running, and `docker compose logs caddy` the certificate being issued.
+5. **Make your account.** The password is read from standard input, so it is not left in your shell history's arguments:
+
+        echo 'a-long-password' | docker compose exec -T bouncer bouncer user add alice
+
+6. **Log in** at `https://irc.example.org`, press **Add a server**, and fill it in. You can add more servers any time with the **+**
+   in the left bar. Everything else (alternative nicks, passwords, SASL, certificates) is in that dialog.
+7. **Check voice** by joining a voice room from two different networks (a phone on mobile data is a good second one). If it will
+   not connect, see the coturn notes in [deploy/README.md](deploy/README.md).
+
+**Already have Traefik, nginx or another proxy handling HTTPS?** Leave Caddy out by adding a second file to every `docker compose`
+command: `-f docker-compose.yml -f docker-compose.traefik.yml` (set `TRAEFIK_NETWORK`, `TRAEFIK_ENTRYPOINT` and
+`TRAEFIK_CERTRESOLVER` in `.env` to match yours), or `-f docker-compose.yml -f docker-compose.proxy.yml` for any other proxy (it
+publishes the bouncer on `127.0.0.1:8081`). Keep the same files for every later command.
+
+**Updating.** Back up first (the update may change the database), then:
+
+    git pull
+    docker compose build --pull
     docker compose up -d
-    echo 'a-long-password' | docker compose exec -T bouncer bouncer user add alice
 
-Point `DOMAIN` at the server first. Open these ports in the firewall:
+then hard-refresh the browser (Ctrl+Shift+R). Your `.env`, accounts and history stay in their volumes.
 
-| Port | Used by | For |
-|---|---|---|
-| 80/tcp | Caddy | the certificate challenge, and the redirect to HTTPS |
-| 443/tcp and 443/udp | Caddy | the web client (udp is HTTP/3) |
-| 3478/udp and 3478/tcp | coturn | STUN and TURN |
-| 49152-49252/udp | coturn | the relay range for media that cannot go direct |
-| 5349/tcp | coturn | TURN over TLS, once you give it a certificate (optional) |
+**Backing up.** The data volume holds the database and the secret key, which belong together: a database without its key
+cannot decrypt the saved passwords. `docker volume ls` shows the volume's name (`gestalt_data` with the project name `gestalt`):
 
-The bouncer's own port, 8080, is never published. Already have Traefik, nginx or another proxy handling HTTPS? Add `-f docker-compose.traefik.yml` (or `-f docker-compose.proxy.yml`) to leave Caddy out. See **[deploy/README.md](deploy/README.md)** for what the stack does, backing up, and what has and has not been tested.
+    docker run --rm -v gestalt_data:/data -v "$PWD":/backup alpine tar czf /backup/gestalt-data-$(date +%F).tgz -C /data .
+
+**Running other commands.** `docker compose exec bouncer bouncer user list`, `... user passwd NAME`, `... user remove NAME`, and
+`... network add ...` are described in [docs/BUILDING.md](docs/BUILDING.md). Settings live in `bouncer.yaml` in the config volume
+(for example `disable_guests: true`); [docs/SERVER.md](docs/SERVER.md) lists them.
+
+**If something is wrong**
+
+| What you see | Look at |
+|---|---|
+| the page does not load, or a certificate warning | DNS points at the server; ports 80 and 443 are open; `docker compose logs caddy` |
+| log in works, a server will not connect | the status window in the web client, which says why (for example a plain-text port with *Use TLS* ticked) |
+| voice or direct chat fails between networks | `PUBLIC_IP` is set; 3478 and 49152:49252/udp are open in the machine's and the provider's firewall |
+| guest links are not offered | Settings, General, Guests: they are off until you switch them on |
+| anything else | `docker compose logs --tail=100 bouncer` |
+
+[deploy/README.md](deploy/README.md) has the full detail, including what has and has not been tested.
 
 ## Features
 - **Many servers, one login.** Each server has its own icon in the left bar, with channels, queries and a status window. Unread counts are grey, mentions are coloured, and the tab title shows the total. The **+** adds a server; click the one you are on to edit, switch off or remove it. A server can have a server password, alternative nicks (tried in order when the first is taken), SASL PLAIN or SCRAM or a NickServ password, channels to join, and commands to run after connecting, plus highlight words and notifications of its own. A server with a self-signed certificate, or one from a private authority, can be accepted with one switch: the bouncer remembers the first certificate it sees and refuses a different one later.
@@ -115,7 +202,7 @@ IRC text is never rendered as HTML, and the page has a strict content security p
 
 ## Roadmap
 Not built yet:
-- **A desktop app** for Linux and Windows, built with Tauri: one executable that connects to a bouncer elsewhere, or starts one of its own. The plan, and the first risk to settle (WebRTC in the Linux webview), are in **[docs/DESKTOP.md](docs/DESKTOP.md)**.
+- **A desktop app** for Linux (Electron) and Windows (Tauri): one executable that connects to a bouncer elsewhere, or starts one of its own. Built in `desktop/`; Linux is tested here, Windows is not yet. See **[docs/DESKTOP.md](docs/DESKTOP.md)**.
 - **Plugins that run on the server.**
 - **Multiline messages** (`draft/multiline`).
 - **DCC.** Direct chat and file transfer use WebRTC, so people on other IRC clients cannot be sent files this way.
