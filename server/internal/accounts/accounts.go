@@ -8,9 +8,9 @@ import (
 	"regexp"
 	"strings"
 
-	"irc-webclient/server/internal/auth"
-	"irc-webclient/server/internal/secret"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/auth"
+	"gestalt/server/internal/secret"
+	"gestalt/server/internal/store"
 )
 
 // ErrExists and ErrNotFound are returned for duplicate and missing names.
@@ -46,6 +46,10 @@ type NetworkInput struct {
 	ClientCert string
 	ClientKey  string
 	Join       []string
+	// Disabled keeps the network stored but not connected.
+	Disabled bool
+	// ViaWeb marks a network whose address was chosen in the web editor.
+	ViaWeb bool
 }
 
 // NetworkSpec is a network with its secrets decrypted. Only the bouncer uses it.
@@ -66,6 +70,9 @@ type NetworkSpec struct {
 	ClientCert     string // PEM, decrypted
 	ClientKey      string // PEM, decrypted
 	Join           []string
+	ViaWeb         bool
+	// Guarded is set by the bouncer, not stored: the connection may reach public addresses only.
+	Guarded bool
 }
 
 // Service is the account store with encryption applied.
@@ -158,44 +165,59 @@ func (s *Service) DeleteUser(name string) error {
 	return s.store.DeleteUser(name)
 }
 
-// AddNetwork validates and stores a network for a user.
-func (s *Service) AddNetwork(user string, in NetworkInput) (int64, error) {
+// validateNetwork checks a network's settings and fills in the defaults.
+func validateNetwork(in *NetworkInput) error {
 	if !networkNameRe.MatchString(in.Name) {
-		return 0, errors.New("network name must be 1-32 letters, digits, '_', or '-'")
+		return errors.New("network name must be 1-32 letters, digits, '_', or '-'")
 	}
 	if in.Host == "" || in.Nick == "" {
-		return 0, errors.New("network needs a host and a nick")
+		return errors.New("network needs a host and a nick")
+	}
+	// These are sent to the network as parts of IRC lines, so a line break in one could add lines of
+	// someone's choosing. Names that IRC splits on spaces cannot hold one either.
+	for label, v := range map[string]string{
+		"host": in.Host, "nick": in.Nick, "ident": in.Ident, "real name": in.RealName,
+		"server password": in.ServerPassword, "SASL user": in.SASLUser, "SASL password": in.SASLPassword,
+	} {
+		if strings.ContainsAny(v, "\r\n\x00") {
+			return fmt.Errorf("the %s cannot contain a line break", label)
+		}
+	}
+	for label, v := range map[string]string{"host": in.Host, "nick": in.Nick, "ident": in.Ident} {
+		if strings.ContainsAny(v, " \t") {
+			return fmt.Errorf("the %s cannot contain a space", label)
+		}
 	}
 	if in.Port <= 0 || in.Port > 65535 {
-		return 0, errors.New("port must be between 1 and 65535")
+		return errors.New("port must be between 1 and 65535")
 	}
 	switch strings.ToUpper(in.SASLMech) {
 	case "":
 	case "PLAIN", "SCRAM-SHA-256":
 		if in.SASLUser == "" || in.SASLPassword == "" {
-			return 0, errors.New("SASL needs a user name and password")
+			return errors.New("SASL needs a user name and password")
 		}
 	case "EXTERNAL":
 		if in.ClientCert == "" {
-			return 0, errors.New("SASL EXTERNAL needs a client certificate")
+			return errors.New("SASL EXTERNAL needs a client certificate")
 		}
 		if !in.TLS {
-			return 0, errors.New("SASL EXTERNAL needs TLS, because the certificate is presented in the TLS handshake")
+			return errors.New("SASL EXTERNAL needs TLS, because the certificate is presented in the TLS handshake")
 		}
 	default:
-		return 0, fmt.Errorf("SASL mechanism %q is not supported", in.SASLMech)
+		return fmt.Errorf("SASL mechanism %q is not supported", in.SASLMech)
 	}
 	if in.ClientCert != "" || in.ClientKey != "" {
 		if _, err := ParseClientCert(in.ClientCert, in.ClientKey); err != nil {
-			return 0, err
+			return err
 		}
 		if !in.TLS {
-			return 0, errors.New("a client certificate needs TLS")
+			return errors.New("a client certificate needs TLS")
 		}
 	}
 	for _, ch := range in.Join {
-		if ch == "" || strings.ContainsAny(ch, " \n,") {
-			return 0, fmt.Errorf("bad channel name %q", ch)
+		if ch == "" || strings.ContainsAny(ch, " \r\n\x00,") {
+			return fmt.Errorf("bad channel name %q", ch)
 		}
 	}
 	if in.Ident == "" {
@@ -204,7 +226,14 @@ func (s *Service) AddNetwork(user string, in NetworkInput) (int64, error) {
 	if in.RealName == "" {
 		in.RealName = in.Nick
 	}
+	return nil
+}
 
+// AddNetwork validates and stores a network for a user.
+func (s *Service) AddNetwork(user string, in NetworkInput) (int64, error) {
+	if err := validateNetwork(&in); err != nil {
+		return 0, err
+	}
 	serverPw, err := s.box.Seal(in.ServerPassword)
 	if err != nil {
 		return 0, err
@@ -237,7 +266,8 @@ func (s *Service) AddNetwork(user string, in NetworkInput) (int64, error) {
 		ClientCert:     sealedCert,
 		ClientKey:      sealedKey,
 		Join:           in.Join,
-		Enabled:        true,
+		Enabled:        !in.Disabled,
+		ViaWeb:         in.ViaWeb,
 	})
 	if errors.Is(err, ErrExists) {
 		return 0, fmt.Errorf("%s already has a network named %s", user, in.Name)
@@ -246,6 +276,33 @@ func (s *Service) AddNetwork(user string, in NetworkInput) (int64, error) {
 		return 0, fmt.Errorf("no user named %s", user)
 	}
 	return id, err
+}
+
+// UpdateNetwork replaces a network's settings. `in` carries every field, secrets included: a caller that
+// means to keep a secret passes the one it read back.
+func (s *Service) UpdateNetwork(user string, in NetworkInput) error {
+	if err := validateNetwork(&in); err != nil {
+		return err
+	}
+	row := store.NetworkRow{
+		UserName: user, Name: in.Name, Host: in.Host, Port: in.Port, TLS: in.TLS, Nick: in.Nick,
+		Ident: in.Ident, RealName: in.RealName, SASLMech: strings.ToUpper(in.SASLMech), SASLUser: in.SASLUser,
+		Join: in.Join, Enabled: !in.Disabled, ViaWeb: in.ViaWeb,
+	}
+	var err error
+	if row.ServerPassword, err = s.box.Seal(in.ServerPassword); err != nil {
+		return err
+	}
+	if row.SASLPassword, err = s.box.Seal(in.SASLPassword); err != nil {
+		return err
+	}
+	if row.ClientCert, err = s.box.Seal(in.ClientCert); err != nil {
+		return err
+	}
+	if row.ClientKey, err = s.box.Seal(in.ClientKey); err != nil {
+		return err
+	}
+	return s.store.UpdateNetwork(row)
 }
 
 // RemoveNetwork deletes a user's network and its history.
@@ -327,6 +384,7 @@ func (s *Service) decryptAll(rows []store.NetworkRow) ([]NetworkSpec, error) {
 			ClientCert:     cert,
 			ClientKey:      key,
 			Join:           r.Join,
+			ViaWeb:         r.ViaWeb,
 		})
 	}
 	return out, nil

@@ -68,6 +68,10 @@ type Config struct {
 	// then CommandRate a second. A client over the limit has lines dropped and, if it keeps on, is disconnected.
 	CommandBurst int     `yaml:"command_burst"`
 	CommandRate  float64 `yaml:"command_rate"`
+	// AllowPrivateNetworks lets a user point a network at an address on the bouncer's own network (a
+	// private, loopback or link-local one) from the web editor. It is off by default, so that a user cannot
+	// make the bouncer connect to services behind it. Networks added with the command line are not affected.
+	AllowPrivateNetworks bool `yaml:"allow_private_networks"`
 	// ReplayLimit caps how many messages per buffer are replayed to a client on attach.
 	ReplayLimit int `yaml:"replay_limit"`
 }

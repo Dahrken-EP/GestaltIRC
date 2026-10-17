@@ -7,7 +7,7 @@
 // The envelope is not specific to chat. `k` says what the connection is for, so
 // voice calls (a channel room, or a private call) can use the same wire format.
 
-export const SIGNAL_TAG = '+irc-webclient/p2p'
+export const SIGNAL_TAG = '+gestalt/p2p'
 
 /** Characters of encoded data per tag, kept well under the limit for client tags. */
 export const MAX_CHUNK = 1800

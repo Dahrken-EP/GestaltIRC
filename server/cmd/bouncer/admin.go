@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"irc-webclient/server/internal/accounts"
-	"irc-webclient/server/internal/config"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/accounts"
+	"gestalt/server/internal/config"
+	"gestalt/server/internal/store"
 )
 
 func userCommand(cfg *config.Config, args []string) error {

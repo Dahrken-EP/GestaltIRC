@@ -169,6 +169,10 @@ CREATE TABLE settings (
 ALTER TABLE networks ADD COLUMN client_cert TEXT NOT NULL DEFAULT '';
 ALTER TABLE networks ADD COLUMN client_key  TEXT NOT NULL DEFAULT '';
 `,
+	// 2: networks added or moved through the web editor, whose connections are held to public addresses.
+	`
+ALTER TABLE networks ADD COLUMN via_web INTEGER NOT NULL DEFAULT 0;
+`,
 }
 
 // upgrade applies any migrations the database has not seen.

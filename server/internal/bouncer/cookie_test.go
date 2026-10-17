@@ -12,10 +12,10 @@ import (
 
 	"github.com/coder/websocket"
 
-	"irc-webclient/server/internal/accounts"
-	"irc-webclient/server/internal/config"
-	"irc-webclient/server/internal/secret"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/accounts"
+	"gestalt/server/internal/config"
+	"gestalt/server/internal/secret"
+	"gestalt/server/internal/store"
 )
 
 type testRig struct {

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"net/http"
 
-	"irc-webclient/server/internal/push"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/push"
+	"gestalt/server/internal/store"
 )
 
 // PushService is what the push endpoints need. *push.Service implements it.

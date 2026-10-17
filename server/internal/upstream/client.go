@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"irc-webclient/server/internal/irc"
+	"gestalt/server/internal/irc"
 )
 
 // DefaultCaps are the IRCv3 capabilities requested when a server offers them.

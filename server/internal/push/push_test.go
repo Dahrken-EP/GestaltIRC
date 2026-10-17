@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"irc-webclient/server/internal/push/pushtest"
-	"irc-webclient/server/internal/secret"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/push/pushtest"
+	"gestalt/server/internal/secret"
+	"gestalt/server/internal/store"
 )
 
 type env struct {

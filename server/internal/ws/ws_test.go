@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"irc-webclient/server/internal/irc"
+	"gestalt/server/internal/irc"
 )
 
 func TestEchoOverWebSocket(t *testing.T) {

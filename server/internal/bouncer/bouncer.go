@@ -5,18 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"mime"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
 
-	"irc-webclient/server/internal/accounts"
-	"irc-webclient/server/internal/api"
-	"irc-webclient/server/internal/config"
-	"irc-webclient/server/internal/irc"
-	"irc-webclient/server/internal/push"
-	"irc-webclient/server/internal/store"
-	"irc-webclient/server/internal/ws"
+	"gestalt/server/internal/accounts"
+	"gestalt/server/internal/api"
+	"gestalt/server/internal/config"
+	"gestalt/server/internal/irc"
+	"gestalt/server/internal/push"
+	"gestalt/server/internal/store"
+	"gestalt/server/internal/ws"
 )
 
 // syncInterval is how often the bouncer checks the database for networks to start or stop.
@@ -46,6 +48,7 @@ type Bouncer struct {
 type runningNetwork struct {
 	net    *Network
 	cancel context.CancelFunc
+	spec   accounts.NetworkSpec
 }
 
 // New builds a bouncer. Call Run to start the networks.
@@ -57,6 +60,14 @@ func New(conf *config.Config, st *store.Store, acc *accounts.Service) *Bouncer {
 		running:  map[int64]*runningNetwork{},
 	}
 	b.api = api.New(acc, b, conf)
+	b.api.NetworksChanged = func() {
+		b.mu.Lock()
+		started := b.ctx != nil
+		b.mu.Unlock()
+		if started {
+			b.sync()
+		}
+	}
 	return b
 }
 
@@ -104,13 +115,17 @@ func (b *Bouncer) sync() {
 	}
 	want := make(map[int64]accounts.NetworkSpec, len(specs))
 	for _, s := range specs {
+		// A network whose address was chosen in the web editor may reach only public addresses.
+		s.Guarded = s.ViaWeb && !b.conf.AllowPrivateNetworks
 		want[s.ID] = s
 	}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for id, r := range b.running {
-		if _, ok := want[id]; !ok {
+		// A network that was removed or switched off stops. One whose settings changed stops too, and
+		// starts again below with the new ones.
+		if spec, ok := want[id]; !ok || !reflect.DeepEqual(spec, r.spec) {
 			log.Printf("stopping network %s", r.net.name)
 			r.cancel()
 			r.net.Stop()
@@ -124,7 +139,7 @@ func (b *Bouncer) sync() {
 		ctx, cancel := context.WithCancel(b.ctx)
 		n := NewNetwork(spec, b.store, b.conf.HistoryLimit, b.conf.ReplayLimit)
 		go n.Run(ctx)
-		b.running[id] = &runningNetwork{net: n, cancel: cancel}
+		b.running[id] = &runningNetwork{net: n, cancel: cancel, spec: spec}
 		log.Printf("started network %s/%s", spec.UserName, spec.Name)
 	}
 }
@@ -153,6 +168,12 @@ func (b *Bouncer) network(id int64) *Network {
 		return r.net
 	}
 	return nil
+}
+
+func init() {
+	// The web app manifest is not in Go's built-in table, and a browser will not install the page without
+	// the right type. A machine with a system mime.types may already know it; this makes sure of it.
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
 }
 
 // Handler serves the client WebSocket at /ws, the HTTP API under /api/, and the

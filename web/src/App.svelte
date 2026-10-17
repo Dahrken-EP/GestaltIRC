@@ -12,6 +12,8 @@
   import MemberList from './components/MemberList.svelte'
   import MessagePane from './components/MessagePane.svelte'
   import NetworkRail from './components/NetworkRail.svelte'
+  import QuickSwitcher from './components/QuickSwitcher.svelte'
+  import SearchBar from './components/SearchBar.svelte'
   import SettingsDialog from './components/SettingsDialog.svelte'
 
   import type { ChatMessage } from './lib/network.svelte'
@@ -21,11 +23,21 @@
   let navOpen = $state(false)
   /** The message the user chose to reply to. It belongs to one buffer, so switching drops it. */
   let reply = $state<ChatMessage | null>(null)
+  /** The search bar is open, and what is typed in it. A search belongs to one buffer too. */
+  let searching = $state(false)
+  let search = $state('')
   $effect(() => {
     void buf?.key
     void net?.id
     reply = null
+    searching = false
+    search = ''
   })
+
+  function closeSearch() {
+    searching = false
+    search = ''
+  }
 
   onMount(() => void app.init())
 
@@ -41,7 +53,7 @@
   $effect(() => {
     const n = app.unread
     const m = app.mentionCount
-    document.title = m ? `(${m}) ● IRC` : n ? `(${n}) IRC` : 'IRC'
+    document.title = m ? `(${m}) ● Gestalt` : n ? `(${n}) Gestalt` : 'Gestalt'
   })
 
   // Reading position: coming back to the tab counts as reading the open buffer.
@@ -61,6 +73,20 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
+    if (app.phase !== 'ready') return
+    const ctrl = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey
+    if (ctrl && e.key.toLowerCase() === 'k') {
+      e.preventDefault()
+      app.showSwitcher = !app.showSwitcher
+    } else if (ctrl && e.key.toLowerCase() === 'f' && buf && !app.showSwitcher) {
+      // Searching what the page holds is the browser's job for a long list, which is mostly
+      // not on the page; this searches the messages themselves.
+      e.preventDefault()
+      searching = true
+    } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'a') {
+      e.preventDefault()
+      app.nextUnread()
+    }
     if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       e.preventDefault()
       app.step(e.key === 'ArrowDown' ? 1 : -1)
@@ -80,7 +106,8 @@
   {#if net && buf}
     <div class="nav"><BufferList {net} onpick={() => (navOpen = false)} /></div>
     <main>
-      <Header {net} {buf} onmenu={() => (navOpen = !navOpen)} onchannel={openChannel} />
+      <Header {net} {buf} onmenu={() => (navOpen = !navOpen)} onchannel={openChannel} onsearch={() => (searching = true)} />
+      {#if searching}<SearchBar bind:value={search} onclose={closeSearch} />{/if}
       {#if buf.kind === 'channel'}
         {#key net.id + '/' + buf.key}<VoicePanel {net} {buf} />{/key}
       {/if}
@@ -90,7 +117,7 @@
       <div class="body">
         <div class="messages">
           {#key net.id + '/' + buf.key}
-            <MessagePane {net} {buf} onnick={openNick} onchannel={openChannel} onreply={(m) => (reply = m)} />
+            <MessagePane {net} {buf} filter={searching ? search : ''} onnick={openNick} onchannel={openChannel} onreply={(m) => (reply = m)} />
           {/key}
         </div>
         {#if buf.kind === 'channel' && settings.showMembers}
@@ -107,6 +134,7 @@
 <VoiceAudio />
 
 {#if app.showSettings}<SettingsDialog />{/if}
+{#if app.showSwitcher}<QuickSwitcher />{/if}
 {/if}
 
 <style>

@@ -2,6 +2,47 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { classifyLink, clearPreviews, embedSrc, fetchPreview, mediaSrc, streamableId, uniqueLinks, youtubeId } from './media'
 
 describe('classifyLink', () => {
+  it('recognises sound files by file type', () => {
+    for (const ext of ['mp3', 'ogg', 'oga', 'opus', 'wav', 'flac', 'm4a', 'MP3']) {
+      expect(classifyLink(`https://example.org/a/song.${ext}?x=1`)).toEqual({ kind: 'audio' })
+    }
+  })
+
+  it('turns an imgur page into the picture it stands for', () => {
+    expect(classifyLink('https://imgur.com/AbCd123')).toEqual({ kind: 'image', src: 'https://i.imgur.com/AbCd123.jpg' })
+    expect(classifyLink('https://i.imgur.com/AbCd123.png')).toEqual({ kind: 'image', src: 'https://i.imgur.com/AbCd123.png' })
+    expect(classifyLink('https://i.imgur.com/AbCd123.gifv')).toEqual({ kind: 'video', src: 'https://i.imgur.com/AbCd123.mp4' })
+  })
+
+  it('leaves imgur albums, galleries and look-alike hosts as plain links', () => {
+    for (const u of [
+      'https://imgur.com/a/AbCd123',
+      'https://imgur.com/gallery/AbCd123',
+      'https://imgur.com/user/someone',
+      'https://imgur.com/',
+      'https://imgur.com.evil.example/AbCd123',
+      'https://evil.example/imgur.com/AbCd123',
+      'https://imgur.com/AbC',
+    ]) {
+      expect(classifyLink(u).kind).toBe('link')
+    }
+  })
+
+  it('turns a giphy page or embed into its gif', () => {
+    const gif = { kind: 'image', src: 'https://media.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy.gif' }
+    expect(classifyLink('https://giphy.com/gifs/cat-funny-xT9IgzoKnwFNmISR8I')).toEqual(gif)
+    expect(classifyLink('https://giphy.com/gifs/xT9IgzoKnwFNmISR8I')).toEqual(gif)
+    expect(classifyLink('https://giphy.com/embed/xT9IgzoKnwFNmISR8I')).toEqual(gif)
+    expect(classifyLink('https://media.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy.gif')).toEqual(gif)
+    expect(classifyLink('https://media2.giphy.com/media/v1.Y2lkPTc/xT9IgzoKnwFNmISR8I/giphy.gif')).toEqual(gif)
+  })
+
+  it('leaves other giphy pages and look-alike hosts alone', () => {
+    for (const u of ['https://giphy.com/', 'https://giphy.com/search/cats', 'https://giphy.com.evil.example/gifs/xT9IgzoKnwFNmISR8I', 'https://giphy.com/gifs/a-b!c']) {
+      expect(classifyLink(u).kind).toBe('link')
+    }
+  })
+
   it('recognises images and video by file type, ignoring the query', () => {
     for (const ext of ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'PNG']) {
       expect(classifyLink(`https://example.org/a/b.${ext}?x=1#y`).kind).toBe('image')

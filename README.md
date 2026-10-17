@@ -1,7 +1,18 @@
-# irc-webclient
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.png">
+    <img alt="Gestalt" src="docs/assets/logo-light.png" width="420">
+  </picture>
+</p>
 
-A self-hosted IRC bouncer and compact web client. See [DESIGN.md](DESIGN.md)
-for the architecture and roadmap.
+# Gestalt
+
+A self-hosted IRC bouncer and compact web client, with direct chat, file transfer, voice and
+plugins. A gestalt is a whole that is more than its parts: IRC, kept alive by the bouncer, seen
+through one client, with the people on it able to reach each other directly. See
+[DESIGN.md](DESIGN.md) for the architecture and roadmap.
+
+The server binary is still called `bouncer`, and its Go module `gestalt/server`.
 
 ## Status
 
@@ -125,6 +136,49 @@ review what it asks for before it is installed. "Use the example" fills in a sma
   their data are kept in this browser, per account, and are not synced to your other devices. A plugin
   with `events` can read your channels, and with `send` can speak as you: only install code you trust.
 
+Phase 8 is hardening, measurement and the finishing touches. The security side is written up in
+[SECURITY.md](SECURITY.md). In short: every response carries a content security policy and the other
+protective headers; a client that sends faster than a burst of 30 lines and then 10 a second has lines
+dropped and is disconnected if it keeps on; the database files are private to the bouncer's user; password
+hashing is limited to four at a time so a burst of logins cannot exhaust memory; and the plugin sandbox,
+the media proxy and the network editor are each tested by trying to get out of them.
+
+Measured, on the 4-core test machine (`test/load/run.sh`, `test/load/web.sh`):
+
+| | measured | budget in DESIGN.md |
+|---|---|---|
+| bouncer, idle, one user | 19.5 MB | 25 MB |
+| 50 users, 2 networks, 20 channels of 100 messages each, nobody attached | 58.3 MB | |
+| the same with 100 clients attached | 59.5 MB | 300 MB |
+| web client, 10 channels with 2000 messages each (20,000) fully loaded | 16.4 MB JS heap | 60 MB |
+
+The web figure is taken after a garbage collection, with the oldest message of all ten channels reached
+(the script checks that). It is Chromium's heap only, not the whole tab. Hundreds of simultaneous clients
+and a long-running soak are not tested.
+
+Also in this phase, found by comparing with other web clients:
+
+- **Quick switcher and search.** Ctrl+K (or Cmd+K) opens a fuzzy switcher over every channel and query on
+  every network, with mentions and unread buffers first. Ctrl+F (or the magnifier) searches the messages
+  of the buffer on screen: every word must appear, and `from:nick` narrows it to one sender; "Load older
+  messages" reaches further back. Alt+A goes to the next buffer with unread messages, mentions first. A
+  "Jump to latest" button appears when you have scrolled up. These keys replace the browser's own
+  while the app is open.
+- **Emoji picker.** Ctrl+E or the button beside the input: a search box, recently used, and groups. It is a
+  curated set of about 380, not all of Unicode. Typing `:smile:`-style shortcodes is not built.
+- **More media.** Sound links (mp3, ogg, opus, wav, flac, m4a) become a player; the bouncer checks the
+  bytes and allows up to 60 MB, with seeking. Imgur and Giphy page links are shown as the picture they
+  stand for (an imgur album or gallery stays a plain link). Everything still goes through the bouncer.
+- **Network editor.** Settings, Networks: add, edit, switch off and remove your own networks, with
+  SASL PLAIN or SCRAM and a server password. Passwords are stored encrypted and never sent back to the
+  browser. Because this lets any account make the bouncer open connections, a network added or moved in the
+  editor may reach public addresses only (refused again at connect time, so a name that resolves to a private
+  address is turned away too) and ports from 1024 up, and an account can have ten. A bouncer on a home
+  network that needs to reach a server on it sets `allow_private_networks: true`. Networks added on the
+  command line are not restricted, and certificate logins (SASL EXTERNAL) are still set up there.
+- **Installable.** The page has a web app manifest and icons, so a browser can install it as an app. There is
+  no offline mode: it needs the bouncer.
+
 Message text is never inserted as HTML. Only `http` and `https` links are clickable.
 
 Limits to know about: replying, reacting and deleting appear when you hover a message, so a
@@ -147,6 +201,14 @@ port 5173 and proxies `/ws` and `/api` to a bouncer on `127.0.0.1:8080`.
 
 `test/e2e/run.sh` drives the built client in Chromium against a real bouncer and a scripted
 IRC network. See `test/e2e/README.md`.
+
+## Automated checks
+
+`.github/workflows/` has two workflows, which I could not run from where this was written, so expect to read
+their first run. **CI** runs on every push and pull request: formatting, `go vet` and `go test -race`, the web type
+check, tests and build, the real-Ergo integration tests, and the browser tests (real WebRTC and audio in Chromium).
+**Security** runs on every push and pull request and daily: `govulncheck` for Go modules, `npm audit` for the packages
+that ship to browsers, and CodeQL for Go and TypeScript. Dependabot proposes dependency updates weekly.
 
 ## Accounts, networks and the bouncer's HTTP API
 
@@ -241,7 +303,7 @@ go build -o bouncer ./cmd/bouncer
 echo 'a-long-password' | ./bouncer -config bouncer.yaml user add matt
 echo 'sasl-password'   | ./bouncer -config bouncer.yaml network add matt libera \
     --host irc.libera.chat --port 6697 --tls --nick matt \
-    --sasl PLAIN --join '#irc-webclient-test'
+    --sasl PLAIN --join '#gestalt-test'
 ./bouncer -config bouncer.yaml serve
 ```
 

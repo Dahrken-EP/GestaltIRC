@@ -3,7 +3,7 @@ package bouncer
 import (
 	"strings"
 
-	"irc-webclient/server/internal/irc"
+	"gestalt/server/internal/irc"
 )
 
 // adapt turns a message from the network into the form a client expects, given

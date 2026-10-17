@@ -2,17 +2,19 @@
 // never contacts the other site: pictures and video come from /api/media, and
 // titles and thumbnails from /api/preview.
 
-export type LinkKind = 'image' | 'video' | 'youtube' | 'streamable' | 'link'
+export type LinkKind = 'image' | 'video' | 'audio' | 'youtube' | 'streamable' | 'link'
 
 export interface LinkInfo {
   kind: LinkKind
   /** The video id for youtube and streamable. */
   id?: string
+  /** For imgur and giphy links: the address of the file itself, which is not the address that was posted. */
+  src?: string
 }
 
 export interface Preview {
   url: string
-  kind: 'link' | 'image' | 'video' | 'youtube' | 'streamable' | 'none'
+  kind: 'link' | 'image' | 'video' | 'audio' | 'youtube' | 'streamable' | 'none'
   title?: string
   description?: string
   site?: string
@@ -23,6 +25,9 @@ export interface Preview {
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif)$/i
 const VIDEO_EXT = /\.(mp4|webm)$/i
+const AUDIO_EXT = /\.(mp3|ogg|oga|opus|wav|flac|m4a)$/i
+const IMGUR_ID = /^[A-Za-z0-9]{5,8}$/
+const GIPHY_ID = /^[A-Za-z0-9]{6,32}$/
 const YT_ID = /^[A-Za-z0-9_-]{11}$/
 const STREAMABLE_ID = /^[a-z0-9]{4,12}$/
 
@@ -51,6 +56,39 @@ export function streamableId(u: URL): string {
   return STREAMABLE_ID.test(id) ? id : ''
 }
 
+/**
+ * Imgur and Giphy pages are not files, but each has a file at a known address. Returns that
+ * file, or null when the link is something else (an album, a gallery, a profile).
+ */
+export function hostedFile(u: URL): { kind: 'image' | 'video'; src: string } | null {
+  const host = u.hostname.toLowerCase().replace(/^www\./, '')
+  const parts = u.pathname.split('/').filter(Boolean)
+  if (host === 'imgur.com' || host === 'i.imgur.com') {
+    if (parts.length !== 1) return null
+    const m = /^([A-Za-z0-9]+)(?:\.(\w+))?$/.exec(parts[0] ?? '')
+    const name = m?.[1] ?? ''
+    if (!m || !IMGUR_ID.test(name)) return null
+    const ext = (m[2] ?? '').toLowerCase()
+    if (ext === 'gifv' || ext === 'mp4') return { kind: 'video', src: `https://i.imgur.com/${name}.mp4` }
+    if (ext === '' && host === 'imgur.com') return { kind: 'image', src: `https://i.imgur.com/${name}.jpg` }
+    if (/^(png|jpe?g|gif|webp)$/.test(ext)) return { kind: 'image', src: `https://i.imgur.com/${name}.${ext}` }
+    return null
+  }
+  if (host === 'giphy.com' || host === 'media.giphy.com' || /^media\d*\.giphy\.com$/.test(host) || host === 'i.giphy.com') {
+    let id = ''
+    if (host === 'giphy.com' && parts[0] === 'gifs' && parts.length >= 2) id = (parts[parts.length - 1] ?? '').split('-').pop() ?? ''
+    else if (host === 'giphy.com' && parts[0] === 'embed' && parts.length >= 2) id = parts[1] ?? ''
+    else if (host === 'giphy.com' && parts[0] === 'stickers' && parts.length >= 2) id = (parts[parts.length - 1] ?? '').split('-').pop() ?? ''
+    else if (parts[0] === 'media' && parts.length >= 2) {
+      // media.giphy.com/media/ID/giphy.gif, and the newer media/v1.xxx/ID/giphy.gif
+      id = /^v\d/.test(parts[1] ?? '') ? (parts[2] ?? '') : (parts[1] ?? '')
+    } else if (host === 'i.giphy.com' && parts.length === 1) id = (parts[0] ?? '').replace(/\.\w+$/, '')
+    if (!GIPHY_ID.test(id)) return null
+    return { kind: 'image', src: `https://media.giphy.com/media/${id}/giphy.gif` }
+  }
+  return null
+}
+
 /** Sorts a link into what can be shown inline. Anything unrecognised is a plain link. */
 export function classifyLink(href: string): LinkInfo {
   let u: URL
@@ -64,8 +102,11 @@ export function classifyLink(href: string): LinkInfo {
   if (yt) return { kind: 'youtube', id: yt }
   const st = streamableId(u)
   if (st) return { kind: 'streamable', id: st }
+  const hosted = hostedFile(u)
+  if (hosted) return hosted
   if (IMAGE_EXT.test(u.pathname)) return { kind: 'image' }
   if (VIDEO_EXT.test(u.pathname)) return { kind: 'video' }
+  if (AUDIO_EXT.test(u.pathname)) return { kind: 'audio' }
   return { kind: 'link' }
 }
 

@@ -1,4 +1,4 @@
-module irc-webclient/server
+module gestalt/server
 
 go 1.27.2
 

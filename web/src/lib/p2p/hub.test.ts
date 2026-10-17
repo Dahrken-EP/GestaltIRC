@@ -133,6 +133,6 @@ describe('P2pHub', () => {
   })
 
   it('uses the tag name other clients can recognise', () => {
-    expect(SIGNAL_TAG).toBe('+irc-webclient/p2p')
+    expect(SIGNAL_TAG).toBe('+gestalt/p2p')
   })
 })

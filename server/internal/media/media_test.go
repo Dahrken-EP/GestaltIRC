@@ -17,25 +17,31 @@ import (
 	"testing"
 	"time"
 
-	"irc-webclient/server/internal/accounts"
-	"irc-webclient/server/internal/api"
-	"irc-webclient/server/internal/config"
-	"irc-webclient/server/internal/netguard"
-	"irc-webclient/server/internal/secret"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/accounts"
+	"gestalt/server/internal/api"
+	"gestalt/server/internal/config"
+	"gestalt/server/internal/netguard"
+	"gestalt/server/internal/secret"
+	"gestalt/server/internal/store"
 )
 
 // Real file headers, enough for sniffing.
 var (
-	png  = append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0}, 64)...)
-	jpeg = append([]byte("\xff\xd8\xff\xe0\x00\x10JFIF"), bytes.Repeat([]byte{0}, 64)...)
-	gif  = append([]byte("GIF89a"), bytes.Repeat([]byte{0}, 64)...)
-	webp = append([]byte("RIFF\x24\x00\x00\x00WEBPVP8 "), bytes.Repeat([]byte{0}, 40)...)
-	avif = append([]byte("\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1"), bytes.Repeat([]byte{0}, 40)...)
-	mp4  = append([]byte("\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"), bytes.Repeat([]byte{0}, 100)...)
-	webm = append([]byte("\x1a\x45\xdf\xa3"), bytes.Repeat([]byte{0}, 100)...)
-	svg  = []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
-	page = []byte("<!doctype html><html><body><script>alert(1)</script></body></html>")
+	png    = append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0}, 64)...)
+	jpeg   = append([]byte("\xff\xd8\xff\xe0\x00\x10JFIF"), bytes.Repeat([]byte{0}, 64)...)
+	gif    = append([]byte("GIF89a"), bytes.Repeat([]byte{0}, 64)...)
+	webp   = append([]byte("RIFF\x24\x00\x00\x00WEBPVP8 "), bytes.Repeat([]byte{0}, 40)...)
+	avif   = append([]byte("\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1"), bytes.Repeat([]byte{0}, 40)...)
+	mp4    = append([]byte("\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"), bytes.Repeat([]byte{0}, 100)...)
+	webm   = append([]byte("\x1a\x45\xdf\xa3"), bytes.Repeat([]byte{0}, 100)...)
+	mp3    = append([]byte("ID3\x03\x00\x00\x00\x00\x00\x00"), bytes.Repeat([]byte{0}, 60)...)
+	mp3raw = append([]byte("\xff\xfb\x90\x00"), bytes.Repeat([]byte{0}, 60)...)
+	ogg    = append([]byte("OggS\x00\x02"), bytes.Repeat([]byte{0}, 60)...)
+	wav    = append([]byte("RIFF\x24\x00\x00\x00WAVEfmt "), bytes.Repeat([]byte{0}, 60)...)
+	flac   = append([]byte("fLaC\x00\x00\x00\x22"), bytes.Repeat([]byte{0}, 60)...)
+	m4a    = append([]byte("\x00\x00\x00\x20ftypM4A \x00\x00\x00\x00M4A mp42isom"), bytes.Repeat([]byte{0}, 60)...)
+	svg    = []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
+	page   = []byte("<!doctype html><html><body><script>alert(1)</script></body></html>")
 )
 
 type env struct {
@@ -442,6 +448,8 @@ func TestSniff(t *testing.T) {
 		head []byte
 		want kind
 	}{{"png", png, kindImage}, {"avif", avif, kindImage}, {"mp4", mp4, kindVideo}, {"webm", webm, kindVideo},
+		{"mp3 with a tag", mp3, kindAudio}, {"mp3 stream", mp3raw, kindAudio}, {"ogg", ogg, kindAudio}, {"wav", wav, kindAudio},
+		{"flac", flac, kindAudio}, {"m4a", m4a, kindAudio},
 		{"html", page, kindNone}, {"svg", svg, kindNone}, {"empty", nil, kindNone}, {"short", []byte{0x89}, kindNone}}
 	for _, c := range cases {
 		if _, got := sniff(c.head); got != c.want {
@@ -580,5 +588,53 @@ func TestAVideoMayOutlastThePictureTimeLimit(t *testing.T) {
 	_, body = e.get(t, mediaURL(img.URL+"/stream"), nil)
 	if len(body) >= len(png)+sniffLen+1000 {
 		t.Errorf("a slow picture arrived whole (%d bytes)", len(body))
+	}
+}
+
+func TestServesSoundsWithTheTypeThatWasSniffed(t *testing.T) {
+	e := newEnv(t, true)
+	for name, c := range map[string]struct {
+		body []byte
+		want string
+	}{"a.mp3": {mp3, "audio/mpeg"}, "b.ogg": {ogg, "audio/ogg"}, "c.wav": {wav, "audio/wav"}, "d.flac": {flac, "audio/flac"}, "e.m4a": {m4a, "audio/mp4"}, "f.mp3": {mp3raw, "audio/mpeg"}} {
+		o := origin(t, "application/octet-stream", c.body) // what the other site says is not believed
+		resp, body := e.get(t, mediaURL(o.URL+"/"+name), nil)
+		if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != c.want || !bytes.Equal(body, c.body) {
+			t.Errorf("%s: status %d, type %q, %d bytes", name, resp.StatusCode, resp.Header.Get("Content-Type"), len(body))
+		}
+		if resp.Header.Get("Accept-Ranges") != "bytes" || resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+			t.Errorf("%s: headers %v", name, resp.Header)
+		}
+	}
+}
+
+func TestASoundCanBeSoughtThrough(t *testing.T) {
+	e := newEnv(t, true)
+	content := append(append([]byte(nil), mp3...), bytes.Repeat([]byte("x"), 5000)...)
+	o := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, "song.mp3", time.Time{}, bytes.NewReader(content))
+	}))
+	defer o.Close()
+	resp, body := e.get(t, mediaURL(o.URL+"/song.mp3"), map[string]string{"Range": "bytes=3000-"})
+	if resp.StatusCode != http.StatusPartialContent || len(body) != len(content)-3000 || resp.Header.Get("Content-Type") != "audio/mpeg" {
+		t.Errorf("seek: status %d, %d bytes, type %q", resp.StatusCode, len(body), resp.Header.Get("Content-Type"))
+	}
+}
+
+func TestSomethingCalledASoundButNotOneIsRefused(t *testing.T) {
+	e := newEnv(t, true)
+	o := origin(t, "audio/mpeg", page)
+	resp, body := e.get(t, mediaURL(o.URL+"/song.mp3"), nil)
+	if resp.StatusCode != http.StatusUnsupportedMediaType || bytes.Contains(body, []byte("alert")) {
+		t.Errorf("status %d, body %q", resp.StatusCode, body)
+	}
+}
+
+func TestASoundIsHeldToItsOwnSizeLimit(t *testing.T) {
+	e := newEnv(t, true)
+	e.proxy.MaxAudio = 100
+	o := origin(t, "audio/mpeg", append(append([]byte(nil), mp3...), bytes.Repeat([]byte("x"), 500)...))
+	if resp, _ := e.get(t, mediaURL(o.URL+"/long.mp3"), nil); resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("an over-long sound: status %d, want 413", resp.StatusCode)
 	}
 }

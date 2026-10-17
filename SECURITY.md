@@ -1,0 +1,92 @@
+# Security
+
+Gestalt is a self-hosted bouncer. The person running it is trusted; the people with accounts on it are
+trusted less; the IRC networks, the people on them, and every web page a link points to are not trusted at
+all. This page says what is defended against, how, what was tested, and what is not covered.
+
+It is written by the people who built it, not by an outside auditor. Treat it as a description of intent
+and of the tests that exist, not as a guarantee.
+
+## Reporting a problem
+
+Please do not open a public issue for a vulnerability. Use GitHub's "Report a vulnerability" on the
+repository's Security tab (private advisories), or contact the maintainer privately. Say what you found, how
+to reproduce it, and which version. There is no bug bounty and no promised response time; it is a small project.
+
+## What is defended against
+
+**A stranger on the internet.** Passwords are hashed with argon2id, at most four hashes run at once so a burst
+of logins cannot use all the memory. Failed logins, over HTTP or WebSocket, are rate limited per client address
+and per account. The session cookie is `HttpOnly` and `SameSite=Strict`, and `Secure` when the request arrived
+over TLS. State-changing requests must be JSON and must not come from another origin. A password change ends
+every session. A client may send a burst of 30 lines and then 10 a second; past that, lines are dropped and a
+client that keeps on is disconnected.
+
+**A malicious IRC network or user.** Message text is never inserted into the page as HTML; only `http` and
+`https` links are clickable. Every response carries a content security policy (`default-src 'self'`, no inline
+script, no objects, `frame-ancestors 'none'`), `nosniff`, `no-referrer`, frame denial, and a permissions
+policy. Over HTTPS, `Strict-Transport-Security` is sent once `sts_duration` is set.
+
+**A malicious link.** The browser never contacts the linked site. The bouncer fetches pictures, video, sound
+and page previews itself, refuses private, loopback and link-local addresses (checked at connect time, on the
+address actually dialled, so a redirect or a DNS answer that changes cannot get past it), judges the type by the
+bytes and not the server's header, refuses SVG and HTML as media, caps sizes, time and concurrency, and
+forwards no cookies. A YouTube or Streamable player loads only after you press play, in a sandboxed frame.
+
+**An account that wants to reach the bouncer's own network.** The network editor lets any account make the
+bouncer open connections. A network added or moved there may reach public addresses only (checked again at
+connect time) and ports from 1024, and an account may have ten. Fields sent to the IRC network cannot hold
+line breaks. The operator can lift the address rule with `allow_private_networks`. Networks added with the
+command line are the operator's choice and are not restricted.
+
+**A plugin.** A plugin is code the user pasted in, so the question is what it can do, not whether it is
+trustworthy. It runs in a Web Worker in a frame with `sandbox="allow-scripts"` (no origin, so no cookies,
+storage or access to the page) under a policy that forbids every connection, and the worker removes the network
+and cross-window functions, from the prototype chain too, before the plugin's code runs. Everything it asks for
+goes through the page, which checks the permissions the user granted, limits how fast it may act, and stops it
+if it stops answering or keeps trying what it was refused. It cannot replace built-in commands, send commands
+that act on the browser (`/voice`, `/call`, `/direct`, `/clear`), take over `/ns`, `/identify`, `/oper` and the
+other commands people type passwords into, or write in a direct chat. The browser test has a plugin try each
+route out that the authors could think of, and checks the test website never hears from it.
+
+**The IRC network or the bouncer reading private conversations.** They can read channel and query traffic, as
+they always can. Direct chat, file transfer and voice go browser to browser over WebRTC; the IRC network
+carries only the offer and answer. Both sides are shown a code made from both certificate fingerprints, which
+they can compare over another channel to know nobody in between changed the connection. TURN credentials given
+to browsers expire; the shared secret never leaves the bouncer.
+
+**Someone who gets the database.** Network passwords, SASL passwords, client certificates and the push key are
+encrypted with AES-256-GCM under `secret.key`. The database and its side files are readable only by the
+bouncer's user. Keep the key and the database in separate backups if you can, since together they read
+everything. Account passwords are hashed, not encrypted.
+
+## What was tested
+
+- Go unit tests with the race detector, covering rate limits, headers, the media proxy (including SSRF cases
+  and files that lie about their type), the network editor (including another account's networks, private
+  addresses, line breaks, secrets never being returned), cookie sessions and SASL.
+- Integration tests against a real Ergo server.
+- Browser tests in real Chromium: cookies not readable from script, no password stored in the page, the
+  plugin sandbox, the media proxy ("the browser never contacted the linked site"), the network editor.
+- `govulncheck`, `npm audit` and CodeQL run in CI. They have not run yet, because the workflows were written
+  where they could not be run; expect to read their first results.
+
+Problems found by this testing during phase 8, and fixed: a plugin could reach the network through a function
+recovered from the prototype chain; a plugin's `send` could issue commands that act on the browser; a plugin
+that never answered was not stopped; the sample proxy configuration added a frame-denial header that would
+have stopped plugins from running; ten simultaneous logins pushed memory to about 200 MB.
+
+## What is not covered
+
+- **A plugin you install can read your channels and speak as you if you grant it `events` and `send`.** The
+  sandbox stops it leaving the browser and touching the page; it does not stop it misusing what you gave it.
+  Install code you trust.
+- **A compromised browser, or a browser extension, can do anything the page can.**
+- **The operator can read everything.** The bouncer holds the keys and sees plaintext IRC.
+- **Denial of service is limited, not prevented.** There are rate limits and size caps, but a determined
+  flood from many addresses is for the reverse proxy and firewall.
+- **Direct chat and voice reveal each person's network address to the other**, as WebRTC does, once they
+  accept; a TURN server hides it at the cost of relaying. Nothing is connected before acceptance.
+- **Untested:** the Docker image and Compose files, the GitHub workflows, a real TURN server across real
+  NATs, Firefox and Safari, hundreds of simultaneous users, and long-running behaviour.
+- **No outside review.** Nobody independent has audited this.

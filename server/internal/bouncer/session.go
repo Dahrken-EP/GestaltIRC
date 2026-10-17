@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"irc-webclient/server/internal/api"
-	"irc-webclient/server/internal/irc"
-	"irc-webclient/server/internal/ratelimit"
+	"gestalt/server/internal/api"
+	"gestalt/server/internal/irc"
+	"gestalt/server/internal/ratelimit"
 )
 
 // maxQueue bounds the lines queued for one client. A client that falls this far

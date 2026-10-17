@@ -8,7 +8,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"irc-webclient/server/internal/irc"
+	"gestalt/server/internal/irc"
 )
 
 // attach logs in as matt with the given caps and waits until the bouncer has

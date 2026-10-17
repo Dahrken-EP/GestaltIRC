@@ -17,9 +17,9 @@ import (
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 
-	"irc-webclient/server/internal/netguard"
-	"irc-webclient/server/internal/secret"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/netguard"
+	"gestalt/server/internal/secret"
+	"gestalt/server/internal/store"
 )
 
 const (

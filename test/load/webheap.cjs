@@ -47,19 +47,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   let complete = 0
   for (let i = 1; i <= 10; i++) {
     await page.click(`button.name:has-text("#load${i}")`)
-    for (let step = 0; step < 60; step++) {
-      const more = page.getByRole('button', { name: 'Load older messages' })
-      if ((await more.count()) === 0) break
-      await more.click()
-      await sleep(250)
+    // The list draws only the rows near the view, so the button for older messages exists only while
+    // the view is at the top. Scrolling there asks for the next page; keep going until the start.
+    for (let step = 0; step < 120; step++) {
+      if ((await page.locator('.older:has-text("Start of history")').count()) > 0) break
+      await page.evaluate(() => {
+        const vl = document.querySelector('.vl')
+        vl.scrollTop = 0
+        vl.dispatchEvent(new Event('scroll'))
+      })
+      await sleep(200)
     }
-    await page.getByText('Start of history').waitFor({ timeout: 5000 }).catch(() => {})
-    // Scrolling to the very top shows the oldest message.
-    await page.evaluate(() => {
-      const el = document.querySelector('[role=log], .scroller, .virtual') || document.querySelector('.messages *')
-      void el
-      for (const e of document.querySelectorAll('*')) if (e.scrollHeight > e.clientHeight + 50 && getComputedStyle(e).overflowY !== 'visible') e.scrollTop = 0
-    })
     await sleep(300)
     if ((await page.locator(`.line:has-text("message 0 in #load${i}:")`).count()) > 0) complete++
   }

@@ -8,8 +8,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"irc-webclient/server/internal/secret"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/secret"
+	"gestalt/server/internal/store"
 )
 
 func newService(t *testing.T) *Service {

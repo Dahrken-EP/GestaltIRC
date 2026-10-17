@@ -20,15 +20,15 @@ import (
 	"syscall"
 	"time"
 
-	"irc-webclient/server/internal/accounts"
-	"irc-webclient/server/internal/auth"
-	"irc-webclient/server/internal/bouncer"
-	"irc-webclient/server/internal/config"
-	"irc-webclient/server/internal/ice"
-	"irc-webclient/server/internal/media"
-	"irc-webclient/server/internal/push"
-	"irc-webclient/server/internal/secret"
-	"irc-webclient/server/internal/store"
+	"gestalt/server/internal/accounts"
+	"gestalt/server/internal/auth"
+	"gestalt/server/internal/bouncer"
+	"gestalt/server/internal/config"
+	"gestalt/server/internal/ice"
+	"gestalt/server/internal/media"
+	"gestalt/server/internal/push"
+	"gestalt/server/internal/secret"
+	"gestalt/server/internal/store"
 )
 
 const usage = `usage: bouncer [-config FILE] COMMAND [ARGS]
