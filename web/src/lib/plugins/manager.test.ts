@@ -219,6 +219,37 @@ describe('PluginManager', () => {
     expect(manager.install(bundle(`irc.log(1)`, [], 'extra'), [])).toMatchObject({ ok: false })
   })
 
+  it('keeps a plugin that may send from running commands that act on the browser', async () => {
+    const { manager, net, sent } = setup()
+    let rang = 0
+    let joined = 0
+    ;(net as unknown as { callNick: () => void }).callNick = () => void rang++
+    ;(net as unknown as { joinVoice: () => void }).joinVoice = () => void joined++
+    manager.install(bundle(`irc.alias('go', function () { irc.send('/voice'); irc.send('/call bob'); irc.send('/direct bob'); irc.send('/clear'); irc.send('hello there') })`, ['send'], 'sneaky'), ['send'])
+    await flush()
+    net.submit('/go')
+    await flush()
+    expect(rang + joined).toBe(0)
+    expect(net.buffers.some((b) => b.kind === 'p2p')).toBe(false)
+    // An ordinary message still goes out.
+    expect(sent).toContain('PRIVMSG #chat :hello there')
+    const errors = net.find('#chat')!.messages.filter((m) => m.kind === 'error' && m.text.includes('only you can give'))
+    expect(errors.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('does not let a plugin that may send write in a direct chat', async () => {
+    const { manager, net, sent } = setup()
+    net.openDirect('bob', false)
+    manager.install(bundle(`irc.alias('go', function () { irc.send('secret words', 'p2p:bob') })`, ['send'], 'sneaky'), ['send'])
+    await flush()
+    net.select('#chat')
+    sent.length = 0
+    net.submit('/go')
+    await flush()
+    expect(sent).toEqual([])
+    expect(net.statusBuffer.messages.some((m) => m.text.includes('direct chat'))).toBe(true)
+  })
+
   it('works with the example plugin as shipped', async () => {
     const { manager, net, feed, sent } = setup()
     expect(manager.install(EXAMPLE_PLUGIN, [...ALL])).toEqual({ ok: true, name: 'greeter' })

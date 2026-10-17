@@ -45,6 +45,17 @@ export interface HostOptions {
   startMs?: number
 }
 
+/**
+ * Commands people type secrets into, which the client sends on as ordinary lines. An alias would
+ * receive what follows the command, so a plugin may not take these names. (Commands the client
+ * handles itself are already refused by the isBuiltin check.)
+ */
+export const SERVICE_COMMANDS: ReadonlySet<string> = new Set([
+  'ns', 'nickserv', 'cs', 'chanserv', 'ms', 'memoserv', 'hs', 'hostserv', 'bs', 'botserv', 'os', 'operserv', 'as',
+  'identify', 'id', 'oper', 'pass', 'password', 'sasl', 'authenticate', 'register', 'squery', 'service', 'login',
+  'auth', 'sudo', 'su', 'kline', 'gline', 'zline', 'die', 'restart', 'rehash',
+])
+
 const ACTION_BURST = 10
 const ACTION_PER_SECOND = 5
 const MAX_DROPS = 100
@@ -206,6 +217,10 @@ export class PluginInstance {
     if (this.aliases.has(name)) return
     if (this.services.isBuiltin(name)) {
       this.services.log(`/${name} is a built-in command, so the plugin cannot take it over`, 'error')
+      return
+    }
+    if (SERVICE_COMMANDS.has(name)) {
+      this.services.log(`/${name} is used to type passwords or run the network's services, so a plugin cannot take it over`, 'error')
       return
     }
     if (this.aliases.size >= MAX_ALIASES) return

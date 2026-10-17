@@ -68,6 +68,9 @@ const TYPING_SEND_GAP_MS = 3000
 /** Numerics sent while logging in or reading the MOTD. They go to the status buffer. */
 const STATUS_NUMERICS: ReadonlySet<number> = new Set([900, 901, 903, 251, 252, 253, 254, 255, 265, 266, 372, 375, 376, 422])
 
+/** Commands a plugin's `send` may not run, because they act on this browser rather than on the network. */
+const PLUGIN_FORBIDDEN: ReadonlySet<string> = new Set(['voice', 'call', 'direct', 'open', 'clear', 'help'])
+
 /** Rings from people we have no call with yet, at most this many unanswered at once. */
 const MAX_RINGING = 8
 
@@ -691,11 +694,22 @@ export class NetworkState {
         }
       }
       if (buf.kind === 'p2p') {
+        // A direct chat is between two people. A plugin may not speak in it, any more than it may listen.
+        if (!aliases) {
+          this.local(this.statusBuffer, 'error', 'A plugin tried to write in a direct chat, which plugins may not do.')
+          continue
+        }
         this.submitDirect(buf, line)
         continue
       }
       const inBuffer = buf.kind !== 'status'
       for (const a of parseInput(line, { target: inBuffer ? buf.name : '', inBuffer, chanTypes: this.chanTypes })) {
+        // "Send as me" from a plugin means lines for the network. Commands that act on this browser (the
+        // microphone, a connection to someone, the window list) are the user's to give.
+        if (!aliases && PLUGIN_FORBIDDEN.has(a.type)) {
+          this.local(buf, 'error', 'A plugin tried a command that only you can give, so it was not run.')
+          continue
+        }
         this.run(a, buf, replyTo)
       }
     }

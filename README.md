@@ -115,6 +115,9 @@ review what it asks for before it is installed. "Use the example" fills in a sma
   policy forbids every connection, and the worker deletes `fetch`, `WebSocket`, `Worker`, `importScripts`
   and the like before the plugin's code runs. The browser test has a plugin try to get out by each route
   it can think of, and checks that the test website never hears from it.
+- **What `send` cannot do.** Lines a plugin sends go to the network. Commands that act on your browser
+  (`/voice`, `/call`, `/direct`, `/clear`) are refused, and a plugin cannot write in a direct chat. A plugin
+  cannot take over `/ns`, `/identify`, `/oper` and the other commands people type passwords into.
 - **Limits.** A few actions a second, 20 aliases, 20 timers (at least 100 ms apart), 100 KB of stored data.
   A plugin that does not answer for five seconds, or crashes, or floods, is stopped and switched off, with
   the reason shown. Direct chats are not passed to plugins.

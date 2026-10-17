@@ -213,6 +213,14 @@ describe('aliases', () => {
     expect(r.logs.some(([t]) => t.includes('built-in'))).toBe(true)
   })
 
+  it.each(['ns', 'nickserv', 'identify', 'oper', 'pass', 'cs'])('cannot take /%s, where passwords are typed', (name) => {
+    const r = running([])
+    r.say({ t: 'alias', name })
+    expect(r.inst.aliasNames).toEqual([])
+    expect(r.inst.runAlias(name, ['hunter2'], 'hunter2', { network: '', buffer: '', nick: '' })).toBe(false)
+    expect(r.logs.some(([t]) => t.includes('passwords'))).toBe(true)
+  })
+
   it('has a limit', () => {
     const r = running([])
     for (let i = 0; i < 30; i++) r.say({ t: 'alias', name: 'a' + i })
