@@ -869,7 +869,7 @@ async function send(page, text) {
 
   // Errors from trying to reach a push service that does not exist in this sandbox are expected.
   // The browser logs every failed fetch itself, so the 401 after logout appears as a console error, and
-  // so does the 400 for the network editor test that adds a name already in use, and the 502 for the imgur and giphy pictures, which the sandbox has no way to reach.
+  // so does the 400 for the network editor test that adds a name already in use, and the imgur and giphy pictures the test stops itself (ERR_FAILED, and a 429 from the bouncer's own limit when the list draws the same rows again and asks again).
   const unexpected = errors.filter((e) => !/push service|Registration failed|AbortError|subscribe|status of 400|status of 401|status of 415|status of 429|ERR_FAILED|incognito/i.test(e))
   ok(unexpected.length === 0, 'no unexpected console or page errors' + (unexpected.length ? ': ' + unexpected.join(' | ') : ''))
 
