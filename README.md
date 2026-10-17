@@ -62,6 +62,38 @@ Phase 5 adds pictures, video, link previews and direct chat:
   shared with coturn. `deploy/` has a Docker Compose setup with the bouncer, Caddy for HTTPS
   and coturn. See `deploy/README.md` for what was and was not run.
 
+Phase 6 adds voice, in two forms (see DESIGN.md section 6):
+
+- **A channel's voice room.** Press "Join voice" in a channel (or `/voice`; `/voice leave` to go).
+  The room is the channel itself: you announce yourself with a client-only tag, the people
+  already there answer you, and every pair of people holds one WebRTC connection (a mesh), so
+  there is no media server. The person whose nick sorts first makes the offer, so nobody offers
+  twice. Up to 10 people (`MAX_VOICE` in `web/src/lib/voice/presence.ts`); an eleventh is told the
+  room is full and does not join, and members also refuse their own unexpected offers beyond the
+  cap. You see who is speaking, can mute, set each person's volume, and compare a safety code
+  with each person. Audio keeps playing while you look at another window.
+- **A private call between two people.** `/call NICK`, or the "Call" button in a query, rings
+  them in their direct chat window. Their microphone stays off and nothing connects until they
+  answer; yours is asked for only when you place the call.
+
+Both use the same signalling and ICE servers as direct chat, and you can be in only one voice
+chat at a time. The microphone needs HTTPS (or localhost). Echo cancellation and noise
+suppression are the browser's own; use headphones.
+
+Voice limits to know about: who is "in voice" is only what your browser has seen since it
+connected (people who joined before that appear when you join, because they answer you), so the
+list on an idle channel is a hint. Someone who changes nick while in a room keeps their place under the new name; a call or direct chat
+keeps working but still goes by the nick it started with, so its goodbye may not reach the other side.
+Only people who are in the channel can be in its voice room. The same account in two browsers should not join the same room
+from both. A room is a mesh, so 10 people means nine connections each. `VOICE_LOAD=1 test/e2e/run.sh`
+puts ten real Chromium instances in one room (all connected to all, in about 10 s, each playing
+nine streams) and checks an eleventh is turned away. On the 4-core test machine, with a fake
+microphone and no hardware audio, the eleven browsers together used about 3.4 cores while
+everyone was connected (about a third of a core per participant) and each page's JavaScript
+heap stayed near 6 MB. That is a rough guide only: a phone with ten people is the case to try
+before relying on it. Push-to-talk and
+listen-only joining are not built.
+
 Things to know about direct chat: the same account logged in on two devices gets the request
 on both, and the first to accept connects. Chat is not kept after the page closes. A browser
 tab that sleeps (a phone with the screen off) may drop the connection.

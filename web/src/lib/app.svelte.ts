@@ -9,6 +9,12 @@ import { pageUnfocused, showNotification } from './notify'
 import { disablePush } from './push'
 import { settings } from './settings.svelte'
 
+/** Asks for the microphone. The browser's own echo cancellation and noise suppression do the clean-up. */
+function microphone(): Promise<MediaStream> {
+  if (!navigator.mediaDevices?.getUserMedia) return Promise.reject(new Error('the microphone needs a secure (https) page'))
+  return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+}
+
 export type Phase = 'loading' | 'login' | 'ready'
 
 class App {
@@ -118,6 +124,7 @@ class App {
     const net = new NetworkState(id, login, info.nick, (line) => conn.send(line), {
       onMention: (n, buf, msg) => this.notifyMention(n, buf, msg),
       iceServers: () => api.ice().then((r) => r.iceServers),
+      getMedia: microphone,
     })
     conn = new Connection({
       url: websocketUrl(),

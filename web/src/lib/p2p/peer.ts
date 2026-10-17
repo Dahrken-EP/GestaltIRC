@@ -20,6 +20,10 @@ export interface PeerOptions {
   /** The other side opened a data channel. */
   onChannel?: (ch: DataChannelLike) => void
   onState?: (s: PeerState) => void
+  /** Our microphone, sent to the other side. Not owned by this session: closing it leaves the tracks running. */
+  stream?: MediaStream
+  /** The other side's audio arrived. */
+  onTrack?: (stream: MediaStream) => void
   /** Makes the connection. Tests pass a fake. */
   createConnection?: (config: RTCConfiguration) => RTCPeerConnection
   /** How long to wait for candidates before sending what has been found. */
@@ -38,6 +42,7 @@ export class PeerSession {
     const make = opts.createConnection ?? ((c) => new RTCPeerConnection(c))
     this.pc = make({ iceServers: opts.iceServers })
     this.pc.ondatachannel = (ev) => opts.onChannel?.(asLike(ev.channel))
+    this.pc.ontrack = (ev) => opts.onTrack?.(ev.streams[0] ?? new MediaStream([ev.track]))
     this.pc.onconnectionstatechange = () => {
       switch (this.pc.connectionState) {
         case 'connected':
@@ -72,10 +77,18 @@ export class PeerSession {
     return asLike(this.pc.createDataChannel(label, { ordered: true }))
   }
 
-  /** Starts a connection: creates the chat channel and an offer, and sends it. */
-  async start(firstChannel: string): Promise<DataChannelLike> {
+  private addLocalTracks(): void {
+    for (const track of this.opts.stream?.getTracks() ?? []) this.pc.addTrack(track, this.opts.stream!)
+  }
+
+  /**
+   * Starts a connection: creates the first channel (if one is named) and an offer, and
+   * sends it. A connection that only carries audio names no channel.
+   */
+  async start(firstChannel?: string): Promise<DataChannelLike | null> {
     this.set('connecting')
-    const ch = this.openChannel(firstChannel)
+    const ch = firstChannel ? this.openChannel(firstChannel) : null
+    this.addLocalTracks()
     const offer = await this.pc.createOffer()
     await this.pc.setLocalDescription(offer)
     await this.gathered()
@@ -88,6 +101,7 @@ export class PeerSession {
     this.set('connecting')
     this.remoteFp = fingerprintOf(sdp)
     await this.pc.setRemoteDescription({ type: 'offer', sdp })
+    this.addLocalTracks()
     const answer = await this.pc.createAnswer()
     await this.pc.setLocalDescription(answer)
     await this.gathered()

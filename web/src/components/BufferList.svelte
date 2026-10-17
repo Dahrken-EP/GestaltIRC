@@ -42,7 +42,7 @@
     <h3>Channels</h3>
     <ul>
       {#each channels as b (b.key)}
-        {@render item(b.key, b.name, b.unread, b.mentionCount, !b.joined, true, b)}
+        {@render item(b.key, (b.voice?.state === 'active' ? '🎙 ' : '') + b.name, b.unread, b.mentionCount, !b.joined, true, b)}
       {/each}
     </ul>
   {/if}
@@ -59,7 +59,7 @@
     <h3>Direct</h3>
     <ul>
       {#each directs as b (b.key)}
-        {@render item(b.key, '⚡ ' + b.name, b.unread, b.mentionCount, b.p2p?.state !== 'connected', true, b)}
+        {@render item(b.key, (b.call?.state === 'connected' ? '📞 ' : '⚡ ') + b.name, b.unread, b.mentionCount, b.p2p?.state !== 'connected' && b.call?.state !== 'connected', true, b)}
       {/each}
     </ul>
   {/if}

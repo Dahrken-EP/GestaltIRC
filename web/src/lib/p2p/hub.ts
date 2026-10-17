@@ -4,7 +4,7 @@
 // network's flood protection is not tripped.
 
 import { DirectChat, type ChatLine, type ChatView } from './chat'
-import { encodeSignal, newSessionId, SIGNAL_TAG, SignalAssembler } from './signal'
+import { encodeSignal, newSessionId, SIGNAL_TAG, SignalAssembler, type Signal } from './signal'
 
 export interface HubOptions {
   /** Sends one tag-carrying line to the network. */
@@ -14,6 +14,8 @@ export interface HubOptions {
   onView: (peer: string, view: ChatView) => void
   onLine: (peer: string, line: ChatLine) => void
   createConnection?: (config: RTCConfiguration) => RTCPeerConnection
+  /** A signalling message for something other than chat, such as voice. */
+  onSignal?: (from: string, sid: string, payload: Signal) => void
   /** Milliseconds between signalling lines. */
   pace?: number
   /** Most people who may have an unanswered request to us at once. */
@@ -86,7 +88,11 @@ export class P2pHub {
   receive(from: string, value: string): void {
     if (from.toLowerCase() === this.o.ownNick().toLowerCase()) return
     const done = this.assembler.add(from, value)
-    if (!done || done.payload.k !== 'chat') return
+    if (!done) return
+    if (done.payload.k !== 'chat') {
+      this.o.onSignal?.(from, done.sid, done.payload)
+      return
+    }
     const key = from.toLowerCase()
     if (!this.chats.has(key)) {
       // A stranger's first offer. Only so many unanswered ones are kept.
@@ -119,6 +125,11 @@ export class P2pHub {
     for (const send of this.queue.splice(0)) send()
     this.chats.clear()
     this.views.clear()
+  }
+
+  /** Sends a signalling message to `peer`, paced like the chat's own. */
+  send(peer: string, sid: string, payload: object): void {
+    this.sendSignal(peer, sid, payload)
   }
 
   private sendSignal(peer: string, sid: string, payload: object): void {

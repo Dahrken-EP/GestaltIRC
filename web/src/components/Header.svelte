@@ -27,6 +27,9 @@
   <span class="grow"></span>
   {#if buf.kind === 'query'}
     <button class="btn" title="Chat straight between your browser and theirs" onclick={() => net.openDirect(buf.name)}>⚡ Direct chat</button>
+    {#if net.canVoice}
+      <button class="btn" title="Ring them for a private voice call" onclick={() => net.callNick(buf.name)}>📞 Call</button>
+    {/if}
   {/if}
   {#if buf.kind === 'channel'}
     <button
