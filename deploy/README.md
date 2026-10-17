@@ -42,6 +42,11 @@ It is a separate container for two reasons. The bouncer image is distroless, wit
 And only this job needs to write the configuration, so the bouncer and coturn mount it read-only: a compromised
 bouncer cannot rewrite its own settings or the TURN secret it shares with coturn.
 
+## In a Firecracker microVM
+
+To run the bouncer in a Firecracker microVM instead of a container, with a read-only root disk and no shell, see
+[firecracker/README.md](firecracker/README.md).
+
 ## Behind Traefik
 
 If Traefik already terminates HTTPS on the server, leave Caddy out and let Traefik find the bouncer through labels:
