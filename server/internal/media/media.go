@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -278,6 +279,8 @@ func (p *Proxy) handleMedia(w http.ResponseWriter, r *http.Request, user store.U
 		if resp.StatusCode == http.StatusNotFound {
 			status = http.StatusNotFound
 		}
+		// The host only, so the log says which site refuses without recording what anyone looked at.
+		log.Printf("media: %s answered %d", target.Hostname(), resp.StatusCode)
 		api.WriteError(w, status, fmt.Sprintf("the other site answered %d", resp.StatusCode))
 		return
 	}
@@ -292,6 +295,7 @@ func (p *Proxy) handleMedia(w http.ResponseWriter, r *http.Request, user store.U
 		contentType, k = sniff(head)
 	}
 	if k == kindNone {
+		log.Printf("media: %s sent something that is not a picture, video or sound (%s)", target.Hostname(), contentType)
 		api.WriteError(w, http.StatusUnsupportedMediaType, "that is not an image or a video this proxy serves")
 		return
 	}

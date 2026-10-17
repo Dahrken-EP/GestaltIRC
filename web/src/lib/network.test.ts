@@ -162,6 +162,34 @@ describe('NetworkState', () => {
     expect(buf.historyExhausted).toBe(true)
   })
 
+  it('asks which conversations have history once connected, then for the latest of each private one', () => {
+    const { net, feed, sent } = setup()
+    net.setCaps(new Set(['chathistory', 'batch']))
+    feed(':b 001 me :Welcome')
+    expect(sent.at(-1)).toMatch(/^CHATHISTORY TARGETS timestamp=\S+ timestamp=\S+ 25$/)
+    net.handleBatch({
+      type: 'draft/chathistory-targets',
+      params: [],
+      messages: [
+        parse(':bouncer CHATHISTORY TARGETS #chan 2030-01-01T00:00:00.000Z')!,
+        parse(':bouncer CHATHISTORY TARGETS alice 2030-01-02T00:00:00.000Z')!,
+        parse(':bouncer CHATHISTORY TARGETS bob 2030-01-03T00:00:00.000Z')!,
+      ],
+    })
+    expect(sent.slice(-2)).toEqual(['CHATHISTORY LATEST alice * 100', 'CHATHISTORY LATEST bob * 100'])
+    // What comes back opens the conversation, with the time it was said, and does not notify.
+    net.handleBatch({ type: 'chathistory', params: ['alice'], messages: [parse('@time=2030-01-02T00:00:00.000Z :alice!u@h PRIVMSG me :hi')!] })
+    const alice = net.find('alice')!
+    expect(alice.kind).toBe('query')
+    expect(alice.messages.map((m) => m.text)).toEqual(['hi'])
+  })
+
+  it('does not ask without chathistory', () => {
+    const { feed, sent } = setup()
+    feed(':b 001 me :Welcome')
+    expect(sent.some((l) => l.startsWith('CHATHISTORY'))).toBe(false)
+  })
+
   it('submits text and commands from the active buffer', () => {
     const { net, feed, sent } = setup()
     feed(':me!u@h JOIN #a')

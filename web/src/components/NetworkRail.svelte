@@ -1,5 +1,7 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
+  import { install } from '../lib/install.svelte'
+  import { layout } from '../lib/layout.svelte'
 
   const initials = (label: string) => label.slice(0, 2).toUpperCase()
 
@@ -49,6 +51,12 @@
   {/each}
   <button class="net plus" title="Add a server" aria-label="Add a server" onclick={() => app.openServerDialog()}>+</button>
   <span class="grow"></span>
+  {#if install.kind === 'prompt'}
+    <button class="net add" title="Install Gestalt as an app" aria-label="Install Gestalt as an app" data-testid="install" onclick={() => void install.install()}>⬇</button>
+  {:else if install.kind === 'ios'}
+    <button class="net add" title="Install Gestalt as an app" aria-label="Install Gestalt as an app" data-testid="install" onclick={() => (app.showSettings = true)}>⬇</button>
+  {/if}
+  <button class="net add" title="Hide the server bar" aria-label="Hide the server bar" data-testid="hide-rail" onclick={() => layout.setRailHidden(true)}>‹</button>
   <button class="net add" title="Settings" aria-label="Settings" onclick={() => (app.showSettings = true)}>⚙</button>
 </nav>
 

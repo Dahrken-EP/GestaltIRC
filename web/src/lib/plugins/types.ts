@@ -9,8 +9,9 @@
  *   output   write lines into a window, visible only to the user
  *   timers   run a function after a delay or repeatedly
  *   storage  keep a small amount of data between runs
+ *   dialogs  open a window that shows a message or asks a question (the page draws it, and says whose it is)
  */
-export const PERMISSIONS = ['events', 'send', 'output', 'timers', 'storage'] as const
+export const PERMISSIONS = ['events', 'send', 'output', 'timers', 'storage', 'dialogs'] as const
 export type Permission = (typeof PERMISSIONS)[number]
 
 export const PERMISSION_TEXT: Record<Permission, string> = {
@@ -19,6 +20,7 @@ export const PERMISSION_TEXT: Record<Permission, string> = {
   output: 'Show lines in your windows',
   timers: 'Run things on a timer',
   storage: 'Keep a small amount of data',
+  dialogs: 'Open windows that show you a message or ask you a question',
 }
 
 /** The events a plugin can listen for. Names are upper-case, as in the design. */
@@ -68,3 +70,24 @@ export const MAX_TIMERS = 20
 export const MIN_TIMER_MS = 100
 /** Longest line of text a plugin may print or send. */
 export const MAX_TEXT_CHARS = 1_000
+
+/** What a plugin's dialog may hold. */
+export const MAX_DIALOG_VALUE_CHARS = 200
+/** Dialogs a plugin may have waiting at once. */
+export const MAX_PENDING_DIALOGS = 3
+
+export type DialogKind = 'alert' | 'confirm' | 'prompt'
+
+/** A window a plugin wants the page to open. */
+export interface DialogRequest {
+  kind: DialogKind
+  text: string
+  /** The starting text of a prompt. */
+  value: string
+}
+
+/** What the user did: `ok` is false for Cancel (and for a window that was closed because the plugin stopped). */
+export interface DialogAnswer {
+  ok: boolean
+  value: string
+}

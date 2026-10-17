@@ -164,3 +164,58 @@ describe('worker bootstrap', () => {
     expect(w.listeners.length).toBe(0)
   })
 })
+
+describe('worker bootstrap dialogs', () => {
+  const dialog = (w: ReturnType<typeof worker>) => w.out.find((m) => (m as { t: string }).t === 'dialog') as { id: number; kind: string; text: string; value: string }
+
+  it('refuses without the permission, and says so', () => {
+    const w = worker({ source: `try { irc.alert('x') } catch (e) { irc.log(e.message) }` })
+    expect(logs(w.out)[0]).toMatch(/dialogs/)
+    expect(types(w.out)).not.toContain('dialog')
+  })
+
+  it('asks the page for each kind of window and settles the promise with the answer', async () => {
+    const w = worker({
+      granted: ['dialogs'],
+      source: `
+        irc.alias('go', async function () {
+          await irc.alert('hello');
+          const yes = await irc.confirm('sure?');
+          const name = await irc.prompt('name?', 'bob');
+          irc.log(String(yes) + ' ' + String(name));
+        });`,
+    })
+    w.to({ t: 'alias', name: 'go', args: [], raw: '', ctx: { network: '', buffer: '', nick: '' } })
+    let d = dialog(w)
+    expect(d).toMatchObject({ kind: 'alert', text: 'hello' })
+    w.to({ t: 'answer', id: d.id, ok: true, value: '' })
+    await new Promise((r) => setTimeout(r, 0))
+    d = w.out.filter((m) => (m as { t: string }).t === 'dialog')[1] as typeof d
+    expect(d).toMatchObject({ kind: 'confirm', text: 'sure?' })
+    w.to({ t: 'answer', id: d.id, ok: true, value: '' })
+    await new Promise((r) => setTimeout(r, 0))
+    d = w.out.filter((m) => (m as { t: string }).t === 'dialog')[2] as typeof d
+    expect(d).toMatchObject({ kind: 'prompt', text: 'name?', value: 'bob' })
+    w.to({ t: 'answer', id: d.id, ok: true, value: 'alice' })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(logs(w.out)).toEqual(['true alice'])
+  })
+
+  it('gives false for a declined confirm and null for a cancelled prompt', async () => {
+    const w = worker({
+      granted: ['dialogs'],
+      source: `irc.alias('go', async function () { irc.log(String(await irc.confirm('a')), String(await irc.prompt('b'))) });`,
+    })
+    w.to({ t: 'alias', name: 'go', args: [], raw: '', ctx: { network: '', buffer: '', nick: '' } })
+    w.to({ t: 'answer', id: dialog(w).id, ok: false, value: '' })
+    await new Promise((r) => setTimeout(r, 0))
+    w.to({ t: 'answer', id: (w.out.filter((m) => (m as { t: string }).t === 'dialog')[1] as { id: number }).id, ok: false, value: '' })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(logs(w.out)).toEqual(['false null'])
+  })
+
+  it('ignores an answer to a window it did not open', () => {
+    const w = worker({ granted: ['dialogs'], source: `irc.log('up')` })
+    expect(() => w.to({ t: 'answer', id: 99, ok: true, value: 'x' })).not.toThrow()
+  })
+})

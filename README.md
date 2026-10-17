@@ -89,9 +89,11 @@ The bouncer's own port, 8080, is never published. Already have Traefik, nginx or
 - **Commands.** Every IRC command works, and `/help` lists the built-in ones. Anything the client does not recognise is sent to the server as it is.
 - **Nick colours.** Automatic per nick, with overrides in Settings. Your nick and any highlight words colour the line and raise a badge.
 - **Themes.** Light, dark or follow the system, in compact or comfortable density.
-- **Emoji picker.** The smiley beside the input, or Ctrl+E: a search box, recently used, and groups.
+- **Emoji.** The smiley beside the input, or Ctrl+E, opens all 1,900 emoji with search, recently used and groups. Type `:tada:` and it becomes 🎉 when you close the colon; type `:tad` and a list offers matches (Up/Down to choose, Tab or Enter to take one, Esc to dismiss). Times like 10:30 and links are left alone. The emoji list is a separate download, fetched the first time it is needed.
 - **Keyboard.** Ctrl+K jumps to any channel on any network. Ctrl+F searches the messages of the channel you are in (`from:nick` narrows it to one person). Alt+A goes to the next unread, mentions first. Alt+Up and Alt+Down switch buffers. Tab completes nicks, channels and commands, and Up and Down recall what you typed. A button takes you back to the latest message when you have scrolled up.
-- **Installable.** A browser can install it as an app on a phone or desktop. It needs the bouncer, so there is no offline mode.
+- **Installable.** A browser can install it as an app on a phone or desktop. When the browser offers it, a ⬇ button appears at the bottom of the server bar, and Settings, General says how to do it in a browser that does not (Safari, for one). It needs the bouncer, so there is no offline mode.
+- **Your layout.** Drag the bars between the columns to resize the channel list and the member list (arrow keys work too, and double-click puts a bar back). The server bar can be hidden with the ‹ button, leaving a thin strip to bring it back. Widths are remembered per browser.
+- **Right-click a name** in the member list (or press the menu key on it) for message, direct chat, voice call, who is, client version and copy, and, if you are an operator, give or take operator and voice, kick, and ban and kick.
 
 ## Plugins
 A plugin is one JSON document, pasted into **Settings, Plugins**; it is kept on your account and follows you to other browsers. You see what it asks for and can untick any permission before it is installed. This one adds `/greet`:
@@ -102,7 +104,7 @@ A plugin is one JSON document, pasted into **Settings, Plugins**; it is kept on 
       "source": "irc.alias('greet', function (args, ctx) { irc.send('Hello, ' + (args[0] || ctx.nick) + '!', ctx.buffer) })"
     }
 
-Plugins can react to messages, joins, parts, kicks, nick changes, topics and more, add their own commands, use timers and keep data. They cannot reach the network or the page, and cannot send commands that act on your browser or ask for passwords. **[Plugin guide and API reference](docs/PLUGINS.md)**
+Plugins can react to messages, joins, parts, kicks, nick changes, topics and more, add their own commands, use timers, keep data and, if you allow it, ask you questions in a window the client draws and labels. They cannot reach the network or the page, and cannot send commands that act on your browser or ask for passwords. **[Plugin guide and API reference](docs/PLUGINS.md)**
 
 ## Use other IRC clients
 The bouncer speaks IRCv3 to clients, and the web client is one of them. An IRCv3 client such as HexChat or WeeChat can log in as `user/network` with SASL PLAIN, get the history it missed, and share one network connection with the web client. This is tested with the project's own scripted clients and a real Ergo server, not yet with those programs themselves. **[docs/SERVER.md](docs/SERVER.md)** lists the capabilities offered and the ones deliberately not.
@@ -112,10 +114,7 @@ IRC text is never rendered as HTML, and the page has a strict content security p
 
 ## Roadmap
 Not built yet:
-- **Touch actions.** Reply, react and delete appear when you hover a message, so a touch screen cannot reach them yet.
-- **Voice extras.** Push-to-talk and joining a room listen-only.
-- **Plugin dialogs, and plugins that run on the server.**
-- **Typing `:smile:` shortcodes** in the emoji picker, and a fuller emoji set than the ~380 in it.
+- **Plugins that run on the server.**
 - **Multiline messages** (`draft/multiline`).
 - **DCC.** Direct chat and file transfer use WebRTC, so people on other IRC clients cannot be sent files this way.
 

@@ -32,6 +32,11 @@ async function openBuffer(page, name) {
   await page.click(`button.name:has-text("${name}")`)
 }
 
+/** The direct-chat or call window with `name`, which has a ⚡ or 📞 in front, not the ordinary conversation with the same nick. */
+async function openDirect(page, name) {
+  await page.click(`button.name:has-text("⚡ ${name}"), button.name:has-text("📞 ${name}")`)
+}
+
 async function send(page, text) {
   await page.fill('#msg-input', text)
   await page.press('#msg-input', 'Enter')
@@ -51,6 +56,12 @@ async function send(page, text) {
   // Granted for this address in particular: a grant for every origin is not honoured by newer Chromium.
   await ctxA.grantPermissions(['notifications'], { origin: BASE })
   const page = await ctxA.newPage()
+  // A video this browser cannot decode becomes a note a moment after it appears, so a poll can miss the element.
+  await page.addInitScript(() => {
+    new MutationObserver(() => {
+      if (document.querySelector('video[src^="/api/media?u="]')) window.__sawVideo = true
+    }).observe(document, { subtree: true, childList: true, attributes: true })
+  })
   const errors = []
   const requested = []
   page.on('request', (r) => requested.push(r.url()))
@@ -139,7 +150,7 @@ async function send(page, text) {
   ok(true, 'an HTML page pretending to be a picture is refused, and the link is offered instead')
 
   await send(page, '!msg video: ' + SITE + '/clip.mp4')
-  await page.waitForSelector('video[src^="/api/media?u="]', { timeout: 20000 })
+  await page.waitForFunction(() => window.__sawVideo === true, null, { timeout: 20000 })
   ok(true, 'a video link becomes a video element on the bouncer address')
 
   await send(page, '!msg tune: ' + SITE + '/tune.mp3')
@@ -173,6 +184,7 @@ async function send(page, text) {
   ok((await page.locator('iframe').count()) === 0, 'a YouTube link shows a card and loads nothing from YouTube yet')
   await page.click('.card.video button:has-text("Play here")')
   await page.waitForSelector('iframe[src^="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"]')
+  ok((await page.locator('iframe').first().getAttribute('referrerpolicy')) === 'strict-origin-when-cross-origin', 'the player is sent this site\'s address, which YouTube needs to play (error 153 otherwise)')
   ok(true, 'pressing play loads the privacy-friendly player')
 
   // The point of the proxy: the browser asked only the bouncer, and YouTube only after the click.
@@ -355,6 +367,70 @@ async function send(page, text) {
   await page.fill('#msg-input', '')
   await page.keyboard.press('Escape')
 
+  // :shortcode: completion and expansion
+  await page.focus('#msg-input')
+  await page.keyboard.type('party :tad')
+  await page.waitForSelector('[data-testid=emoji-suggest]')
+  await page.keyboard.press('Tab')
+  ok((await page.inputValue('#msg-input')) === 'party 🎉', 'Tab accepts the :shortcode: suggestion')
+  await page.keyboard.type(' and :+1:')
+  ok(/^party 🎉 and 👍/u.test(await page.inputValue('#msg-input')), 'a closing colon turns :name: into the emoji')
+  await page.fill('#msg-input', '')
+  await page.keyboard.type('time 10:30 :smi')
+  await page.waitForSelector('[data-testid=emoji-suggest]')
+  await page.keyboard.press('Escape')
+  await page.waitForSelector('[data-testid=emoji-suggest]', { state: 'detached' })
+  ok((await page.inputValue('#msg-input')) === 'time 10:30 :smi', 'Escape dismisses the suggestions and keeps the text')
+  await page.fill('#msg-input', '')
+
+  // The user list: a right-click opens a menu of what can be done with someone.
+  await openBuffer(page, '#chat')
+  await page.locator('.members button', { hasText: 'carol' }).click({ button: 'right' })
+  await page.getByTestId('user-menu').waitFor()
+  const menuItems = await page.getByTestId('user-menu').getByRole('menuitem').allInnerTexts()
+  ok(['Message', 'Direct chat', 'Voice call', 'Who is…', 'Copy nick'].every((t) => menuItems.includes(t)), 'right-clicking someone opens a menu with message, direct chat, call and whois: ' + menuItems.join('|'))
+  ok(!menuItems.includes('Kick'), 'moderation commands are offered only to someone who can moderate')
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Escape')
+  await page.getByTestId('user-menu').waitFor({ state: 'detached' })
+  ok(true, 'Escape closes the user menu')
+
+  // Columns: the bars between them move with the keys and the mouse, and the server bar can be hidden.
+  const navBar = page.getByRole('separator', { name: 'Resize the channel list' })
+  const navWidth = async () => (await page.locator('.nav').boundingBox()).width
+  const navBefore = await navWidth()
+  await navBar.focus()
+  await page.keyboard.press('ArrowRight')
+  ok(Math.abs((await navWidth()) - (navBefore + 16)) <= 1, 'the arrow keys widen the channel list')
+  const bar = await navBar.boundingBox()
+  await page.mouse.move(bar.x + 2, bar.y + 100)
+  await page.mouse.down()
+  await page.mouse.move(bar.x + 62, bar.y + 100, { steps: 4 })
+  await page.mouse.up()
+  ok((await navWidth()) > navBefore + 60, 'dragging the bar resizes the channel list')
+  await navBar.dblclick()
+  ok(Math.abs((await navWidth()) - 220) <= 1, 'double-clicking the bar puts the width back')
+  const memberBar = page.getByRole('separator', { name: 'Resize the member list' })
+  const memberWidth = async () => (await page.locator('div.members').boundingBox()).width
+  const mBefore = await memberWidth()
+  await memberBar.focus()
+  await page.keyboard.press('ArrowLeft')
+  ok((await memberWidth()) > mBefore + 10, 'the member list can be resized too')
+  await memberBar.dblclick()
+  await page.getByTestId('hide-rail').click()
+  await page.getByRole('button', { name: 'Show the server bar' }).waitFor()
+  ok((await page.locator('nav.rail').count()) === 0, 'the server bar can be hidden')
+  await page.getByRole('button', { name: 'Show the server bar' }).click()
+  await page.locator('nav.rail').waitFor()
+  ok(true, 'and brought back from the strip at the edge')
+
+  // Installing the page as an app: the settings say how, whether or not this browser offers a prompt.
+  await openSettingsTab(page, 'General')
+  await page.waitForSelector('[data-testid=install-none], [data-testid=install-app], [data-testid=install-ios]')
+  ok(true, 'the settings explain how to install the page as an app')
+  await page.keyboard.press('Escape')
+  await page.waitForSelector('.card[role=dialog]', { state: 'detached' })
+
   // ---------- I. mobile layout ----------
   await page.setViewportSize({ width: 390, height: 760 })
   await page.waitForTimeout(200)
@@ -364,6 +440,37 @@ async function send(page, text) {
   await openBuffer(page, '#chat')
   await page.waitForTimeout(300)
   await page.screenshot({ path: OUT + '/desktop.png' })
+
+  // ---------- I2. a touch screen has no hover ----------
+  const ctxT = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
+  const phone = await ctxT.newPage()
+  phone.on('pageerror', (e) => errors.push('phone pageerror: ' + e.message))
+  await phone.goto(URL)
+  await login(phone, 'kim')
+  await phone.waitForSelector('.status.connected', { state: 'attached' })
+  await phone.click('button[aria-label="Show channels"]')
+  await phone.click('button.name:has-text("#chat")')
+  await phone.waitForSelector('.line:has-text("welcome to #chat")')
+  ok((await phone.evaluate(() => matchMedia('(hover: none)').matches)), 'the phone cannot hover')
+  ok((await phone.locator('.line:has-text("welcome to #chat") .tools').isVisible()) === false, 'a message shows no buttons until it is tapped')
+  await phone.locator('.line:has-text("welcome to #chat") .text').tap()
+  await phone.locator('.line:has-text("welcome to #chat") .tools').waitFor({ state: 'visible' })
+  const box = await phone.locator('.line:has-text("welcome to #chat") .tools button').first().boundingBox()
+  ok(box && box.height >= 34 && box.width >= 38, 'the buttons are big enough for a finger: ' + JSON.stringify(box && { w: Math.round(box.width), h: Math.round(box.height) }))
+  // (the middle of this one is a link, which opens the link instead, so the time is tapped)
+  await phone.locator('.line:has-text("not bold") .time').tap()
+  await phone.locator('.line:has-text("not bold") .tools').waitFor({ state: 'visible' })
+  ok((await phone.locator('.line:has-text("welcome to #chat") .tools').isVisible()) === false, 'tapping another message moves the buttons to it')
+  await phone.getByRole('button', { name: /Reply to alice/ }).tap()
+  await phone.waitForSelector('.replying:has-text("Replying to alice")')
+  ok((await phone.locator('.tools:visible').count()) === 0, 'choosing an action closes the buttons')
+  await phone.locator('.line:has-text("welcome to #chat") .text').tap()
+  await phone.getByRole('button', { name: 'Add reaction' }).tap()
+  await phone.getByRole('button', { name: 'React with 👍' }).tap()
+  await phone.waitForSelector('.chip:has-text("👍 1")')
+  ok(true, 'a reaction can be added by touch')
+  ok(!(await phone.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)), 'the buttons do not push the page wider than the phone')
+  await ctxT.close()
 
   // ---------- J. service worker handles a push ----------
   const swUrl = await page.evaluate(async () => {
@@ -440,6 +547,14 @@ async function send(page, text) {
   await openBuffer(page, 'jane')
   await page.waitForSelector('.line:not(.self):has-text("got it, plain reply")')
   ok(true, 'the reply comes back through the network to the sender')
+  // Reloading the page keeps the conversation, the lines in it unchanged and not repeated.
+  if (!process.env.NORELOAD) await page.reload()
+  await page.waitForSelector('.status.connected')
+  await page.waitForSelector('button.name:has-text("jane")', { timeout: 8000 })
+  await openBuffer(page, 'jane')
+  await page.waitForSelector('.line:has-text("got it, plain reply")')
+  const keptLines = await page.locator('.line:has-text("hello by plain irc"), .line:has-text("got it, plain reply")').count()
+  ok(keptLines === 2, 'after a reload the private conversation is still there, each line once (' + keptLines + ')')
   await page.locator('.list').getByRole('button', { name: 'Close jane' }).click()
   await jane.locator('.list').getByRole('button', { name: 'Close matt' }).click()
   await openBuffer(page, 'Status')
@@ -607,9 +722,53 @@ async function send(page, text) {
   await speakingOf(vJane.p, 'matt').first().waitFor({ timeout: 10000 })
   ok(true, 'unmuting makes them heard again')
 
+  // Push to talk: the microphone is open only while the button (or Ctrl+Space) is held.
+  await page.getByLabel('Push to talk').check()
+  await page.getByTestId('talk').waitFor()
+  ok((await page.getByRole('button', { name: 'Mute' }).count()) === 0, 'push to talk replaces the mute button')
+  await sleep(1500)
+  let heard = false
+  for (let i = 0; i < 25; i++) {
+    if ((await speakingOf(vJane.p, 'matt').count()) > 0) heard = true
+    await sleep(150)
+  }
+  ok(!heard, 'with push to talk on and nothing held, nobody hears you')
+  await page.getByTestId('talk').hover()
+  await page.mouse.down()
+  await speakingOf(vJane.p, 'matt').first().waitFor({ timeout: 15000 })
+  ok((await page.getByTestId('talk').getAttribute('aria-pressed')) === 'true', 'holding the button opens the microphone, and they hear you')
+  await page.mouse.up()
+  await vJane.p.waitForFunction(() => ![...document.querySelectorAll('[data-testid=voice-person]')].some((l) => l.textContent.includes('matt') && l.classList.contains('speaking')), null, { timeout: 8000 })
+  ok(true, 'letting go closes it again')
+  await page.keyboard.down('Control')
+  await page.keyboard.down('Space')
+  await speakingOf(vJane.p, 'matt').first().waitFor({ timeout: 15000 })
+  await page.keyboard.up('Space')
+  await page.keyboard.up('Control')
+  ok(true, 'Ctrl+Space does the same from the keyboard')
+  await page.getByLabel('Push to talk').uncheck()
+  await page.getByRole('button', { name: 'Mute' }).waitFor()
+
   await vKim.p.getByRole('button', { name: 'Leave voice' }).click()
   await page.waitForFunction(() => document.querySelectorAll('[data-testid=voice-person]').length === 1, null, { timeout: 10000 })
   ok(true, 'someone leaving disappears from the others')
+
+  // Listening only: hear the room, never be heard, and no microphone prompt.
+  await vKim.p.getByRole('button', { name: /Listen only/ }).click()
+  await vKim.p.getByText('You hear the room but cannot be heard').waitFor()
+  await vKim.p.waitForFunction(() => document.querySelectorAll('[data-testid=voice-person][data-state=connected]').length === 2, null, { timeout: 25000 })
+  ok(true, 'a listener connects to everyone in the room')
+  ok((await vKim.p.getByRole('button', { name: 'Mute' }).count()) === 0 && (await vKim.p.getByTestId('talk').count()) === 0, 'a listener has nothing to mute and nothing to hold')
+  await speakingOf(vKim.p, 'jane').first().waitFor({ timeout: 15000 })
+  ok(true, 'the listener hears the others')
+  let overheard = false
+  for (let i = 0; i < 25; i++) {
+    if ((await speakingOf(page, 'kim').count()) > 0 || (await speakingOf(vJane.p, 'kim').count()) > 0) overheard = true
+    await sleep(150)
+  }
+  ok(!overheard, 'and is never heard')
+  await vKim.p.getByRole('button', { name: 'Leave voice' }).click()
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid=voice-person]').length === 1, null, { timeout: 10000 })
 
   // The room is limited to one voice chat: a private call cannot start while in it.
   await send(page, '/call jane')
@@ -626,7 +785,7 @@ async function send(page, text) {
   await openBuffer(page, 'jane')
   await page.getByRole('button', { name: /Call/ }).first().click()
   await page.waitForSelector('.panel .call[data-state=calling]')
-  await openBuffer(vJane.p, 'matt')
+  await openDirect(vJane.p, 'matt')
   await vJane.p.waitForSelector('.panel .call[data-state=incoming]')
   ok((await vJane.p.locator('.panel .call').innerText()).includes('microphone stays off'), 'the callee is told the microphone is off until answering')
   ok((await vJane.p.locator('.panel .status[data-state=connected]').count()) === 0, 'ringing does not connect anything')
@@ -768,6 +927,47 @@ async function send(page, text) {
   await sleep(2000)
   ok((await page.locator('.line:has-text("[ticker] tick")').count()) === ticksThen, 'turning a plugin off stops its timers')
 
+  // Windows a plugin opens: the page draws them and names the plugin, takes no answer in the first moment, and a
+  // plugin can be stopped from one.
+  await openSettings()
+  await installPlugin(bundle('asker', ['dialogs', 'output'], `
+    irc.alias('ask', async function () {
+      const name = await irc.prompt('Who are you?', 'anon');
+      irc.print('hello ' + name);
+    });
+    irc.alias('nag', function () { irc.confirm('Delete everything?'); });`))
+  await statusOf('asker').filter({ hasText: 'running' }).waitFor()
+  await closeSettings()
+  await send(page, '/ask')
+  await page.getByTestId('plugin-dialog').waitFor()
+  const said = await page.getByTestId('plugin-dialog').innerText()
+  ok(said.includes('asker') && said.includes('Who are you?'), 'a plugin window says which plugin it is from: ' + said.replace(/\s+/g, ' '))
+  await page.keyboard.press('Enter')
+  ok(await page.getByTestId('plugin-dialog').isVisible(), 'a window takes no answer in its first moment')
+  await sleep(700)
+  ok((await page.getByRole('alertdialog').getByLabel('Your answer').inputValue()) === 'anon', 'a prompt starts with the plugin\'s suggestion')
+  await page.getByRole('alertdialog').getByLabel('Your answer').fill('zed')
+  await page.keyboard.press('Enter')
+  await page.getByTestId('plugin-dialog').waitFor({ state: 'detached' })
+  await page.waitForSelector('.line:has-text("[asker] hello zed")')
+  ok(true, 'the answer goes back to the plugin')
+  await send(page, '/ask')
+  await page.getByTestId('plugin-dialog').waitFor()
+  await sleep(700)
+  await page.keyboard.press('Escape')
+  await page.getByTestId('plugin-dialog').waitFor({ state: 'detached' })
+  await page.waitForSelector('.line:has-text("[asker] hello null")')
+  ok(true, 'Escape cancels a prompt, and the plugin hears null')
+  await send(page, '/nag')
+  await page.getByTestId('plugin-dialog').waitFor()
+  await page.getByRole('button', { name: 'Stop this plugin' }).click()
+  await page.getByTestId('plugin-dialog').waitFor({ state: 'detached' })
+  await openSettings()
+  await statusOf('asker').filter({ hasText: 'stopped' }).waitFor()
+  ok(true, 'a plugin can be stopped from its window')
+  await entry('asker').getByRole('button', { name: 'Remove' }).click()
+  await closeSettings()
+
   // The sandbox. The probe asks for nothing and then tries to get out.
   await openSettings()
   const probeSource = `
@@ -827,6 +1027,17 @@ async function send(page, text) {
   await dialog.waitFor()
   const headings = await dialog.locator('h3').allTextContents()
   ok(headings.join('|') === 'Server|Who you are|Logging in|After connecting|For this server', 'server details come first, then what is for this server: ' + headings.join(' / '))
+  // A half-filled form is not thrown away by a stray click or key: only the X (or Cancel) closes the dialog.
+  await dialog.getByLabel('Name', { exact: true }).fill('half-done')
+  await page.mouse.click(640, 740)
+  await page.keyboard.press('Escape')
+  await sleep(300)
+  ok((await dialog.isVisible()) && (await dialog.getByLabel('Name', { exact: true }).inputValue()) === 'half-done', 'clicking outside the server dialog, or pressing Escape, leaves it open with what was typed')
+  await dialog.getByRole('button', { name: 'Close' }).click()
+  await dialog.waitFor({ state: 'detached' })
+  ok(true, 'the X closes it')
+  await page.getByRole('button', { name: 'Add a server' }).click()
+  await dialog.waitFor()
   // Accepting an untrusted certificate is offered with TLS, and comes with its warning.
   ok((await dialog.getByLabel(/Accept an untrusted certificate/).count()) === 1 && (await page.getByTestId('untrusted-warning').count()) === 0, 'accepting an untrusted certificate is an option, and off')
   await dialog.getByLabel(/Accept an untrusted certificate/).check()

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gestalt/server/internal/accounts"
@@ -140,5 +141,38 @@ func TestPerformLine(t *testing.T) {
 		if got := performLine(in); got != want {
 			t.Errorf("performLine(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestConnectHints(t *testing.T) {
+	tlsSpec := accounts.NetworkSpec{Host: "irc.example.org", Port: 6667, TLS: true}
+	plainSpec := accounts.NetworkSpec{Host: "irc.example.org", Port: 6697}
+	for _, c := range []struct {
+		err  string
+		spec accounts.NetworkSpec
+		want string // a phrase the hint must contain; "" means no hint
+	}{
+		{"tls: first record does not look like a TLS handshake", tlsSpec, "turn off"},
+		{"tls: failed to verify certificate: x509: certificate signed by unknown authority", tlsSpec, "Accept an untrusted certificate"},
+		{"tls: failed to verify certificate: x509: certificate is valid for a.example, not irc.example.org", tlsSpec, "different name"},
+		{"x509: certificate has expired or is not yet valid", tlsSpec, ""},
+		{"dial tcp 1.2.3.4:6667: connect: connection refused", tlsSpec, "6667"},
+		{"dial tcp: lookup irc.example.org: no such host", tlsSpec, "look up"},
+		{"EOF", plainSpec, "needs TLS"},
+		{"something else entirely", tlsSpec, ""},
+	} {
+		got := connectHint(errors.New(c.err), c.spec)
+		if c.want == "" && c.err != "x509: certificate has expired or is not yet valid" {
+			if got != "" {
+				t.Errorf("%q: unexpected hint %q", c.err, got)
+			}
+			continue
+		}
+		if c.want != "" && !strings.Contains(got, c.want) {
+			t.Errorf("%q: hint %q does not contain %q", c.err, got, c.want)
+		}
+	}
+	if got := connectHint(errors.New("x509: certificate has expired or is not yet valid"), tlsSpec); !strings.Contains(got, "expired") {
+		t.Errorf("expired certificate hint = %q", got)
 	}
 }

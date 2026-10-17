@@ -240,3 +240,57 @@ func TestDeleteNetworkKeepsOthers(t *testing.T) {
 		t.Fatalf("second delete: %v", err)
 	}
 }
+
+func TestTargetsListBuffersByNewestMessage(t *testing.T) {
+	s := openTemp(t)
+	appendLines(t, s, netA, "#zeta", 3, 100, 1000) // newest 1002
+	appendLines(t, s, netA, "alice", 1, 100, 2000) // newest 2000
+	appendLines(t, s, netA, "bob", 1, 100, 3000)   // newest 3000
+	appendLines(t, s, netB, "carol", 1, 100, 2500) // another network
+
+	got, err := s.Targets(netA, 0, 10_000, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []TargetTime{{"#zeta", 1002}, {"alice", 2000}, {"bob", 3000}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Targets = %+v, want %+v", got, want)
+	}
+	// Bounded in time, and keeping the newest when there are more than the limit.
+	got, _ = s.Targets(netA, 1500, 2500, 10)
+	if !reflect.DeepEqual(got, []TargetTime{{"alice", 2000}}) {
+		t.Fatalf("bounded Targets = %+v", got)
+	}
+	got, _ = s.Targets(netA, 0, 10_000, 2)
+	if !reflect.DeepEqual(got, []TargetTime{{"alice", 2000}, {"bob", 3000}}) {
+		t.Fatalf("limited Targets = %+v", got)
+	}
+}
+
+func TestMigrationGivesStoredLinesATime(t *testing.T) {
+	s := openTemp(t)
+	rec := func(target, line string, ms int64) {
+		if err := s.Append(Record{Network: netA, Target: target, TimeMS: ms, RecvMS: ms, Line: line}, 100); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec("a", ":x!u@h PRIVMSG a :plain", 1_700_000_000_123)
+	rec("b", "@draft/reply=1;foo=bar :x!u@h PRIVMSG b :tagged", 1_700_000_001_000)
+	rec("c", "@time=2023-11-14T22:13:20.000Z :x!u@h PRIVMSG c :already", 1_700_000_000_000)
+	rec("d", "@x/time=5 :x!u@h PRIVMSG d :other tag", 1_700_000_002_000)
+	if _, err := s.db.Exec(migrations[len(migrations)-1]); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"a": "@time=2023-11-14T22:13:20.123Z :x!u@h PRIVMSG a :plain",
+		"b": "@time=2023-11-14T22:13:21.000Z;draft/reply=1;foo=bar :x!u@h PRIVMSG b :tagged",
+		"c": "@time=2023-11-14T22:13:20.000Z :x!u@h PRIVMSG c :already",
+		"d": "@time=2023-11-14T22:13:22.000Z;x/time=5 :x!u@h PRIVMSG d :other tag",
+	}
+	for target, line := range want {
+		got, err := s.Latest(netA, target, 1)
+		if err != nil || len(got) != 1 || got[0] != line {
+			t.Errorf("%s: got %q (%v), want %q", target, got, err, line)
+		}
+	}
+}

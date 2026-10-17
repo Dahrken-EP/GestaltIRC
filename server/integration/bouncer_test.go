@@ -274,6 +274,23 @@ func TestBouncerReplayAndChatHistory(t *testing.T) {
 		t.Fatalf("CHATHISTORY bodies = %v, want %v", privmsgBodies(hist), want)
 	}
 
+	// TARGETS lists the buffers with history, so a client can fetch conversations it has no other way to know of.
+	if err := c.conn.WriteLine("CHATHISTORY TARGETS timestamp=2000-01-01T00:00:00.000Z timestamp=2100-01-01T00:00:00.000Z 10"); err != nil {
+		t.Fatal(err)
+	}
+	targets := collectUntil(t, c.msgs, "TARGETS batch", func(m *irc.Message) bool {
+		return m.Command == "BATCH" && strings.HasPrefix(m.Param(0), "-")
+	})
+	var names []string
+	for _, m := range targets {
+		if m.Command == "CHATHISTORY" && m.Param(0) == "TARGETS" {
+			names = append(names, m.Param(1))
+		}
+	}
+	if want := []string{strings.ToLower(testChannel)}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("TARGETS = %v, want %v", names, want)
+	}
+
 	// The client's own message comes back through echo-message.
 	if err := c.conn.WriteLine("PRIVMSG " + testChannel + " :from-matt"); err != nil {
 		t.Fatal(err)

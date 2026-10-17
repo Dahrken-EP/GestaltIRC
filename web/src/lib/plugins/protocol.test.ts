@@ -15,6 +15,14 @@ describe('parseFromWorker', () => {
     expect(parseFromWorker({ t: 'clear', id: 1 })).toEqual({ t: 'clear', id: 1 })
     expect(parseFromWorker({ t: 'store', key: 'k', value: '"v"' })).toEqual({ t: 'store', key: 'k', value: '"v"' })
     expect(parseFromWorker({ t: 'store', key: 'k', value: null })).toEqual({ t: 'store', key: 'k', value: null })
+    expect(parseFromWorker({ t: 'dialog', id: 1, kind: 'prompt', text: 'Name?', value: 'x' })).toEqual({ t: 'dialog', id: 1, kind: 'prompt', text: 'Name?', value: 'x' })
+  })
+
+  it('refuses a dialog that is not exactly the shape', () => {
+    const ok = { t: 'dialog', id: 1, kind: 'alert', text: 'hi', value: '' }
+    expect(parseFromWorker(ok)).not.toBeNull()
+    for (const bad of [{ id: 0 }, { id: 1.5 }, { kind: 'html' }, { kind: 'confirm', text: 5 }, { text: 'x'.repeat(1001) }, { value: 'x'.repeat(201) }, { value: null }])
+      expect(parseFromWorker({ ...ok, ...bad }), JSON.stringify(bad)).toBeNull()
   })
 
   it('drops fields that are not part of the message', () => {

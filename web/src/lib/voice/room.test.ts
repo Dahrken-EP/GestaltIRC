@@ -84,9 +84,9 @@ afterEach(() => {
 })
 const settle = (ms = 300) => vi.advanceTimersByTimeAsync(ms)
 
-async function joinAll(l: ReturnType<typeof lounge>, nicks: string[]) {
+async function joinAll(l: ReturnType<typeof lounge>, nicks: string[], opts: Parameters<VoiceRoom['join']>[0] = {}) {
   for (const n of nicks) {
-    void l.get(n).room.join()
+    void l.get(n).room.join(opts)
     await settle()
   }
   await settle(500)
@@ -388,3 +388,136 @@ describe('VoiceRoom', () => {
     expect(mic.tracks[0]!.stopped).toBe(true)
   })
 })
+
+describe('VoiceRoom listening only', () => {
+  it('joins without asking for the microphone, and hears the room', async () => {
+    const l = lounge(['alice', 'bob'])
+    // alice talks as usual; bob only listens.
+    void l.get('alice').room.join()
+    await settle()
+    void l.get('bob').room.join({ listenOnly: true })
+    await settle(600)
+    const a = l.get('alice').view
+    const b = l.get('bob').view
+    expect(b.state).toBe('active')
+    expect(b.listenOnly).toBe(true)
+    expect(b.participants.map((p) => [p.nick, p.state])).toEqual([['alice', 'connected']])
+    expect(b.participants[0]!.stream).not.toBeNull() // bob hears alice
+    expect(a.participants.map((p) => [p.nick, p.state])).toEqual([['bob', 'connected']])
+    expect(a.participants[0]!.stream).toBeNull() // alice has nothing from bob
+  })
+
+  it('never asks for the microphone, and its connection carries no track of its own', async () => {
+    let asked = 0
+    const l = lounge(['alice', 'bob'])
+    const bob = l.get('bob')
+    // Count the microphone requests of the listener by wrapping its room's option.
+    ;(bob.room as unknown as { o: { getMedia: () => Promise<unknown> } }).o.getMedia = async () => (asked++, bob.mic)
+    void l.get('alice').room.join()
+    await settle()
+    void bob.room.join({ listenOnly: true })
+    await settle(600)
+    expect(asked).toBe(0)
+    // Bob made the offer or answered; either way his connection to alice carries no track of his, and asks to receive.
+    const pc = l.net.created.at(-1)!
+    expect(pc.tracks).toHaveLength(0)
+    if (pc.transceivers.length) expect(pc.transceivers[0]).toEqual({ kind: 'audio', direction: 'recvonly' })
+  })
+
+  it('has no muting or push to talk to do', async () => {
+    const l = lounge(['alice', 'bob'])
+    await joinAll(l, ['alice', 'bob'], { listenOnly: true })
+    l.get('alice').room.setPushToTalk(true)
+    l.get('alice').room.setTalking(true)
+    expect(l.get('alice').view.pushToTalk).toBe(false)
+    expect(l.get('alice').view.talking).toBe(false)
+    expect(l.get('alice').view.participants.map((p) => p.state)).toEqual(['connected'])
+  })
+
+  it('leaves cleanly and can then join to talk', async () => {
+    const l = lounge(['alice', 'bob'])
+    await joinAll(l, ['alice', 'bob'])
+    l.get('bob').room.leave()
+    await settle()
+    expect(l.get('bob').view.listenOnly).toBe(false)
+    void l.get('bob').room.join({ listenOnly: true })
+    await settle(600)
+    l.get('bob').room.leave()
+    await settle()
+    void l.get('bob').room.join()
+    await settle(600)
+    expect(l.get('bob').view.listenOnly).toBe(false)
+    expect(l.get('bob').mic.tracks[0]!.enabled).toBe(true)
+  })
+})
+
+describe('VoiceRoom push to talk', () => {
+  const mic = (l: ReturnType<typeof lounge>, n: string) => l.get(n).mic.tracks[0]!
+
+  it('opens the microphone only while the talk key is held', async () => {
+    const l = lounge(['alice', 'bob'])
+    await joinAll(l, ['alice', 'bob'], { pushToTalk: true })
+    expect(l.get('alice').view.pushToTalk).toBe(true)
+    expect(mic(l, 'alice').enabled).toBe(false)
+    l.get('alice').room.setTalking(true)
+    expect(mic(l, 'alice').enabled).toBe(true)
+    expect(l.get('alice').view.talking).toBe(true)
+    l.get('alice').room.setTalking(false)
+    expect(mic(l, 'alice').enabled).toBe(false)
+  })
+
+  it('shows speaking only while talking', async () => {
+    const l = lounge(['alice', 'bob'])
+    await joinAll(l, ['alice', 'bob'], { pushToTalk: true })
+    l.get('alice').level.value = 0.8 // loud, but the key is not held
+    await settle(500)
+    expect(l.get('alice').view.speaking).toBe(false)
+    l.get('alice').room.setTalking(true)
+    await settle(500)
+    expect(l.get('alice').view.speaking).toBe(true)
+    l.get('alice').room.setTalking(false)
+    await settle(800)
+    expect(l.get('alice').view.speaking).toBe(false)
+  })
+
+  it('can be switched on and off while in the room, and starts the microphone shut or open to match', async () => {
+    const l = lounge(['alice', 'bob'])
+    await joinAll(l, ['alice', 'bob'])
+    expect(mic(l, 'alice').enabled).toBe(true)
+    l.get('alice').room.setPushToTalk(true)
+    expect(mic(l, 'alice').enabled).toBe(false)
+    l.get('alice').room.setPushToTalk(false)
+    expect(mic(l, 'alice').enabled).toBe(true)
+  })
+
+  it('leaves the microphone shut when muted and push to talk is turned off again', async () => {
+    const l = lounge(['alice', 'bob'])
+    await joinAll(l, ['alice', 'bob'])
+    l.get('alice').room.setMuted(true)
+    l.get('alice').room.setPushToTalk(true)
+    l.get('alice').room.setPushToTalk(false)
+    expect(mic(l, 'alice').enabled).toBe(false)
+    expect(l.get('alice').view.muted).toBe(true)
+  })
+
+  it('ignores the talk key when push to talk is off, and after leaving', async () => {
+    const l = lounge(['alice', 'bob'])
+    await joinAll(l, ['alice', 'bob'])
+    l.get('alice').room.setTalking(true)
+    expect(l.get('alice').view.talking).toBe(false)
+    l.get('alice').room.setPushToTalk(true)
+    l.get('alice').room.leave()
+    l.get('alice').room.setTalking(true)
+    expect(l.get('alice').view.talking).toBe(false)
+  })
+
+  it('stops talking when the room is left with the key still down', async () => {
+    const l = lounge(['alice', 'bob'])
+    await joinAll(l, ['alice', 'bob'], { pushToTalk: true })
+    l.get('alice').room.setTalking(true)
+    l.get('alice').room.leave()
+    expect(l.get('alice').view.talking).toBe(false)
+    expect(mic(l, 'alice').stopped).toBe(true)
+  })
+})
+

@@ -82,7 +82,7 @@
     border-right: 1px solid var(--border);
     height: 100%;
     overflow-y: auto;
-    width: 220px;
+    width: 100%;
   }
   header {
     display: flex;

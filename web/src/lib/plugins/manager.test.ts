@@ -408,3 +408,53 @@ describe('PluginManager kept on the bouncer', () => {
     expect(r.save).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('PluginManager windows', () => {
+  const go = (manager: PluginManager, net: NetworkState) => manager.alias(net, net.find('#chat')!, 'go', [], '/go')
+
+  it('queues what a plugin asks, and tells it what the user answered', async () => {
+    const { manager, net } = setup()
+    manager.install(bundle(`irc.alias('go', async function () { const n = await irc.prompt('Name?', 'bob'); irc.print('hi ' + n) })`, ['output', 'dialogs']), ['output', 'dialogs'])
+    await flush()
+    go(manager, net)
+    await flush()
+    expect(manager.dialogs).toMatchObject([{ plugin: 'demo', kind: 'prompt', text: 'Name?', value: 'bob' }])
+    manager.answerDialog(manager.dialogs[0]!.id, { ok: true, value: 'alice' })
+    await flush()
+    expect(manager.dialogs).toEqual([])
+    expect(lines(net)).toContain('info:[demo] hi alice')
+  })
+
+  it('drops a plugin\'s windows when it is switched off, or removed', async () => {
+    const { manager, net } = setup()
+    manager.install(bundle(`irc.alias('go', function () { irc.confirm('A?'); irc.confirm('B?') })`, ['dialogs']), ['dialogs'])
+    await flush()
+    go(manager, net)
+    await flush()
+    expect(manager.dialogs.length).toBe(2)
+    manager.setEnabled('demo', false)
+    expect(manager.dialogs).toEqual([])
+  })
+
+  it('stops the plugin from one of its windows', async () => {
+    const { manager, net } = setup()
+    manager.install(bundle(`irc.alias('go', function () { irc.alert('boo') })`, ['dialogs']), ['dialogs'])
+    await flush()
+    go(manager, net)
+    await flush()
+    manager.stopFromDialog(manager.dialogs[0]!.id)
+    expect(manager.dialogs).toEqual([])
+    expect(manager.entries[0]!.plugin.enabled).toBe(false)
+    expect(manager.entries[0]!.status).toBe('stopped')
+  })
+
+  it('does not show a window to a plugin that was not allowed to open one', async () => {
+    const { manager, net } = setup()
+    manager.install(bundle(`irc.alias('go', function () { try { irc.alert('x') } catch (e) { irc.log(e.message) } })`, ['dialogs']), [])
+    await flush()
+    go(manager, net)
+    await flush()
+    expect(manager.dialogs).toEqual([])
+    expect(manager.entries[0]!.logs.some((l) => /dialogs/.test(l.text))).toBe(true)
+  })
+})

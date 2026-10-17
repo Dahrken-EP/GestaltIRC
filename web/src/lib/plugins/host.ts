@@ -5,7 +5,7 @@
 
 import { NEEDS, parseFromWorker, type FromWorker, type ToWorker } from './protocol'
 import {
-  EVENTS, MAX_ALIASES, MAX_STORAGE_CHARS, MAX_TIMERS, type EventName, type InstalledPlugin, type PluginEvent,
+  EVENTS, MAX_ALIASES, MAX_PENDING_DIALOGS, MAX_STORAGE_CHARS, MAX_TIMERS, type DialogAnswer, type DialogRequest, type EventName, type InstalledPlugin, type PluginEvent,
 } from './types'
 
 /** The part of the sandbox the host uses. The real one is a worker in a frame; tests use a fake. */
@@ -26,6 +26,10 @@ export interface Services {
   /** What the plugin has kept. */
   loadStorage(): Record<string, string>
   saveStorage(all: Record<string, string>): void
+  /** Opens a window for the plugin and resolves with what the user did. Many may be waiting; the page shows them in turn. */
+  ask(req: DialogRequest): Promise<DialogAnswer>
+  /** Closes this plugin's windows, because it stopped. */
+  closeDialogs(): void
   /** True if `name` is a command built into the client, which a plugin may not replace. */
   isBuiltin(name: string): boolean
   log(text: string, kind: 'log' | 'error' | 'info'): void
@@ -59,6 +63,10 @@ export const SERVICE_COMMANDS: ReadonlySet<string> = new Set([
 const ACTION_BURST = 10
 const ACTION_PER_SECOND = 5
 const MAX_DROPS = 100
+/** A plugin may open a few windows at once, then one every few seconds. */
+const DIALOG_BURST = 3
+const DIALOG_REFILL_MS = 5_000
+const MAX_DIALOG_DROPS = 20
 const MAX_BAD_MESSAGES = 5
 const MAX_EVENT_TEXT = 2_000
 
@@ -84,6 +92,12 @@ export class PluginInstance {
   private tokens = ACTION_BURST
   private refilled = 0
   private drops: number[] = []
+  private dialogTokens = DIALOG_BURST
+  private dialogRefilled = 0
+  private dialogDrops = 0
+  private dialogsOpen = 0
+  /** Counts runs, so the answer to a window from before a restart is not given to the new run. */
+  private run = 0
   private bad = 0
   private ping: ReturnType<typeof setInterval> | undefined
   private deadline: ReturnType<typeof setTimeout> | undefined
@@ -117,6 +131,11 @@ export class PluginInstance {
     this.refilled = Date.now()
     this.bad = 0
     this.drops = []
+    this.run++
+    this.dialogTokens = DIALOG_BURST
+    this.dialogRefilled = Date.now()
+    this.dialogDrops = 0
+    this.dialogsOpen = 0
     this.sandbox = this.makeSandbox({
       message: (d) => this.onMessage(d),
       fatal: (reason) => this.fail(reason),
@@ -210,7 +229,30 @@ export class PluginInstance {
       case 'store':
         this.store(m.key, m.value)
         return
+      case 'dialog':
+        this.dialog(m)
+        return
     }
+  }
+
+  private dialog(m: Extract<FromWorker, { t: 'dialog' }>): void {
+    const now = Date.now()
+    this.dialogTokens = Math.min(DIALOG_BURST, this.dialogTokens + (now - this.dialogRefilled) / DIALOG_REFILL_MS)
+    this.dialogRefilled = now
+    if (this.dialogTokens < 1 || this.dialogsOpen >= MAX_PENDING_DIALOGS) {
+      // Too many windows: they are refused as if cancelled, and a plugin that keeps on is stopped.
+      this.sandbox?.post({ t: 'answer', id: m.id, ok: false, value: '' })
+      if (++this.dialogDrops >= MAX_DIALOG_DROPS) this.fail('tried to open far too many windows')
+      return
+    }
+    this.dialogTokens--
+    this.dialogsOpen++
+    const run = this.run
+    void this.services.ask({ kind: m.kind, text: m.text, value: m.value }).then((a) => {
+      if (this.run !== run) return
+      this.dialogsOpen--
+      this.sandbox?.post({ t: 'answer', id: m.id, ok: a.ok, value: a.ok ? a.value.slice(0, 200) : '' })
+    })
   }
 
   private addAlias(name: string): void {
@@ -303,6 +345,9 @@ export class PluginInstance {
     this.deadline = undefined
     clearTimeout(this.startTimer)
     for (const id of [...this.timers.keys()]) this.clearTimer(id)
+    this.run++
+    this.dialogsOpen = 0
+    this.services.closeDialogs()
     this.sandbox?.terminate()
     this.sandbox = null
     this.subscribed.clear()

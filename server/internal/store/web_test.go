@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,7 +58,7 @@ INSERT INTO messages (network_id, target, time_ms, recv_ms, line) VALUES (1, '#c
 		t.Fatalf("network after upgrade: %+v, %v", n, err)
 	}
 	lines, err := s.Latest(1, "#c", 10)
-	if err != nil || len(lines) != 1 || lines[0] != "kept" {
+	if err != nil || len(lines) != 1 || !strings.HasSuffix(lines[0], " kept") {
 		t.Errorf("history lost in upgrade: %v, %v", lines, err)
 	}
 	u, _ := s.GetUser("matt")

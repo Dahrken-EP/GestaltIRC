@@ -7,7 +7,7 @@ import { PluginInstance, type SandboxFactory, type Status } from './host'
 import { parseBundle, parseStored } from './manifest'
 import { createSandbox } from './sandbox'
 import { deleteData, loadData, loadPlugins, loadStamp, saveData, savePlugins, saveStamp } from './store'
-import type { EventName, InstalledPlugin, Permission, PluginEvent } from './types'
+import type { DialogAnswer, DialogRequest, EventName, InstalledPlugin, Permission, PluginEvent } from './types'
 
 export interface PluginLog {
   time: number
@@ -22,6 +22,12 @@ export interface PluginEntry {
   aliases: string[]
   events: EventName[]
   logs: PluginLog[]
+}
+
+/** A window a plugin has asked for, waiting for the user or already on screen. */
+export interface PendingDialog extends DialogRequest {
+  id: number
+  plugin: string
 }
 
 const MAX_LOG = 200
@@ -53,6 +59,10 @@ export interface Env {
 
 class PluginManager implements PluginBus {
   entries = $state.raw<PluginEntry[]>([])
+  /** The windows plugins have asked for, oldest first. The first is the one on screen. */
+  dialogs = $state.raw<PendingDialog[]>([])
+  private answers = new Map<number, (a: DialogAnswer) => void>()
+  private dialogId = 0
 
   private user = ''
   private list: InstalledPlugin[] = []
@@ -182,6 +192,7 @@ class PluginManager implements PluginBus {
     this.list = []
     this.user = ''
     this.entries = []
+    this.closeDialogs(() => true)
   }
 
   // --- installing ---
@@ -230,6 +241,40 @@ class PluginManager implements PluginBus {
     this.refresh()
   }
 
+  // --- windows plugins open ---
+
+  private ask(plugin: string, req: DialogRequest): Promise<DialogAnswer> {
+    return new Promise((resolve) => {
+      const id = ++this.dialogId
+      this.answers.set(id, resolve)
+      this.dialogs = [...this.dialogs, { ...req, id, plugin }]
+    })
+  }
+
+  /** What the user did with the window on screen. */
+  answerDialog(id: number, a: DialogAnswer): void {
+    const resolve = this.answers.get(id)
+    this.answers.delete(id)
+    this.dialogs = this.dialogs.filter((d) => d.id !== id)
+    resolve?.(a)
+  }
+
+  /** The user chose to stop the plugin that opened this window. */
+  stopFromDialog(id: number): void {
+    const d = this.dialogs.find((x) => x.id === id)
+    if (!d) return
+    this.log(d.plugin, 'info', 'You stopped it from one of its windows.')
+    this.setEnabled(d.plugin, false)
+  }
+
+  private closeDialogs(which: (d: PendingDialog) => boolean): void {
+    for (const d of this.dialogs.filter(which)) {
+      this.answers.get(d.id)?.({ ok: false, value: '' })
+      this.answers.delete(d.id)
+    }
+    this.dialogs = this.dialogs.filter((d) => !which(d))
+  }
+
   // --- the chat's side ---
 
   emit(ev: PluginEvent): void {
@@ -272,6 +317,8 @@ class PluginManager implements PluginBus {
           void saveData(this.user, name, all)
           this.changed()
         },
+        ask: (req) => this.ask(name, req),
+        closeDialogs: () => this.closeDialogs((d) => d.plugin === name),
         isBuiltin: (n) => BUILTIN_COMMANDS.has(n),
         log: (text, kind) => this.log(name, kind, text),
         onStop: (reason) => {

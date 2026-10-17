@@ -12,11 +12,14 @@ export class FakeNet {
   hideFingerprintNext = false
   /** Called with every config the connections were made with. */
   configs: RTCConfiguration[] = []
+  /** Every connection made, in order. */
+  created: FakePC[] = []
   /** Makes the next connection created refuse every description it is given. */
   failNext = false
   create = (config: RTCConfiguration): RTCPeerConnection => {
     this.configs.push(config)
     const pc = new FakePC(this)
+    this.created.push(pc)
     if (this.hideFingerprintNext) {
       pc.hideFingerprint = true
       this.hideFingerprintNext = false
@@ -104,6 +107,12 @@ export class FakePC {
 
   addTrack(track: unknown, stream: unknown) {
     this.tracks.push({ track, stream })
+  }
+
+  /** Receive-only audio, as a listener asks for. Recorded so a test can see it was asked for. */
+  transceivers: Array<{ kind: string; direction: string }> = []
+  addTransceiver(kind: string, init: { direction: string }) {
+    this.transceivers.push({ kind, direction: init.direction })
   }
 
   createDataChannel(label: string) {

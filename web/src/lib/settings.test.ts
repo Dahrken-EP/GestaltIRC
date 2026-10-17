@@ -162,4 +162,18 @@ describe('settings', () => {
     expect(settings.networkKeywords).toEqual({})
     expect(settings.networkMuted).toEqual({})
   })
+
+  it('keeps the push-to-talk choice with the account', async () => {
+    const { settings } = await fresh()
+    const push = vi.fn()
+    settings.connectRemote({ theme: 'dark' }, push)
+    settings.pushToTalk = true
+    settings.save()
+    vi.advanceTimersByTime(1000)
+    expect(push.mock.calls[0]![0]).toMatchObject({ pushToTalk: true })
+    const other = await fresh()
+    other.settings.connectRemote({ pushToTalk: true, theme: 'dark' }, () => {})
+    expect(other.settings.pushToTalk).toBe(true)
+  })
 })
+

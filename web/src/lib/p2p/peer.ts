@@ -22,6 +22,8 @@ export interface PeerOptions {
   onState?: (s: PeerState) => void
   /** Our microphone, sent to the other side. Not owned by this session: closing it leaves the tracks running. */
   stream?: MediaStream
+  /** With no stream of our own, still ask to receive the other side's audio (a listener in a voice room). */
+  receiveAudio?: boolean
   /** The other side's audio arrived. */
   onTrack?: (stream: MediaStream) => void
   /** Makes the connection. Tests pass a fake. */
@@ -89,6 +91,7 @@ export class PeerSession {
     this.set('connecting')
     const ch = firstChannel ? this.openChannel(firstChannel) : null
     this.addLocalTracks()
+    if (!this.opts.stream && this.opts.receiveAudio) this.pc.addTransceiver('audio', { direction: 'recvonly' })
     const offer = await this.pc.createOffer()
     await this.pc.setLocalDescription(offer)
     await this.gathered()

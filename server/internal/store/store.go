@@ -195,6 +195,15 @@ CREATE TABLE user_docs (
 ALTER TABLE networks ADD COLUMN tls_insecure INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE networks ADD COLUMN tls_fingerprint TEXT NOT NULL DEFAULT '';
 `,
+	// 6: messages kept from a network that sends no server-time had no time in the stored line, so a replay gave
+	// them the time of the replay. Give each the time it was received.
+	`
+UPDATE messages SET line = CASE
+	WHEN substr(line, 1, 1) = '@' THEN '@time=' || strftime('%Y-%m-%dT%H:%M:%S', time_ms / 1000, 'unixepoch') || '.' || printf('%03d', time_ms % 1000) || 'Z;' || substr(line, 2)
+	ELSE '@time=' || strftime('%Y-%m-%dT%H:%M:%S', time_ms / 1000, 'unixepoch') || '.' || printf('%03d', time_ms % 1000) || 'Z ' || line
+END
+WHERE NOT (substr(line, 1, 1) = '@' AND instr(line, ' ') > 0 AND ';' || substr(line, 2, instr(line, ' ') - 2) || ';' LIKE '%;time=%');
+`,
 }
 
 // upgrade applies any migrations the database has not seen.
@@ -284,6 +293,39 @@ func (s *Store) After(network int64, target string, ms int64, limit int) ([]stri
 func (s *Store) LatestAfter(network int64, target string, ms int64, limit int) ([]string, error) {
 	return s.query(true, `SELECT line FROM messages WHERE network_id = ? AND target = ? AND time_ms > ? ORDER BY id DESC LIMIT ?`,
 		network, target, ms, clampLimit(limit))
+}
+
+// TargetTime is a buffer and the time of its newest message.
+type TargetTime struct {
+	Name   string
+	TimeMS int64
+}
+
+// Targets returns the buffers whose newest message is after fromMS and before toMS, the newest limit of them,
+// oldest first. Channels and private conversations are both included.
+func (s *Store) Targets(network int64, fromMS, toMS int64, limit int) ([]TargetTime, error) {
+	rows, err := s.db.Query(`SELECT target, newest FROM (
+	SELECT target, MAX(time_ms) AS newest FROM messages WHERE network_id = ? GROUP BY target
+) WHERE newest > ? AND newest < ? ORDER BY newest DESC, target ASC LIMIT ?`, network, fromMS, toMS, clampLimit(limit))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TargetTime
+	for rows.Next() {
+		var t TargetTime
+		if err := rows.Scan(&t.Name, &t.TimeMS); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
 }
 
 // TimeOfMsgID returns the server time of a stored message, if it exists.

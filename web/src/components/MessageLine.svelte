@@ -3,6 +3,7 @@
   import { nickColor } from '../lib/nickcolor'
   import { tokenize } from '../lib/render'
   import { settings } from '../lib/settings.svelte'
+  import { cannotHover, isInteractive, touchSelection } from '../lib/touch.svelte'
   import type { Buffer, ChatMessage, NetworkState } from '../lib/network.svelte'
   import MediaEmbeds from './MediaEmbeds.svelte'
   import TokenText from './TokenText.svelte'
@@ -48,6 +49,19 @@
   const replied = $derived(msg.replyTo ? buf.byMsgId(msg.replyTo) : undefined)
   const reactions = $derived(msg.msgid ? [...(buf.reactions.get(msg.msgid) ?? [])] : [])
   let picking = $state(false)
+  /** On a touch screen the buttons are shown for the message that was tapped. */
+  const selected = $derived(touchSelection.key === msg.key)
+
+  function tap(e: MouseEvent) {
+    if (!(canReply || canReact || canDelete) || !cannotHover() || isInteractive(e.target)) return
+    touchSelection.key = selected ? '' : msg.key
+    picking = false
+  }
+
+  function done() {
+    touchSelection.key = ''
+    picking = false
+  }
 
   function snippet(text: string): string {
     return text.length > 90 ? text.slice(0, 89) + '…' : text
@@ -55,11 +69,11 @@
 
   function react(emoji: string) {
     net.react(buf, msg, emoji)
-    picking = false
+    done()
   }
 </script>
 
-<div class="line {msg.kind}" class:mention={msg.mention && isChat} class:self={msg.self} data-msgid={msg.msgid}>
+<div class="line {msg.kind}" class:mention={msg.mention && isChat} class:self={msg.self} class:selected data-msgid={msg.msgid}>
   {#if msg.replyTo}
     <div class="reply">
       <span class="dim">↳</span>
@@ -72,7 +86,8 @@
     </div>
   {/if}
 
-  <div class="main">
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="main" onclick={tap}>
     {#if settings.timestamps}
       <time class="time" datetime={new Date(msg.time).toISOString()} title={full}>{time}</time>
     {/if}
@@ -114,15 +129,15 @@
     {/if}
 
     {#if canReply || canReact || canDelete}
-      <span class="tools" class:open={picking}>
+      <span class="tools" class:open={picking || selected}>
         {#if canReply}
-          <button title="Reply" aria-label="Reply to {msg.nick}" onclick={() => onreply(msg)}>↩</button>
+          <button title="Reply" aria-label="Reply to {msg.nick}" onclick={() => (onreply(msg), done())}>↩</button>
         {/if}
         {#if canReact}
           <button title="Add reaction" aria-label="Add reaction" aria-expanded={picking} onclick={() => (picking = !picking)}>☺</button>
         {/if}
         {#if canDelete}
-          <button class="del" title="Delete message" aria-label="Delete message" onclick={() => net.redact(buf, msg)}>🗑</button>
+          <button class="del" title="Delete message" aria-label="Delete message" onclick={() => (net.redact(buf, msg), done())}>🗑</button>
         {/if}
         {#if picking}
           <span class="palette" role="group" aria-label="Choose a reaction">
@@ -271,6 +286,28 @@
     gap: 0;
     border-left: 1px solid var(--border);
     margin-left: 2px;
+  }
+
+  /* A finger needs bigger targets than a mouse, and the bar must not hide the line being tapped. */
+  @media (hover: none) {
+    /* A browser leaves :hover on the last thing tapped; only a tap on the message itself shows its buttons. */
+    .line:hover .tools:not(.open),
+    .line:focus-within .tools:not(.open) {
+      display: none;
+    }
+    .line.selected {
+      background: var(--bg-hover);
+    }
+    .tools {
+      top: -22px;
+      flex-wrap: wrap;
+      max-width: calc(100vw - 16px);
+    }
+    .tools button {
+      min-width: 40px;
+      min-height: 36px;
+      font-size: 1.15em;
+    }
   }
 
   .embeds {

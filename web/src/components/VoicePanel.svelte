@@ -14,16 +14,61 @@
   const hint = $derived(buf.voiceMembers.filter((n) => !v?.participants.some((p) => p.nick.toLowerCase() === n.toLowerCase())))
   const canJoin = $derived(net.canVoice && buf.joined)
   let showCodes = $state(false)
+
+  const ptt = $derived(active && !!v?.pushToTalk)
+
+  function setPushToTalk(on: boolean) {
+    settings.pushToTalk = on
+    settings.save()
+    room().setPushToTalk(on)
+  }
+
+  /** The talk key is Ctrl+Space, held. It works while the message box has focus, which a plain key could not. */
+  function keydown(e: KeyboardEvent) {
+    if (!ptt || !e.ctrlKey || e.code !== 'Space') return
+    e.preventDefault()
+    if (!e.repeat) room().setTalking(true)
+  }
+
+  function keyup(e: KeyboardEvent) {
+    if (ptt && (e.code === 'Space' || e.key === 'Control')) room().setTalking(false)
+  }
+
+  const stopTalking = () => ptt && room().setTalking(false)
 </script>
+
+<svelte:window onkeydown={keydown} onkeyup={keyup} onblur={stopTalking} />
 
 {#if canJoin || active || joining}
   <section class="voice" class:on={active} aria-label="Voice chat in {buf.name}">
     <div class="row">
       {#if active}
         <span class="me" class:speaking={v?.speaking} data-testid="me-speaking" title="You">
-          <span class="dot" aria-hidden="true"></span>You{v?.muted ? ' (muted)' : ''}
+          <span class="dot" aria-hidden="true"></span>You{v?.listenOnly ? ' (listening only)' : v?.pushToTalk ? '' : v?.muted ? ' (muted)' : ''}
         </span>
-        <button class="btn" aria-pressed={v?.muted} onclick={() => room().setMuted(!v?.muted)}>{v?.muted ? 'Unmute' : 'Mute'}</button>
+        {#if v?.listenOnly}
+          <span class="dim">🎧 You hear the room but cannot be heard. Leave and join again to talk.</span>
+        {:else if v?.pushToTalk}
+          <button
+            class="btn talk"
+            class:held={v.talking}
+            data-testid="talk"
+            aria-pressed={v.talking}
+            title="Hold to talk, or hold Ctrl+Space"
+            onpointerdown={(e) => (e.currentTarget.setPointerCapture(e.pointerId), room().setTalking(true))}
+            onpointerup={() => room().setTalking(false)}
+            onpointercancel={() => room().setTalking(false)}
+            onkeydown={(e) => (e.key === ' ' || e.key === 'Enter') && !e.repeat && (e.preventDefault(), room().setTalking(true))}
+            onkeyup={(e) => (e.key === ' ' || e.key === 'Enter') && room().setTalking(false)}>🎙 Hold to talk</button
+          >
+        {:else}
+          <button class="btn" aria-pressed={v?.muted} onclick={() => room().setMuted(!v?.muted)}>{v?.muted ? 'Unmute' : 'Mute'}</button>
+        {/if}
+        {#if !v?.listenOnly}
+          <label class="check small">
+            <input type="checkbox" checked={v?.pushToTalk} onchange={(e) => setPushToTalk(e.currentTarget.checked)} /> Push to talk
+          </label>
+        {/if}
         <button class="btn" onclick={() => net.leaveVoice(buf)}>Leave voice</button>
         <button class="link" aria-expanded={showCodes} onclick={() => (showCodes = !showCodes)}>{showCodes ? 'Hide codes' : 'Safety codes'}</button>
       {:else if joining}
@@ -31,6 +76,7 @@
         <button class="btn" onclick={() => net.leaveVoice(buf)}>Cancel</button>
       {:else}
         <button class="btn" onclick={() => net.joinVoice(buf)}>🎙 Join voice</button>
+        <button class="btn" title="Hear the room without a microphone" onclick={() => net.joinVoice(buf, true)}>🎧 Listen only</button>
         {#if hint.length}
           <span class="dim">In voice: {hint.join(', ')}</span>
         {:else}
@@ -88,6 +134,25 @@
   }
   .error {
     color: var(--danger);
+  }
+  .check {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+    color: var(--fg-dim);
+  }
+  .small {
+    font-size: 0.85em;
+  }
+  .talk {
+    min-width: 9em;
+    touch-action: none;
+    user-select: none;
+  }
+  .talk.held {
+    background: var(--ok);
+    border-color: var(--ok);
+    color: #fff;
   }
   .link {
     color: var(--accent);

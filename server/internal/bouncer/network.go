@@ -171,7 +171,7 @@ func (n *Network) Run(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			msg := fmt.Sprintf("Could not connect to %s: %v. Retrying in %s.", n.name, err, backoff)
+			msg := fmt.Sprintf("Could not connect to %s: %v.%s Retrying in %s.", n.name, err, connectHint(err, n.spec), backoff)
 			log.Print(msg)
 			n.notifyAll(msg)
 			sleepCtx(ctx, backoff)
@@ -272,6 +272,31 @@ var upstreamRootCAs *x509.CertPool
 // when it connects to a network over TLS. It exists for tests that run a network
 // with a self-signed certificate. Call it before starting the bouncer.
 func SetUpstreamRootCAs(pool *x509.CertPool) { upstreamRootCAs = pool }
+
+// connectHint says what is probably wrong, in words, for the connection failures people most often cause themselves.
+// It is added after the real error, which is still shown. It returns "" (or a sentence starting with a space).
+func connectHint(err error, spec accounts.NetworkSpec) string {
+	e := err.Error()
+	switch {
+	case strings.Contains(e, "first record does not look like a TLS handshake"):
+		return fmt.Sprintf(" Port %d answered without TLS: edit the server and turn off \"Use TLS\" for it, or use the server's TLS port (often 6697).", spec.Port)
+	case strings.Contains(e, "x509: certificate signed by unknown authority"), strings.Contains(e, "x509: certificate is not trusted"):
+		return " The server's certificate is not from an authority this bouncer trusts. If you run or trust the server, edit it and turn on \"Accept an untrusted certificate\"."
+	case strings.Contains(e, "x509: certificate is valid for"), strings.Contains(e, "x509: certificate is not valid for any names"):
+		return fmt.Sprintf(" The certificate is for a different name than %q: check the address.", spec.Host)
+	case strings.Contains(e, "x509: certificate has expired"):
+		return " The server's certificate has expired."
+	case strings.Contains(e, "connection refused"):
+		return fmt.Sprintf(" Nothing is accepting connections on %s port %d: check the address and port.", spec.Host, spec.Port)
+	case strings.Contains(e, "no such host"):
+		return fmt.Sprintf(" %q is not a name the bouncer can look up.", spec.Host)
+	case strings.Contains(e, "tls: ") && !spec.TLS:
+		return ""
+	case strings.Contains(e, "EOF") && spec.TLS == false && spec.Port == 6697:
+		return " Port 6697 normally needs TLS: edit the server and turn on \"Use TLS\"."
+	}
+	return ""
+}
 
 // ErrCertificateChanged is returned for a network that accepts an untrusted certificate when the one it presents
 // is not the one the bouncer first saw there.
@@ -575,6 +600,12 @@ func (n *Network) handleUpstream(m *irc.Message) {
 		}
 	}
 	if target, ok := n.historyTarget(m); ok {
+		// A network that sends no server-time leaves the message without a time. It gets the time it arrived, here,
+		// so the line that is stored and the one every client sees now carry the same one, and a replay later
+		// shows when it was said instead of when it was replayed.
+		if _, has := m.Tag("time"); !has {
+			m.SetTag("time", markTime(nowMS()))
+		}
 		n.record(target, m)
 	}
 	if n.alert != nil && len(n.sessions) == 0 {

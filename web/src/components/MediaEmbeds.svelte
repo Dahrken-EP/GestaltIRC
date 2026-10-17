@@ -73,12 +73,13 @@
   {:else if (kind === 'youtube' || kind === 'streamable') && info.id}
     {#if playing[href] && settings.embeds}
       <div class="player">
+        <!-- YouTube refuses to play (error 153) for a page that sends no Referer, so the player gets this site's address and no more. -->
         <iframe
           src={embedSrc(kind, info.id)}
           title={p?.title ?? 'Video player'}
           allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
           allowfullscreen
-          referrerpolicy="no-referrer"
+          referrerpolicy="strict-origin-when-cross-origin"
           sandbox="allow-scripts allow-same-origin allow-presentation"
         ></iframe>
       </div>

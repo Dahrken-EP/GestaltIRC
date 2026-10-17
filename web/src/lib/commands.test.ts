@@ -15,6 +15,14 @@ describe('parseInput', () => {
     expect(raws('hello', status)).toEqual(['ERR'])
   })
 
+  it('joins, listens to, and leaves the voice room', () => {
+    expect(parseInput('/voice', chan)).toEqual([{ type: 'voice', on: true }])
+    expect(parseInput('/voice join', chan)).toEqual([{ type: 'voice', on: true }])
+    expect(parseInput('/voice listen', chan)).toEqual([{ type: 'voice', on: true, listen: true }])
+    expect(parseInput('/voice leave', chan)).toEqual([{ type: 'voice', on: false }])
+    expect(parseInput('/voice shout', chan)).toEqual([{ type: 'error', text: expect.stringContaining('listen') }])
+  })
+
   it('opens a direct chat', () => {
     expect(parseInput('/direct bob', chan)).toEqual([{ type: 'direct', target: 'bob' }])
     expect(parseInput('/dm bob extra', status)).toEqual([{ type: 'direct', target: 'bob' }])

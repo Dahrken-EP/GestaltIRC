@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { api, ApiError } from '../lib/api'
   import { app } from '../lib/app.svelte'
-  import { blankForm, checkForm, formFromNetwork, parseChannels, toRequest, type NetworkForm } from '../lib/networkform'
+  import { blankForm, checkForm, formFromNetwork, parseChannels, portForTls, toRequest, type NetworkForm } from '../lib/networkform'
   import { settings } from '../lib/settings.svelte'
 
   const editing = app.serverDialog?.edit ?? null
@@ -67,10 +67,8 @@
   }
 </script>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && close()} />
-
-<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="backdrop" onclick={(e) => e.target === e.currentTarget && close()}>
+<!-- The dialog closes with its × or Cancel, and only those: a click outside it, or Escape, would throw away a half-filled form. -->
+<div class="backdrop">
   <div class="card" role="dialog" aria-modal="true" aria-labelledby="server-title" data-testid="server-dialog">
     <header>
       <h2 id="server-title">{editing ? `Edit ${editing}` : 'Add a server'}</h2>
@@ -88,7 +86,7 @@
             <label class="grow">Address <input bind:this={hostInput} bind:value={form.host} placeholder="irc.libera.chat" autocomplete="off" spellcheck="false" /></label>
             <label class="port">Port <input bind:value={form.port} inputmode="numeric" autocomplete="off" /></label>
           </div>
-          <label class="check"><input type="checkbox" bind:checked={form.tls} /> Use TLS (encrypted)</label>
+          <label class="check"><input type="checkbox" bind:checked={form.tls} onchange={() => form && (form.port = portForTls(form.port, form.tls))} /> Use TLS (encrypted)</label>
           {#if form.tls}
             <label class="check">
               <input type="checkbox" bind:checked={form.tlsInsecure} />

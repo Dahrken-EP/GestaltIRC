@@ -23,7 +23,9 @@ export const BOOTSTRAP = String.raw`
   var timers = {};
   var nextTimer = 1;
 
-  var Json = global.JSON, Obj = global.Object, Str = global.String, Fn = global.Function, Err = global.Error;
+  var Json = global.JSON, Obj = global.Object, Str = global.String, Fn = global.Function, Err = global.Error, Prom = global.Promise;
+  var dialogs = {};
+  var nextDialog = 1;
   var addListener = global.addEventListener.bind(global);
   var removeListener = global.removeEventListener.bind(global);
 
@@ -56,6 +58,16 @@ export const BOOTSTRAP = String.raw`
         try { Obj.defineProperty(global, name, { value: undefined, writable: false, configurable: false }); } catch (e) { /* kept */ }
       }
     }
+  }
+
+  // A window the page opens for the plugin. The answer comes back as a message, so it is a promise.
+  function ask(kind, message, initial) {
+    need('dialogs');
+    return new Prom(function (resolve) {
+      var id = nextDialog++;
+      dialogs[id] = resolve;
+      post({ t: 'dialog', id: id, kind: kind, text: text(message, MAX_TEXT), value: text(initial, 200) });
+    });
   }
 
   var irc = {
@@ -99,6 +111,11 @@ export const BOOTSTRAP = String.raw`
     print: function (message, buffer, network) {
       need('output');
       post({ t: 'print', text: text(message, MAX_TEXT), buffer: buffer === undefined ? '' : text(buffer, 200), network: network === undefined ? '' : text(network, 100) });
+    },
+    alert: function (message) { return ask('alert', message, '').then(function () {}); },
+    confirm: function (message) { return ask('confirm', message, '').then(function (a) { return a.ok; }); },
+    prompt: function (message, initial) {
+      return ask('prompt', message, initial === undefined ? '' : initial).then(function (a) { return a.ok ? a.value : null; });
     },
     log: function () {
       var parts = [];
@@ -171,6 +188,9 @@ export const BOOTSTRAP = String.raw`
         }
         break;
       }
+      case 'answer':
+        if (dialogs[m.id]) { var done = dialogs[m.id]; delete dialogs[m.id]; done({ ok: !!m.ok, value: Str(m.value) }); }
+        break;
       case 'ping':
         post({ t: 'pong', n: m.n });
         break;
