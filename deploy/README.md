@@ -33,6 +33,62 @@ The first `up` starts a one-off `setup` container that writes `bouncer.yaml`, `t
 secret (shared by the bouncer and coturn) into the `config` volume. It never overwrites a file that is already
 there, so editing the copy in the volume is safe and starting again changes nothing.
 
+## Behind a proxy you already have
+
+If the server already has a reverse proxy handling HTTPS on 80 and 443, Caddy would fight it for those ports. Leave
+Caddy out and let your proxy forward to the bouncer:
+
+```bash
+cp .env.example .env     # DOMAIN=gestalt.example.org, PUBLIC_IP if behind NAT, BOUNCER_PORT if 8081 is taken
+docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d
+```
+
+The bouncer is then published on `127.0.0.1:8081` only. Your proxy must terminate TLS for `DOMAIN`, forward
+WebSockets, and tell the bouncer the truth about the request, because the bouncer decides from these headers
+whether the connection was HTTPS and who the client is (`trust_proxy` is on in this setup):
+
+- `X-Forwarded-Proto: https`, or the session cookie is not marked `Secure` and HSTS is not sent;
+- `X-Forwarded-For` with the real client address as its **last** entry (appending, as nginx's
+  `$proxy_add_x_forwarded_for` does, is right; passing along one from the client unchecked is wrong, since it lets
+  anyone dodge the login rate limit);
+- no security headers of your own on this site (see below).
+
+nginx:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name gestalt.example.org;
+    # ssl_certificate / ssl_certificate_key as for your other sites
+
+    location / {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;   # map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 1d;                              # the WebSocket stays open
+    }
+}
+```
+
+Caddy: `gestalt.example.org { reverse_proxy 127.0.0.1:8081 }` (it handles the headers and WebSockets itself).
+
+If your proxy only passes raw TLS through by name (SNI) rather than terminating it, tell the bouncer's own Caddy to
+take that traffic instead: use the normal compose file, and change Caddy's published ports to ones your proxy
+forwards to.
+
+Voice and direct chat across NATs still need coturn reachable on its own ports (below), directly, not through the
+proxy. The name in `DOMAIN` (or `TURN_HOST`) must point at the server's real address, not at a CDN.
+
+Before starting, check nothing else is using the ports coturn wants:
+
+```bash
+sudo ss -lntup | grep -E ':(3478|5349|8081)\b' || echo "free"
+```
+
 ## Ports
 
 | Port | Used by | For |
@@ -53,6 +109,7 @@ firewall (ufw, nftables, a cloud security group) is what limits it.
 |---|---|
 | `../Dockerfile` | Builds the web client and a static bouncer into one small image with no operating system in it. Also runs on its own: see the README. |
 | `../docker-compose.yml` | `setup` (one-off), the bouncer (not published), Caddy, and coturn on the host network. |
+| `../docker-compose.proxy.yml` | An override that leaves Caddy out and publishes the bouncer on 127.0.0.1 for a proxy you already have. |
 | `../.env.example` | `DOMAIN`, `PUBLIC_IP`, `TURN_HOST`, `ADMIN_EMAIL`. |
 | `Caddyfile` | HTTPS and the proxy to the bouncer. WebSockets just work. The bouncer sets the security headers. |
 | `bouncer.yaml.template` | Production settings: trusts Caddy for client addresses, `Secure` cookies, `sts`, and the TURN servers. |
