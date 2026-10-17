@@ -26,7 +26,7 @@ func TestHandlerServesWebDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "app.js"), []byte("console.log(1)"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	b := &Bouncer{conf: &config.Config{WebDir: dir}}
+	b := New(&config.Config{WebDir: dir}, nil, nil)
 
 	if code, body := get(t, b, "/"); code != http.StatusOK || !strings.Contains(body, "<title>client</title>") {
 		t.Errorf("/ = %d %q, want the index page", code, body)
@@ -40,7 +40,7 @@ func TestHandlerServesWebDir(t *testing.T) {
 }
 
 func TestHandlerWithoutWebDirGreets(t *testing.T) {
-	b := &Bouncer{conf: &config.Config{}}
+	b := New(&config.Config{}, nil, nil)
 	if code, body := get(t, b, "/"); code != http.StatusOK || !strings.Contains(body, "irc-webclient bouncer") {
 		t.Errorf("/ = %d %q, want the greeting", code, body)
 	}

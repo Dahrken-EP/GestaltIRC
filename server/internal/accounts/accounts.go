@@ -103,7 +103,15 @@ func (s *Service) SetPassword(name, password string) error {
 	if err != nil {
 		return err
 	}
-	return s.store.SetUserPassword(name, hash)
+	if err := s.store.SetUserPassword(name, hash); err != nil {
+		return err
+	}
+	// A new password logs the account out everywhere.
+	u, err := s.store.GetUser(name)
+	if err != nil {
+		return err
+	}
+	return s.store.DeleteUserSessions(u.ID)
 }
 
 // CheckPassword reports whether password is correct for the user. A missing

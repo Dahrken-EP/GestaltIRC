@@ -11,6 +11,10 @@ import (
 // ErrLineTooLong is returned when a peer sends a line over the IRCv3 limits.
 var ErrLineTooLong = errors.New("irc: line too long")
 
+// ErrInvalidUTF8 is returned by a transport that carries text, when a peer sends
+// bytes that are not valid UTF-8. The connection is still usable: read the next line.
+var ErrInvalidUTF8 = errors.New("irc: line is not valid UTF-8")
+
 // LineConn moves whole IRC lines across a transport. TCP and WebSocket both
 // implement it, so the protocol code does not care which one it is using.
 type LineConn interface {
