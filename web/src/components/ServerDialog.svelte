@@ -89,6 +89,22 @@
             <label class="port">Port <input bind:value={form.port} inputmode="numeric" autocomplete="off" /></label>
           </div>
           <label class="check"><input type="checkbox" bind:checked={form.tls} /> Use TLS (encrypted)</label>
+          {#if form.tls}
+            <label class="check">
+              <input type="checkbox" bind:checked={form.tlsInsecure} />
+              Accept an untrusted certificate <span class="opt">(self-signed, or from a private authority)</span>
+            </label>
+            {#if form.tlsInsecure}
+              <p class="warn" data-testid="untrusted-warning">
+                Only for a server you run or trust. The first time, nothing can tell the real server from an impostor. The
+                bouncer then remembers the certificate it saw and refuses a different one.
+              </p>
+              {#if form.tlsFingerprint}
+                <p class="dim" data-testid="remembered-certificate">Remembered certificate (SHA-256): <code>{form.tlsFingerprint}</code></p>
+                <label class="check"><input type="checkbox" bind:checked={form.forgetTlsPin} /> Forget it and remember the next one (after the server's certificate was replaced on purpose)</label>
+              {/if}
+            {/if}
+          {/if}
           <label>
             Server password <span class="opt">(only if the server asks for one)</span>
             <input
@@ -289,6 +305,17 @@
     color: var(--fg-dim);
     font-size: 0.9em;
     margin: 0;
+  }
+  .warn {
+    margin: 0;
+    padding: 6px 8px;
+    border-left: 3px solid var(--warn);
+    background: var(--bg);
+    font-size: 0.9em;
+  }
+  code {
+    word-break: break-all;
+    font-size: 0.85em;
   }
   .error {
     color: var(--danger);

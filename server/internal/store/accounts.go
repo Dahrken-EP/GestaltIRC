@@ -55,6 +55,10 @@ type NetworkRow struct {
 	AltNicks         []string
 	Perform          []string
 	NickServPassword string
+	// TLSInsecure accepts a server certificate the usual authorities do not vouch for. TLSFingerprint is the
+	// SHA-256 of the certificate first seen, which must then be the one every later connection presents.
+	TLSInsecure    bool
+	TLSFingerprint string
 }
 
 // sqlite's constraint error code for UNIQUE violations.
@@ -162,12 +166,13 @@ func (s *Store) DeleteUser(name string) error {
 func (s *Store) CreateNetwork(n NetworkRow) (int64, error) {
 	res, err := s.db.Exec(`
 INSERT INTO networks (user_id, name, host, port, tls, nick, ident, realname,
-	server_password, sasl_mech, sasl_user, sasl_password, client_cert, client_key, join_list, enabled, via_web, alt_nicks, perform, nickserv_password)
-SELECT id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM users WHERE name = ?`,
+	server_password, sasl_mech, sasl_user, sasl_password, client_cert, client_key, join_list, enabled, via_web, alt_nicks, perform, nickserv_password, tls_insecure, tls_fingerprint)
+SELECT id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM users WHERE name = ?`,
 		n.Name, n.Host, n.Port, boolInt(n.TLS), n.Nick, n.Ident, n.RealName,
 		n.ServerPassword, n.SASLMech, n.SASLUser, n.SASLPassword, n.ClientCert, n.ClientKey,
 		strings.Join(n.Join, "\n"), boolInt(n.Enabled), boolInt(n.ViaWeb),
-		strings.Join(n.AltNicks, "\n"), strings.Join(n.Perform, "\n"), n.NickServPassword, n.UserName)
+		strings.Join(n.AltNicks, "\n"), strings.Join(n.Perform, "\n"), n.NickServPassword,
+		boolInt(n.TLSInsecure), n.TLSFingerprint, n.UserName)
 	if isUnique(err) {
 		return 0, ErrExists
 	}
@@ -185,16 +190,23 @@ func (s *Store) UpdateNetwork(n NetworkRow) error {
 	res, err := s.db.Exec(`
 UPDATE networks SET host = ?, port = ?, tls = ?, nick = ?, ident = ?, realname = ?, server_password = ?,
 	sasl_mech = ?, sasl_user = ?, sasl_password = ?, client_cert = ?, client_key = ?, join_list = ?, enabled = ?, via_web = ?,
-	alt_nicks = ?, perform = ?, nickserv_password = ?
+	alt_nicks = ?, perform = ?, nickserv_password = ?, tls_insecure = ?, tls_fingerprint = ?
 WHERE name = ? AND user_id = (SELECT id FROM users WHERE name = ?)`,
 		n.Host, n.Port, boolInt(n.TLS), n.Nick, n.Ident, n.RealName, n.ServerPassword,
 		n.SASLMech, n.SASLUser, n.SASLPassword, n.ClientCert, n.ClientKey,
 		strings.Join(n.Join, "\n"), boolInt(n.Enabled), boolInt(n.ViaWeb),
-		strings.Join(n.AltNicks, "\n"), strings.Join(n.Perform, "\n"), n.NickServPassword, n.Name, n.UserName)
+		strings.Join(n.AltNicks, "\n"), strings.Join(n.Perform, "\n"), n.NickServPassword,
+		boolInt(n.TLSInsecure), n.TLSFingerprint, n.Name, n.UserName)
 	if err != nil {
 		return err
 	}
 	return requireOne(res)
+}
+
+// SetNetworkFingerprint remembers the certificate a network presented, for a network that accepts one nobody vouches for.
+func (s *Store) SetNetworkFingerprint(id int64, fingerprint string) error {
+	_, err := s.db.Exec(`UPDATE networks SET tls_fingerprint = ? WHERE id = ?`, fingerprint, id)
+	return err
 }
 
 // GetNetwork finds a user's network by name.
@@ -263,7 +275,7 @@ func LastSeenKey(networkID int64) string {
 
 func (s *Store) queryNetworks(where string, args ...any) ([]NetworkRow, error) {
 	q := `SELECT n.id, n.user_id, u.name, n.name, n.host, n.port, n.tls, n.nick, n.ident, n.realname,
-	n.server_password, n.sasl_mech, n.sasl_user, n.sasl_password, n.client_cert, n.client_key, n.join_list, n.enabled, n.via_web, n.alt_nicks, n.perform, n.nickserv_password
+	n.server_password, n.sasl_mech, n.sasl_user, n.sasl_password, n.client_cert, n.client_key, n.join_list, n.enabled, n.via_web, n.alt_nicks, n.perform, n.nickserv_password, n.tls_insecure, n.tls_fingerprint
 FROM networks n JOIN users u ON u.id = n.user_id ` + where + ` ORDER BY u.name, n.name`
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
@@ -273,15 +285,16 @@ FROM networks n JOIN users u ON u.id = n.user_id ` + where + ` ORDER BY u.name, 
 	var out []NetworkRow
 	for rows.Next() {
 		var n NetworkRow
-		var tls, enabled, viaWeb int
+		var tls, enabled, viaWeb, insecure int
 		var join, alts, perform string
 		if err := rows.Scan(&n.ID, &n.UserID, &n.UserName, &n.Name, &n.Host, &n.Port, &tls, &n.Nick, &n.Ident,
-			&n.RealName, &n.ServerPassword, &n.SASLMech, &n.SASLUser, &n.SASLPassword, &n.ClientCert, &n.ClientKey, &join, &enabled, &viaWeb, &alts, &perform, &n.NickServPassword); err != nil {
+			&n.RealName, &n.ServerPassword, &n.SASLMech, &n.SASLUser, &n.SASLPassword, &n.ClientCert, &n.ClientKey, &join, &enabled, &viaWeb, &alts, &perform, &n.NickServPassword, &insecure, &n.TLSFingerprint); err != nil {
 			return nil, err
 		}
 		n.TLS = tls != 0
 		n.Enabled = enabled != 0
 		n.ViaWeb = viaWeb != 0
+		n.TLSInsecure = insecure != 0
 		if join != "" {
 			n.Join = strings.Split(join, "\n")
 		}

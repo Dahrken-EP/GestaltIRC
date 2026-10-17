@@ -334,3 +334,60 @@ func TestBadAlternativeNicksAndConnectCommandsAreRefused(t *testing.T) {
 		}
 	}
 }
+
+func TestAcceptingAnUntrustedCertificate(t *testing.T) {
+	e := newEnv(t, config.Config{}, fakeStatus{})
+	c := e.login(t)
+	base := `"name":"home","host":"irc.example.org","port":6697,"nick":"m"`
+
+	// It means nothing without TLS.
+	if resp, _ := e.do(t, "POST", "/api/networks", "{"+base+`,"tls":false,"tls_insecure":true}`, nil, c); resp.StatusCode != 400 {
+		t.Errorf("untrusted certificates without TLS = %d, want 400", resp.StatusCode)
+	}
+	if resp, out := e.do(t, "POST", "/api/networks", "{"+base+`,"tls":true,"tls_insecure":true}`, nil, c); resp.StatusCode != 200 {
+		t.Fatalf("add = %d %v", resp.StatusCode, out)
+	}
+	if n := networksOf(t, e, c)[0]; n["tls_insecure"] != true || n["tls_fingerprint"] != "" {
+		t.Errorf("view = %v", n)
+	}
+
+	// The network writes the certificate it first saw; an edit that leaves the connection alone keeps it.
+	spec, _ := e.acc.GetNetwork("matt", "home")
+	if err := e.acc.UpdateNetwork("matt", accounts.NetworkInput{
+		Name: "home", Host: spec.Host, Port: spec.Port, TLS: true, Nick: "m", TLSInsecure: true, TLSFingerprint: "AA:BB", ViaWeb: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	edit := func(extra string) {
+		t.Helper()
+		body := `{"host":"irc.example.org","port":6697,"tls":true,"nick":"m2"` + extra + `}`
+		if resp, out := e.do(t, "PUT", "/api/networks/home", body, nil, c); resp.StatusCode != 200 {
+			t.Fatalf("edit = %d %v", resp.StatusCode, out)
+		}
+	}
+	pin := func() string { s, _ := e.acc.GetNetwork("matt", "home"); return s.TLSFingerprint }
+	edit(`,"tls_insecure":true`)
+	if pin() != "AA:BB" {
+		t.Errorf("an unrelated edit lost the remembered certificate: %q", pin())
+	}
+	edit(`,"tls_insecure":true,"forget_tls_pin":true`)
+	if pin() != "" {
+		t.Errorf("forget_tls_pin left %q", pin())
+	}
+
+	// Anything that changes what is being connected to starts again.
+	accountsPin := func() {
+		_ = e.acc.UpdateNetwork("matt", accounts.NetworkInput{Name: "home", Host: "irc.example.org", Port: 6697, TLS: true, Nick: "m", TLSInsecure: true, TLSFingerprint: "AA:BB", ViaWeb: true})
+	}
+	accountsPin()
+	body := `{"host":"irc2.example.org","port":6697,"tls":true,"nick":"m","tls_insecure":true}`
+	if resp, _ := e.do(t, "PUT", "/api/networks/home", body, nil, c); resp.StatusCode != 200 || pin() != "" {
+		t.Errorf("a new address kept the remembered certificate: %q", pin())
+	}
+	body = `{"host":"irc2.example.org","port":6697,"tls":true,"nick":"m","tls_insecure":true}`
+	e.acc.UpdateNetwork("matt", accounts.NetworkInput{Name: "home", Host: "irc2.example.org", Port: 6697, TLS: true, Nick: "m", TLSInsecure: true, TLSFingerprint: "CC:DD", ViaWeb: true})
+	if resp, _ := e.do(t, "PUT", "/api/networks/home", `{"host":"irc2.example.org","port":6697,"tls":true,"nick":"m","tls_insecure":false}`, nil, c); resp.StatusCode != 200 || pin() != "" {
+		t.Errorf("turning the setting off kept the remembered certificate: %q", pin())
+	}
+	_ = body
+}

@@ -33,6 +33,11 @@ address actually dialled, so a redirect or a DNS answer that changes cannot get 
 bytes and not the server's header, refuses SVG and HTML as media, caps sizes, time and concurrency, and
 forwards no cookies. A YouTube or Streamable player loads only after you press play, in a sandboxed frame.
 
+**A network impersonating your IRC server.** The bouncer verifies a server's TLS certificate like a browser. A server
+can be set to accept an untrusted one (self-signed, or from a private authority). That setting is weaker: the first
+connection cannot tell the real server from an impostor. So the bouncer remembers the SHA-256 of the first certificate it
+sees and refuses any other afterwards, until the person asks it to forget. Use it only for a server you run or trust.
+
 **An account that wants to reach the bouncer's own network.** The network editor lets any account make the
 bouncer open connections. A network added or moved there may reach public addresses only (checked again at
 connect time) and ports from 1024, and an account may have ten. Fields sent to the IRC network (nicks,

@@ -125,7 +125,7 @@ func (b *Bouncer) sync() {
 	for id, r := range b.running {
 		// A network that was removed or switched off stops. One whose settings changed stops too, and
 		// starts again below with the new ones.
-		if spec, ok := want[id]; !ok || !reflect.DeepEqual(spec, r.spec) {
+		if spec, ok := want[id]; !ok || !sameSettings(r.spec, spec) {
 			log.Printf("stopping network %s", r.net.name)
 			r.cancel()
 			r.net.Stop()
@@ -142,6 +142,16 @@ func (b *Bouncer) sync() {
 		b.running[id] = &runningNetwork{net: n, cancel: cancel, spec: spec}
 		log.Printf("started network %s/%s", spec.UserName, spec.Name)
 	}
+}
+
+// sameSettings reports whether a running network was started with what the database now holds. The remembered
+// certificate is written by the network itself the first time it connects, which must not look like an edit;
+// clearing it, which is an edit, does.
+func sameSettings(running, want accounts.NetworkSpec) bool {
+	if want.TLSFingerprint != "" {
+		running.TLSFingerprint = want.TLSFingerprint
+	}
+	return reflect.DeepEqual(running, want)
 }
 
 func (b *Bouncer) stopAll() {

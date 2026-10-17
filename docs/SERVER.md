@@ -33,6 +33,16 @@ or a mention arrives and no client is attached to the network, the bouncer pushe
 once per buffer every five seconds. It needs HTTPS in the browser. Set `push_contact` to a real `mailto:` address:
 Apple's push service rejects an implausible one.
 
+## Servers with a certificate nobody vouches for
+
+By default the bouncer checks a server's TLS certificate like a browser does. For a server with a self-signed
+certificate, or one from a private authority, switch on **Accept an untrusted certificate** in the server's dialog (or
+`--tls-insecure` with `network add`). The bouncer then skips the usual check, which means the first connection cannot
+tell the real server from an impostor, so use it only for a server you run or trust. It remembers the SHA-256 of the
+certificate it sees first, shows it in the dialog, and from then on refuses any other, with a message in the status
+window. If the certificate was replaced on purpose, tick **Forget it** in the dialog (changing the address, or turning
+the setting off, forgets it too). It needs TLS.
+
 ## Client certificates (SASL EXTERNAL)
 
 ```

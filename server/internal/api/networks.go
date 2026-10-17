@@ -37,6 +37,8 @@ type networkView struct {
 	AltNicks          []string `json:"alt_nicks"`
 	Perform           []string `json:"perform"`
 	HasNickServ       bool     `json:"has_nickserv_password"`
+	TLSInsecure       bool     `json:"tls_insecure"`
+	TLSFingerprint    string   `json:"tls_fingerprint"`
 	Enabled           bool     `json:"enabled"`
 	Connected         bool     `json:"connected"`
 }
@@ -58,6 +60,8 @@ type networkRequest struct {
 	AltNicks       *[]string `json:"alt_nicks"`
 	Perform        *[]string `json:"perform"`
 	NickServ       *string   `json:"nickserv_password"`
+	TLSInsecure    bool      `json:"tls_insecure"`
+	ForgetTLSPin   bool      `json:"forget_tls_pin"`
 	Enabled        *bool     `json:"enabled"`
 }
 
@@ -76,6 +80,7 @@ func (a *API) viewOf(spec accounts.NetworkSpec) networkView {
 		HasCertificate: spec.ClientCert != "", Join: spec.Join, Enabled: true,
 	}
 	v.AltNicks, v.Perform, v.HasNickServ = spec.AltNicks, spec.Perform, spec.NickServPassword != ""
+	v.TLSInsecure, v.TLSFingerprint = spec.TLSInsecure, spec.TLSFingerprint
 	for _, list := range []*[]string{&v.Join, &v.AltNicks, &v.Perform} {
 		if *list == nil {
 			*list = []string{}
@@ -153,7 +158,7 @@ func (a *API) createNetwork(w http.ResponseWriter, r *http.Request, u store.User
 	}
 	in := accounts.NetworkInput{
 		Name: req.Name, Host: req.Host, Port: req.Port, TLS: req.TLS, Nick: req.Nick, Ident: req.Ident,
-		RealName: req.RealName, SASLMech: mech, SASLUser: req.SASLUser, ViaWeb: true,
+		RealName: req.RealName, SASLMech: mech, SASLUser: req.SASLUser, ViaWeb: true, TLSInsecure: req.TLSInsecure,
 	}
 	if req.ServerPassword != nil {
 		in.ServerPassword = *req.ServerPassword
@@ -215,6 +220,7 @@ func (a *API) updateNetwork(w http.ResponseWriter, r *http.Request, u store.User
 		ServerPassword: cur.ServerPassword, SASLPassword: cur.SASLPassword,
 		ClientCert: cur.ClientCert, ClientKey: cur.ClientKey, Join: cur.Join,
 		AltNicks: cur.AltNicks, Perform: cur.Perform, NickServPassword: cur.NickServPassword,
+		TLSInsecure: req.TLSInsecure, TLSFingerprint: cur.TLSFingerprint,
 		Disabled: disabled, ViaWeb: cur.ViaWeb,
 	}
 	if req.ServerPassword != nil {
@@ -237,6 +243,11 @@ func (a *API) updateNetwork(w http.ResponseWriter, r *http.Request, u store.User
 	}
 	if req.Enabled != nil {
 		in.Disabled = !*req.Enabled
+	}
+	// The remembered server certificate belongs to one address, with TLS and the untrusted-certificate setting on.
+	// Anything else about the connection that changes, or an explicit request, starts it afresh.
+	if req.ForgetTLSPin || in.Host != cur.Host || in.Port != cur.Port || !in.TLS || !in.TLSInsecure {
+		in.TLSFingerprint = ""
 	}
 	// A network that logs in with a certificate keeps doing so; the certificate is managed on the command line.
 	if cur.SASLMech == "EXTERNAL" || cur.ClientCert != "" {

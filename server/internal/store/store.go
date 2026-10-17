@@ -190,6 +190,11 @@ CREATE TABLE user_docs (
 	PRIMARY KEY (user_id, name)
 );
 `,
+	// 5: networks whose certificate is not trusted by the usual authorities, and the one the bouncer first saw there.
+	`
+ALTER TABLE networks ADD COLUMN tls_insecure INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE networks ADD COLUMN tls_fingerprint TEXT NOT NULL DEFAULT '';
+`,
 }
 
 // upgrade applies any migrations the database has not seen.

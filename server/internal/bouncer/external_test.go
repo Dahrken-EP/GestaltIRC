@@ -95,7 +95,7 @@ func TestDialUpstreamPresentsTheClientCertificate(t *testing.T) {
 	defer cancel()
 	conn, err := dialUpstream(ctx, accounts.NetworkSpec{
 		Host: "127.0.0.1", Port: port, TLS: true, ClientCert: certPEM, ClientKey: keyPEM,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestDialUpstreamWithoutCertificatePresentsNone(t *testing.T) {
 	port, got := tlsServer(t, srvCert)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, err := dialUpstream(ctx, accounts.NetworkSpec{Host: "127.0.0.1", Port: port, TLS: true})
+	conn, err := dialUpstream(ctx, accounts.NetworkSpec{Host: "127.0.0.1", Port: port, TLS: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestDialUpstreamVerifiesTheServerCertificate(t *testing.T) {
 	port, _ := tlsServer(t, srvCert)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := dialUpstream(ctx, accounts.NetworkSpec{Host: "127.0.0.1", Port: port, TLS: true}); err == nil {
+	if _, err := dialUpstream(ctx, accounts.NetworkSpec{Host: "127.0.0.1", Port: port, TLS: true}, nil); err == nil {
 		t.Error("connected to a server whose certificate is not trusted")
 	}
 }

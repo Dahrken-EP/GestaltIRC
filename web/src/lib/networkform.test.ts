@@ -5,7 +5,7 @@ import { blankForm, checkForm, formFromNetwork, parseChannels, toRequest } from 
 const saved: NetworkDetail = {
   name: 'libera', host: 'irc.libera.chat', port: 6697, tls: true, nick: 'matt', ident: 'matt', realname: 'matt',
   sasl_mech: 'PLAIN', sasl_user: 'matt', has_server_password: false, has_sasl_password: true, has_certificate: false,
-  has_nickserv_password: false, alt_nicks: ['matt_'], perform: ['MODE matt +i'],
+  has_nickserv_password: false, tls_insecure: false, tls_fingerprint: '', alt_nicks: ['matt_'], perform: ['MODE matt +i'],
   join: ['#a', '#b'], enabled: true, connected: true,
 }
 
@@ -117,3 +117,27 @@ describe('alternative nicks, commands on connect and the NickServ password', () 
     expect(checkForm({ ...ok, perform: 'MODE matt +i' })).toBe('')
   })
 })
+
+describe('accepting an untrusted certificate', () => {
+  const ok = () => ({ ...blankForm('matt'), name: 'x', host: 'h' })
+
+  it('is off by default and sent only with TLS', () => {
+    expect(toRequest(ok()).tls_insecure).toBe(false)
+    expect(toRequest({ ...ok(), tlsInsecure: true }).tls_insecure).toBe(true)
+    expect(toRequest({ ...ok(), tls: false, tlsInsecure: true }).tls_insecure).toBe(false)
+  })
+
+  it('needs TLS', () => {
+    expect(checkForm({ ...ok(), tls: false, tlsInsecure: true })).toMatch(/needs TLS/)
+    expect(checkForm({ ...ok(), tlsInsecure: true })).toBe('')
+  })
+
+  it('shows what a saved network has, and asks to forget the remembered certificate only when told to', () => {
+    const f = formFromNetwork({ ...saved, tls_insecure: true, tls_fingerprint: 'AA:BB' })
+    expect(f.tlsInsecure).toBe(true)
+    expect(f.tlsFingerprint).toBe('AA:BB')
+    expect('forget_tls_pin' in toRequest(f)).toBe(false)
+    expect(toRequest({ ...f, forgetTlsPin: true }).forget_tls_pin).toBe(true)
+  })
+})
+

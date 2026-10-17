@@ -31,6 +31,9 @@ export interface NetworkDetail {
   has_sasl_password: boolean
   has_certificate: boolean
   has_nickserv_password: boolean
+  tls_insecure: boolean
+  /** The certificate the bouncer first saw on a server that accepts an untrusted one. */
+  tls_fingerprint: string
   alt_nicks: string[]
   perform: string[]
   join: string[]
@@ -52,6 +55,9 @@ export interface NetworkRequest {
   server_password?: string
   sasl_password?: string
   nickserv_password?: string
+  tls_insecure: boolean
+  /** Forget the remembered certificate, so the next one seen is remembered instead. */
+  forget_tls_pin?: boolean
   alt_nicks: string[]
   perform: string[]
   join: string[]

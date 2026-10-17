@@ -35,7 +35,7 @@ bouncer -config FILE serve
 bouncer -config FILE healthcheck                 (exit 0 if a running bouncer answers; used by the container)
 bouncer -config FILE user add|passwd NAME        (password on stdin)
 bouncer -config FILE user list | remove NAME
-bouncer -config FILE network add USER NAME --host H --nick N [--port P] [--tls]
+bouncer -config FILE network add USER NAME --host H --nick N [--port P] [--tls] [--tls-insecure]
                     [--sasl PLAIN|SCRAM-SHA-256|EXTERNAL] [--sasl-user U] [--join '#a,#b']
                     [--server-password-stdin] [--generate-cert | --cert-file F --key-file F]
 bouncer -config FILE network list USER
