@@ -7,6 +7,20 @@
   /** Which video players the user has clicked play on. */
   let playing = $state<Record<string, boolean>>({})
   let failed = $state<Record<string, boolean>>({})
+  /** Why a picture or video would not load, when the bouncer could say (for example that the other site refused it). */
+  let why = $state<Record<string, string>>({})
+
+  /** Marks a picture or video as failed, and asks the bouncer why: its answer to the same request says. */
+  function fail(href: string, src: string) {
+    failed[href] = true
+    fetch(src, { credentials: 'same-origin', headers: { Range: 'bytes=0-0' } })
+      .then(async (r) => {
+        if (r.ok) return
+        const body = (await r.json().catch(() => null)) as { error?: string } | null
+        why[href] = body?.error ?? `the bouncer answered ${r.status}`
+      })
+      .catch(() => (why[href] = 'the bouncer could not be reached'))
+  }
   let previews = $state<Record<string, Preview | null>>({})
 
   // What to show for each link: the kind from its address, and a preview where one is needed.
@@ -50,18 +64,18 @@
   {@const p = previews[href]}
   {#if kind === 'image'}
     {#if failed[href]}
-      <p class="note">Could not load that picture. <a href={href} target="_blank" rel="noopener noreferrer nofollow">Open the link</a></p>
+      <p class="note">Could not load that picture{why[href] ? ` (${why[href]})` : ''}. <a href={href} target="_blank" rel="noopener noreferrer nofollow">Open the link</a></p>
     {:else}
       <a class="media" href={href} target="_blank" rel="noopener noreferrer nofollow">
-        <img src={mediaSrc(info.src ?? href)} alt="Picture from {siteName(href)}" loading="lazy" decoding="async" onerror={() => (failed[href] = true)} />
+        <img src={mediaSrc(info.src ?? href)} alt="Picture from {siteName(href)}" loading="lazy" decoding="async" onerror={() => fail(href, mediaSrc(info.src ?? href))} />
       </a>
     {/if}
   {:else if kind === 'video'}
     {#if failed[href]}
-      <p class="note">Could not load that video. <a href={href} target="_blank" rel="noopener noreferrer nofollow">Open the link</a></p>
+      <p class="note">Could not load that video{why[href] ? ` (${why[href]})` : ''}. <a href={href} target="_blank" rel="noopener noreferrer nofollow">Open the link</a></p>
     {:else}
       <!-- svelte-ignore a11y_media_has_caption -->
-      <video class="media" src={mediaSrc(info.src ?? href)} controls preload="metadata" playsinline onerror={() => (failed[href] = true)}></video>
+      <video class="media" src={mediaSrc(info.src ?? href)} controls preload="metadata" playsinline onerror={() => fail(href, mediaSrc(info.src ?? href))}></video>
     {/if}
   {:else if kind === 'audio'}
     {#if failed[href]}
