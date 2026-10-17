@@ -6,6 +6,7 @@ import { api, websocketUrl, type NetworkInfo, type SessionInfo } from './api'
 import { Connection } from './irc/connection'
 import { NetworkState, type Buffer, type ChatMessage } from './network.svelte'
 import { pageUnfocused, showNotification } from './notify'
+import { plugins } from './plugins/manager.svelte'
 import { disablePush } from './push'
 import { settings } from './settings.svelte'
 
@@ -94,6 +95,10 @@ class App {
     })
     this.phase = 'ready'
     for (const n of session.networks) if (n.enabled) this.start(n)
+    plugins.init(session.user, {
+      network: (label) => this.networks.find((n) => n.label === label),
+      active: () => this.active,
+    })
 
     const open = this.takeDeepLink()
     const first = this.networks[0]
@@ -103,6 +108,7 @@ class App {
 
   /** Drops every connection and returns to the login form. */
   private teardown(reason: string): void {
+    plugins.dispose()
     for (const conn of this.conns.values()) conn.close()
     for (const net of this.networks) net.dispose()
     this.conns.clear()
@@ -125,6 +131,7 @@ class App {
       onMention: (n, buf, msg) => this.notifyMention(n, buf, msg),
       iceServers: () => api.ice().then((r) => r.iceServers),
       getMedia: microphone,
+      plugins,
     })
     conn = new Connection({
       url: websocketUrl(),

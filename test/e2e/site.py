@@ -6,6 +6,7 @@ itself: everything goes through the bouncer.
 """
 import base64
 import http.server
+import json
 import os
 import socketserver
 
@@ -24,6 +25,10 @@ PAGE = """<!doctype html><html><head>
 </head><body><p>body</p></body></html>""".encode()
 
 
+# Every path that was asked for, so a test can show something was never requested.
+HITS = []
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -37,7 +42,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
-        if path in ("/pic.png", "/card.png"):
+        if path == "/_hits":
+            self.reply("application/json", json.dumps(HITS).encode())
+            return
+        HITS.append(path)
+        if path == "/escape.js":
+            self.reply("text/javascript", b"export default 1")
+        elif path in ("/pic.png", "/card.png"):
             self.reply("image/png", PNG)
         elif path == "/page.html":
             self.reply("text/html; charset=utf-8", PAGE)

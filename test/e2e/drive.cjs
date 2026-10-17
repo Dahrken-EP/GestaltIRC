@@ -545,6 +545,163 @@ async function send(page, text) {
   await vJane.ctx.close()
   await vKim.ctx.close()
 
+
+  // ---------- N. plugins ----------
+  const bundle = (name, permissions, source, version = '1.0.0') => JSON.stringify({ name, version, description: 'e2e ' + name, permissions, source })
+  const openSettings = async () => {
+    await page.click('button[aria-label="Settings"]')
+    await page.waitForSelector('[data-testid=plugin-text]')
+  }
+  const closeSettings = async () => {
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('.card[role=dialog]', { state: 'detached' })
+  }
+  /** Pastes a plugin, reviews it, and installs it. `only` names the permissions to leave ticked; all stay ticked if it is left out. */
+  const installPlugin = async (json, only) => {
+    await page.getByTestId('plugin-text').fill(json)
+    await page.getByRole('button', { name: 'Review…' }).click()
+    await page.waitForSelector('[aria-label="Allow this plugin"]')
+    if (only) {
+      for (const box of await page.locator('[aria-label="Allow this plugin"] input[type=checkbox]').all()) {
+        const label = (await box.locator('xpath=..').innerText()).toLowerCase()
+        const want = only.some((w) => label.includes(w))
+        if ((await box.isChecked()) !== want) await box.setChecked(want)
+      }
+    }
+    await page.getByRole('button', { name: 'Install' }).click()
+  }
+  const entry = (name) => page.locator(`[data-plugin=${name}]`)
+  const statusOf = (name) => entry(name).locator('[data-testid=plugin-status]')
+  const siteHits = async () => (await (await fetch(SITE + '/_hits')).json())
+  const logOf = async (name) => {
+    const log = entry(name).getByTestId('plugin-log')
+    if ((await log.count()) === 0) await entry(name).getByRole('button', { name: /Log/ }).click()
+    return log.innerText()
+  }
+
+  await openBuffer(page, '#chat')
+  await openSettings()
+
+  // A plugin that does not parse is explained, and nothing is installed.
+  await page.getByTestId('plugin-text').fill('{"name":"Bad Name"}')
+  await page.getByRole('button', { name: 'Review…' }).click()
+  await page.getByTestId('plugin-error').waitFor()
+  ok((await page.getByTestId('plugin-error').innerText()).includes('name'), 'a plugin that does not parse is explained')
+
+  // The example, with the permission to send taken away.
+  await page.getByRole('button', { name: 'Use the example' }).click()
+  await page.getByRole('button', { name: 'Review…' }).click()
+  await page.waitForSelector('[aria-label="Allow this plugin"]')
+  const asked = await page.locator('[aria-label="Allow this plugin"] .perm').allInnerTexts()
+  ok(asked.length === 4 && asked.some((t) => /send messages/i.test(t)) && asked.some((t) => /read what happens/i.test(t)), 'installing lists each permission the plugin asks for: ' + asked.join(' | '))
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await installPlugin(await page.getByTestId('plugin-text').inputValue(), ['read what happens', 'show lines', 'keep a small'])
+  await statusOf('greeter').filter({ hasText: 'running' }).waitFor({ timeout: 10000 })
+  const row = await entry('greeter').innerText()
+  ok(row.includes('Not allowed: send'), 'the list shows what was refused')
+  ok(row.includes('/greet'), 'the list shows the command the plugin added')
+  await closeSettings()
+
+  // /greet needs "send", which was refused, so nothing may be sent.
+  await send(page, '/greet jane')
+  await sleep(1500)
+  ok((await page.locator('.line:has-text("Hello, jane!")').count()) === 0, 'a plugin refused permission to send cannot send')
+  await openSettings()
+  ok((await logOf('greeter')).includes('permission "send" was not granted'), 'its log says which permission was missing')
+
+  // Installed again with everything allowed, it replaces the first and works.
+  await page.getByRole('button', { name: 'Use the example' }).click()
+  await installPlugin(await page.getByTestId('plugin-text').inputValue())
+  await statusOf('greeter').filter({ hasText: 'running' }).waitFor()
+  ok((await page.locator('[data-plugin]').count()) === 1, 'installing under the same name replaces the plugin')
+  await closeSettings()
+  await send(page, '/greet jane')
+  await page.waitForSelector('.line.self:has-text("Hello, jane!")')
+  ok(true, 'a command added by a plugin works, and its message goes out as the user')
+  ok((await page.locator('.line:has-text("/greet")').count()) === 0, 'the typed plugin command is not also sent to the network')
+
+  await send(page, '!msg hey matt, got a minute?')
+  await page.waitForSelector('.line:has-text("[greeter] Mentioned 1 time(s)")', { timeout: 8000 })
+  ok(true, 'a plugin hears about a mention, and shows a line only the user sees')
+  ok((await page.locator('.line.self:has-text("[greeter]")').count()) === 0, 'a line a plugin prints is not a message from the user')
+
+  // What it kept survives a reload, and it starts again by itself.
+  await page.reload()
+  await page.waitForSelector('.status.connected')
+  await openBuffer(page, '#chat')
+  await send(page, '!msg matt: again please')
+  await page.waitForSelector('.line:has-text("[greeter] Mentioned 2 time(s)")', { timeout: 10000 })
+  ok(true, 'plugins start again after a reload, with the data they kept')
+
+  // A plugin cannot take over a built-in command.
+  await openSettings()
+  await installPlugin(bundle('hijack', [], `irc.alias('join', function () {}); irc.alias('mine', function () {})`))
+  await statusOf('hijack').filter({ hasText: 'running' }).waitFor()
+  ok((await logOf('hijack')).includes('built-in'), 'a plugin is told it cannot replace a built-in command')
+  const commands = await entry('hijack').locator('div.small', { hasText: 'Commands:' }).innerText()
+  ok(commands.includes('/mine') && !commands.includes('/join'), 'only the allowed alias was registered: ' + commands)
+
+  // Timers run, and stop when the plugin is turned off.
+  await installPlugin(bundle('ticker', ['timers', 'output'], `var n = 0; irc.setTimer(500, function () { irc.print('tick ' + (++n)) }, true)`))
+  await statusOf('ticker').filter({ hasText: 'running' }).waitFor()
+  await closeSettings()
+  await page.waitForSelector('.line:has-text("[ticker] tick 3")', { timeout: 8000 })
+  ok(true, 'a repeating timer runs')
+  await openSettings()
+  await entry('ticker').getByRole('button', { name: 'Turn off' }).click()
+  await statusOf('ticker').filter({ hasText: 'stopped' }).waitFor()
+  await closeSettings()
+  const ticksThen = await page.locator('.line:has-text("[ticker] tick")').count()
+  await sleep(2000)
+  ok((await page.locator('.line:has-text("[ticker] tick")').count()) === ticksThen, 'turning a plugin off stops its timers')
+
+  // The sandbox. The probe asks for nothing and then tries to get out.
+  await openSettings()
+  const probeSource = `
+    var names = ['fetch','XMLHttpRequest','WebSocket','importScripts','Worker','SharedWorker','indexedDB','caches','BroadcastChannel','postMessage','setTimeout','setInterval','navigator','location'];
+    irc.log('globals ' + names.map(function (n) { return n + ':' + typeof self[n]; }).join(' '));
+    irc.log('page ' + typeof document + ' ' + typeof window + ' ' + typeof localStorage + ' ' + typeof XMLHttpRequest);
+    irc.log('indirect ' + (new Function('return typeof fetch'))());
+    var found = null, p = self;
+    while (p && !found) { var d = Object.getOwnPropertyDescriptor(p, 'fetch'); if (d && typeof d.value === 'function') found = d.value; p = Object.getPrototypeOf(p); }
+    if (found) { try { found.call(self, '${SITE}/escape-fetch').then(function () { irc.log('FETCH WORKED'); }, function () { irc.log('recovered fetch is blocked'); }); } catch (e) { irc.log('recovered fetch threw'); } }
+    else irc.log('no fetch anywhere');
+    import('${SITE}/escape.js').then(function () { irc.log('IMPORT WORKED'); }, function () { irc.log('import is blocked'); });
+    import('${BASE}/api/session').then(function () { irc.log('API IMPORT WORKED'); }, function () { irc.log('api import is blocked'); });
+  `
+  await installPlugin(bundle('probe', [], probeSource))
+  await statusOf('probe').filter({ hasText: 'running' }).waitFor()
+  await sleep(2500)
+  const plog = await logOf('probe')
+  for (const n of ['fetch', 'XMLHttpRequest', 'WebSocket', 'importScripts', 'Worker', 'SharedWorker', 'indexedDB', 'caches', 'BroadcastChannel', 'postMessage', 'setTimeout', 'setInterval', 'navigator', 'location']) {
+    if (!plog.includes(n + ':undefined')) ok(false, `${n} is still there in the sandbox: ${plog}`)
+  }
+  ok(plog.includes('page undefined undefined undefined undefined'), 'a plugin has no document, window, storage or XMLHttpRequest')
+  ok(plog.includes('indirect undefined'), 'fetch cannot be got back through Function')
+  ok(!/WORKED/.test(plog), 'nothing the probe tried reached the network: ' + plog.replace(/\s+/g, ' '))
+  const seen = await siteHits()
+  ok(!seen.includes('/escape.js') && !seen.includes('/escape-fetch'), 'the test website never heard from the plugin: ' + JSON.stringify(seen.filter((h) => h.startsWith('/escape'))))
+
+  // One that spins is stopped, and the page stays usable.
+  await installPlugin(bundle('spinner', [], `irc.alias('spin', function () { while (true) {} })`))
+  await statusOf('spinner').filter({ hasText: 'running' }).waitFor()
+  await closeSettings()
+  await send(page, '/spin')
+  await openSettings()
+  await statusOf('spinner').filter({ hasText: 'stopped' }).waitFor({ timeout: 15000 })
+  ok((await entry('spinner').innerText()).includes('stopped responding'), 'a plugin stuck in a loop is stopped, with the reason shown')
+  ok((await entry('greeter').locator('[data-testid=plugin-status]').innerText()).includes('running'), 'the others keep running')
+  await closeSettings()
+  await send(page, 'still here')
+  await page.waitForSelector('.line.self:has-text("still here")')
+  ok(true, 'the page stays usable while a plugin hangs')
+
+  // Removing plugins.
+  await openSettings()
+  for (const name of ['greeter', 'hijack', 'ticker', 'probe', 'spinner']) await entry(name).getByRole('button', { name: 'Remove' }).click()
+  ok((await page.locator('[data-plugin]').count()) === 0, 'plugins can be removed')
+  await closeSettings()
+
   // ---------- L. logout ----------
   await page.click('button[aria-label="Settings"]')
   await page.getByRole('button', { name: 'Log out' }).click()

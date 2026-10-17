@@ -9,6 +9,7 @@ import { pageUnfocused } from './notify'
 import type { ChatLine, ChatView } from './p2p/chat'
 import { P2pHub, SIGNAL_TAG } from './p2p/hub'
 import type { Signal } from './p2p/signal'
+import type { PluginEvent } from './plugins/types'
 import type { VoiceSlot } from './voice/active'
 import { VoiceCall, type CallView } from './voice/call'
 import { formatPresence, parsePresence, VOICE_TAG } from './voice/presence'
@@ -246,7 +247,15 @@ export class Buffer {
   }
 }
 
+/** What the plugin system offers a network: to hear about events, and to claim a typed command. */
+export interface PluginBus {
+  emit(ev: PluginEvent): void
+  /** True if a plugin took the command, which then goes nowhere else. */
+  alias(net: NetworkState, buf: Buffer, name: string, args: string[], raw: string): boolean
+}
+
 export interface NetworkHooks {
+  plugins?: PluginBus
   /** A mention or private message arrived live and the user may not be looking. */
   onMention(net: NetworkState, buf: Buffer, msg: ChatMessage): void
   /** STUN and TURN servers for a direct connection. */
@@ -344,6 +353,7 @@ export class NetworkState {
   /** Records what the bouncer agreed to, once the connection is up. */
   setCaps(caps: ReadonlySet<string>): void {
     this.caps = new Set(caps)
+    this.tellPluginsConnection('CONNECT')
     // A reconnect: we may have missed people joining and leaving the voice rooms we are in.
     for (const room of this.rooms.values()) room.reannounce()
   }
@@ -639,6 +649,7 @@ export class NetworkState {
 
   /** Called when the connection drops. Channel state is rebuilt when the bouncer replays it. */
   connectionLost(): void {
+    this.tellPluginsConnection('DISCONNECT')
     for (const b of this.buffers) {
       b.typing = []
       if (b.kind !== 'channel') continue
@@ -658,9 +669,27 @@ export class NetworkState {
    * plain messages, not to commands.
    */
   submit(input: string, replyTo?: string): void {
+    this.submitIn(this.active, input, replyTo, true)
+  }
+
+  /**
+   * Sends text as if it were typed in the window called `bufferName` (the one on screen if empty or
+   * not found). Used by plugins, whose lines never run other plugins' aliases, so two cannot set each other off.
+   */
+  submitTo(bufferName: string, input: string): void {
+    this.submitIn((bufferName && this.find(bufferName)) || this.active, input, undefined, false)
+  }
+
+  private submitIn(buf: Buffer, input: string, replyTo: string | undefined, aliases: boolean): void {
     for (const line of input.split(/\r?\n/)) {
       if (!line.trim()) continue
-      const buf = this.active
+      if (aliases && this.hooks.plugins) {
+        const m = /^\/([A-Za-z][A-Za-z0-9_]*)(?:\s+(.*))?$/.exec(line.trim())
+        if (m) {
+          const rest = (m[2] ?? '').trim()
+          if (this.hooks.plugins.alias(this, buf, m[1]!.toLowerCase(), rest ? rest.split(/\s+/) : [], rest)) continue
+        }
+      }
       if (buf.kind === 'p2p') {
         this.submitDirect(buf, line)
         continue
@@ -671,7 +700,7 @@ export class NetworkState {
       }
     }
     // Sending ends any typing notice for this buffer.
-    this.sendTyping(this.active, 'done')
+    this.sendTyping(buf, 'done')
   }
 
   private submitDirect(buf: Buffer, line: string): void {
@@ -1238,6 +1267,7 @@ export class NetworkState {
     // Lines with no sender (local lines) always show; they are never duplicates.
     if (!m.nick && !m.msgid) msg.key = `local|${msg.id}`
     if (!buf.insert(msg, !history)) return
+    if (!history) this.tellPlugins(buf, msg)
 
     if (m.self || !COUNTS_AS_UNREAD.has(m.kind) || m.time <= buf.lastRead) return
 
@@ -1251,6 +1281,24 @@ export class NetworkState {
       if (m.mention) buf.mentionCount++
     }
     if (!history && m.mention) this.hooks.onMention(this, buf, msg)
+  }
+
+  /** What happened, for plugins. Direct chats stay between the two people, so they are not passed on. */
+  private tellPlugins(buf: Buffer, m: ChatMessage): void {
+    const bus = this.hooks.plugins
+    if (!bus || buf.kind === 'p2p') return
+    const names: Partial<Record<Kind, PluginEvent['event']>> = {
+      msg: 'TEXT', action: 'ACTION', notice: 'NOTICE', join: 'JOIN', part: 'PART', quit: 'QUIT', nick: 'NICK', kick: 'KICK', mode: 'MODE', topic: 'TOPIC',
+    }
+    const event = names[m.kind]
+    if (!event) return
+    const base = { network: this.label, buffer: buf.kind === 'status' ? '' : buf.name, nick: m.nick, text: m.text, target: m.target ?? '', self: m.self, time: m.time }
+    bus.emit({ event, ...base })
+    if (m.mention && !m.self && (event === 'TEXT' || event === 'ACTION' || event === 'NOTICE')) bus.emit({ event: 'MENTION', ...base })
+  }
+
+  private tellPluginsConnection(event: 'CONNECT' | 'DISCONNECT'): void {
+    this.hooks.plugins?.emit({ event, network: this.label, buffer: '', nick: this.nick, text: '', target: '', self: true, time: Date.now() })
   }
 
   // --- persistence of read positions ---
