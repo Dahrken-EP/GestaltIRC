@@ -113,3 +113,29 @@ func TestTurnSecretFile(t *testing.T) {
 		t.Error("a missing secret file was accepted")
 	}
 }
+
+func TestWarnsWhenTheTurnSecretIsInAFileOthersCanRead(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "b.yaml")
+	body := "turn_uris: [\"turn:t.example:3478\"]\nturn_secret: s3cret\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Warnings) != 1 || !strings.Contains(c.Warnings[0], "turn_secret") {
+		t.Errorf("warnings = %v", c.Warnings)
+	}
+	if strings.Contains(strings.Join(c.Warnings, " "), "s3cret") {
+		t.Error("the warning repeats the secret")
+	}
+	// Private, or kept in its own file, there is nothing to say.
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := Load(path); len(c.Warnings) != 0 {
+		t.Errorf("warned about a private file: %v", c.Warnings)
+	}
+}

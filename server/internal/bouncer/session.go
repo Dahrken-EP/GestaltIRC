@@ -13,6 +13,7 @@ import (
 
 	"irc-webclient/server/internal/api"
 	"irc-webclient/server/internal/irc"
+	"irc-webclient/server/internal/ratelimit"
 )
 
 // maxQueue bounds the lines queued for one client. A client that falls this far
@@ -114,9 +115,26 @@ type Session struct {
 	userSet        bool
 	registered     bool
 	attached       bool
+	// Flood control. Lines over the rate are dropped; a client that keeps on is disconnected.
+	bucket     *ratelimit.Bucket
+	drops      int
+	lastDrop   time.Time
+	lastNotice time.Time
 }
 
+// How much dropping is tolerated before a client is cut off, and how long quiet forgives it.
+const (
+	maxDrops        = 200
+	dropMemory      = 30 * time.Second
+	floodNoticeSpan = 5 * time.Second
+)
+
 func newSession(b *Bouncer, conn irc.LineConn, id api.Identity) *Session {
+	burst, rate := b.conf.CommandBurst, b.conf.CommandRate
+	if burst < 1 || rate <= 0 {
+		// A Config built by hand, not loaded, has no defaults filled in.
+		burst, rate = 30, 10
+	}
 	return &Session{
 		b:       b,
 		conn:    conn,
@@ -124,6 +142,7 @@ func newSession(b *Bouncer, conn irc.LineConn, id api.Identity) *Session {
 		caps:    map[string]bool{},
 		notifyc: make(chan struct{}, 1),
 		done:    make(chan struct{}),
+		bucket:  ratelimit.NewBucket(burst, rate),
 	}
 }
 
@@ -155,10 +174,41 @@ func (s *Session) run(ctx context.Context) {
 		if err != nil {
 			continue
 		}
+		if !s.allowed(m) {
+			if s.drops >= maxDrops {
+				s.enqueueMsg(notice(s.nickOr("*"), "Disconnected for sending too much, too fast"))
+				return
+			}
+			continue
+		}
 		if !s.handle(m) {
 			return
 		}
 	}
+}
+
+// allowed applies flood control to one line. Keepalives and QUIT are free. A line over the limit is
+// dropped, and the client is told now and then, so a script gone wrong is not silent. It protects the
+// network connection (which a flood would get cut off) and the database (which CHATHISTORY queries).
+func (s *Session) allowed(m *irc.Message) bool {
+	switch m.Command {
+	case "PING", "PONG", "QUIT":
+		return true
+	}
+	if s.bucket.Allow() {
+		return true
+	}
+	now := time.Now()
+	if now.Sub(s.lastDrop) > dropMemory {
+		s.drops = 0
+	}
+	s.drops++
+	s.lastDrop = now
+	if now.Sub(s.lastNotice) > floodNoticeSpan {
+		s.lastNotice = now
+		s.sendFail(m.Command, "RATE_LIMITED", "", "You are sending too fast, so some lines were dropped")
+	}
+	return false
 }
 
 // handle processes one client line. It returns false when the session should end.

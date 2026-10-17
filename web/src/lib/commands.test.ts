@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { parseInput, splitText, type CommandContext } from './commands'
+// The tests run on Node. The browser build has no Node types.
+// @ts-expect-error no @types/node
+import { readFileSync } from 'node:fs'
+import { BUILTIN_COMMANDS, parseInput, splitText, type CommandContext } from './commands'
 
 const chan: CommandContext = { target: '#c', inBuffer: true, chanTypes: '#&' }
 const status: CommandContext = { target: '', inBuffer: false, chanTypes: '#&' }
@@ -79,5 +82,14 @@ describe('splitText', () => {
     const parts = splitText('é'.repeat(300), 100)
     expect(parts.join('')).toBe('é'.repeat(300))
     expect(parts.every((p) => new TextEncoder().encode(p).length <= 100)).toBe(true)
+  })
+})
+
+describe('BUILTIN_COMMANDS', () => {
+  it('lists every command parseInput knows, so a plugin cannot shadow one', () => {
+    const src = readFileSync(new URL('./commands.ts', import.meta.url), 'utf8')
+    const body = src.slice(src.indexOf('switch (cmd) {'), src.indexOf('default:', src.indexOf('switch (cmd) {')))
+    const cases = [...body.matchAll(/case '([a-z]+)'/g)].map((m) => m[1]!)
+    expect([...BUILTIN_COMMANDS].sort()).toEqual([...new Set(cases)].sort())
   })
 })

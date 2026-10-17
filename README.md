@@ -98,6 +98,33 @@ Things to know about direct chat: the same account logged in on two devices gets
 on both, and the first to accept connects. Chat is not kept after the page closes. A browser
 tab that sleeps (a phone with the screen off) may drop the connection.
 
+Phase 7 adds plugins (see DESIGN.md section 7). Open Settings, then Plugins, paste a plugin (one JSON
+document with `name`, `version`, `description`, `permissions` and `source`) or choose a file, and
+review what it asks for before it is installed. "Use the example" fills in a small working one.
+
+- **What a plugin can do.** Inside `source`, a plugin has an `irc` object: `irc.alias(name, fn)` adds a
+  `/name` command (it cannot replace a built-in one); `irc.on(EVENT, fn)` hears `TEXT`, `ACTION`, `NOTICE`,
+  `MENTION`, `JOIN`, `PART`, `QUIT`, `NICK`, `KICK`, `MODE`, `TOPIC`, `CONNECT` and `DISCONNECT`;
+  `irc.setTimer(ms, fn, repeat)`; `irc.send(line, window)` and `irc.say(nick, text)` (sent as you, by the
+  same path a typed command takes); `irc.print(text)` (a line only you see); `irc.storage.get/set/delete/keys`;
+  and `irc.log(...)`.
+- **Permissions.** `events`, `send`, `output`, `timers`, `storage`. You can untick any when installing. The
+  page, not the plugin, checks every call, and a plugin that keeps trying what it was refused is stopped.
+- **Where it runs.** In a Web Worker inside a frame with `sandbox="allow-scripts"` (no origin of its own, so
+  no cookies, storage or access to the page; requests carry no credentials) whose content security
+  policy forbids every connection, and the worker deletes `fetch`, `WebSocket`, `Worker`, `importScripts`
+  and the like before the plugin's code runs. The browser test has a plugin try to get out by each route
+  it can think of, and checks that the test website never hears from it.
+- **What `send` cannot do.** Lines a plugin sends go to the network. Commands that act on your browser
+  (`/voice`, `/call`, `/direct`, `/clear`) are refused, and a plugin cannot write in a direct chat. A plugin
+  cannot take over `/ns`, `/identify`, `/oper` and the other commands people type passwords into.
+- **Limits.** A few actions a second, 20 aliases, 20 timers (at least 100 ms apart), 100 KB of stored data.
+  A plugin that does not answer for five seconds, or crashes, or floods, is stopped and switched off, with
+  the reason shown. Direct chats are not passed to plugins.
+- **Not done.** Popups and dialogs (the design puts them later), and server-side WASM hooks. Plugins and
+  their data are kept in this browser, per account, and are not synced to your other devices. A plugin
+  with `events` can read your channels, and with `send` can speak as you: only install code you trust.
+
 Message text is never inserted as HTML. Only `http` and `https` links are clickable.
 
 Limits to know about: replying, reacting and deleting appear when you hover a message, so a

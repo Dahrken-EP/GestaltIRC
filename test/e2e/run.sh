@@ -100,6 +100,7 @@ fi
 
 script=drive
 [ -n "${VOICE_LOAD:-}" ] && script=voice_load
+[ -n "${SHOTS:-}" ] && script=shots
 out=${OUT_DIR:-$work/out}
 mkdir -p "$out"
 status=0

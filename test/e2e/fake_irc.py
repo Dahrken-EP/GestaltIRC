@@ -8,6 +8,8 @@ sent in a channel or private message.
 import asyncio, datetime, itertools, os, re
 
 mid = itertools.count(1)
+# For the load test: how many old messages to send into each channel as it is joined.
+LOAD_MSGS = int(os.environ.get('LOAD_MSGS', '0'))
 # Real clients that have registered, by lower-case nick, so they can talk to each other.
 clients = {}
 # Who is in each channel: lower-case channel -> {lower-case nick: send function}.
@@ -128,6 +130,10 @@ async def handle(reader, writer):
                     for i in range(800):
                         off = -(800 - i)
                         send(f'{tags(offset=off).replace("msgid=m", "msgid=bulk")}:alice!u@h PRIVMSG {ch} :bulk message {i}')
+                elif LOAD_MSGS:
+                    for i in range(LOAD_MSGS):
+                        who = ('alice', 'bob', 'carol', 'dave', 'erin')[i % 5]
+                        send(f'{tags(offset=-(LOAD_MSGS - i))}:{who}!u@h PRIVMSG {ch} :message {i} in {ch}: the quick brown fox jumps over the lazy dog')
                 else:
                     bot_say(ch, 'alice', f'hello {n}, welcome to {ch}', 0.5)
                     bot_say(ch, 'alice', 'see https://example.com/page and <b>not bold</b>', 0.7)

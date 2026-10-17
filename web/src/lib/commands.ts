@@ -85,6 +85,57 @@ export const HELP = [
   'Any other /command is sent to the server as it is. Start a line with // to send a literal "/".',
 ].join('\n')
 
+/**
+ * The commands the client handles itself. A plugin's alias cannot take one of these over.
+ * A test checks this list against the switch in parseInput, so it cannot fall behind.
+ */
+export const BUILTIN_COMMANDS: ReadonlySet<string> = new Set([
+  'action',
+  'admin',
+  'away',
+  'back',
+  'ban',
+  'call',
+  'clear',
+  'ctcp',
+  'direct',
+  'dm',
+  'help',
+  'info',
+  'invite',
+  'j',
+  'join',
+  'kick',
+  'leave',
+  'links',
+  'list',
+  'lusers',
+  'me',
+  'mode',
+  'motd',
+  'msg',
+  'names',
+  'nick',
+  'notice',
+  'part',
+  'ping',
+  'privmsg',
+  'q',
+  'query',
+  'quit',
+  'quote',
+  'raw',
+  'stats',
+  'time',
+  'topic',
+  'unban',
+  'version',
+  'voice',
+  'who',
+  'whois',
+  'whowas',
+])
+
 /** Turns one line of input into actions. Multi-line input is handled by the caller. */
 export function parseInput(input: string, ctx: CommandContext): Action[] {
   if (!input.startsWith('/') || input.startsWith('//')) {

@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8" />
+<!--
+  Where a plugin's worker lives. The page that embeds this uses sandbox="allow-scripts", so it
+  has no origin of its own: no cookies, no storage, no access to the chat page. The policy below
+  forbids any connection out, and a worker made from a blob inherits it. It also has no DOM
+  use of its own: the only thing it does is start the worker and give it a message channel.
+-->
+<meta
+  http-equiv="Content-Security-Policy"
+  content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; worker-src blob:; connect-src 'none'"
+/>
+<script>
+  var started = false
+  addEventListener('message', function (e) {
+    var d = e.data
+    if (started || e.source !== parent || !d || d.t !== 'boot' || typeof d.code !== 'string' || !e.ports || !e.ports[0]) return
+    started = true
+    var url = URL.createObjectURL(new Blob([d.code], { type: 'text/javascript' }))
+    var w = new Worker(url)
+    w.onerror = function (ev) {
+      parent.postMessage({ t: 'worker-error', message: String((ev && ev.message) || 'the plugin crashed').slice(0, 300) }, '*')
+    }
+    w.postMessage({ t: 'port' }, [e.ports[0]])
+  })
+</script>

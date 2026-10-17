@@ -78,6 +78,8 @@ const CHAT_LABEL = 'chat'
 const FILE_PREFIX = 'file:'
 const MAX_PENDING_OFFERS = 8
 const MAX_OPEN_TRANSFERS = 4
+/** Offers accepted for the user's attention in any minute, so one peer cannot bury the panel in them. */
+const MAX_OFFERS_PER_MINUTE = 12
 
 const FAILURES: Record<TransferFailure, string> = {
   cancelled: 'cancelled',
@@ -104,6 +106,7 @@ export class DirectChat {
   private live = new Map<string, Live>()
   private timer: ReturnType<typeof setTimeout> | undefined
   private lastSeenIds = new Set<string>()
+  private offerTimes: number[] = []
 
   constructor(private o: DirectChatOptions) {}
 
@@ -354,6 +357,10 @@ export class DirectChat {
         return
       case 'file-offer': {
         if (this.transfer(c.id)) return
+        const now = Date.now()
+        this.offerTimes = this.offerTimes.filter((t) => now - t < 60_000)
+        if (this.offerTimes.length >= MAX_OFFERS_PER_MINUTE) return this.control({ t: 'file-reject', id: c.id })
+        this.offerTimes.push(now)
         const pendingOffers = this.view.transfers.filter((t) => t.dir === 'in' && t.state === 'offered').length
         if (pendingOffers >= (this.o.maxPendingOffers ?? MAX_PENDING_OFFERS)) return this.control({ t: 'file-reject', id: c.id })
         this.addTransfer({ id: c.id, dir: 'in', name: c.name, size: c.size, mime: c.mime, state: 'offered', done: 0 })

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -227,5 +228,44 @@ func TestSettings(t *testing.T) {
 	s.SetSetting("k", "v2")
 	if v, _ := s.GetSetting("k"); v != "v2" {
 		t.Errorf("setting = %q", v)
+	}
+}
+
+func TestTheDatabaseAndItsSideFilesAreKeptPrivate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sub", "b.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS probe (x)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO probe VALUES (1)`); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	if len(entries) == 0 {
+		t.Fatal("no database files")
+	}
+	for _, e := range entries {
+		info, _ := e.Info()
+		if info.Mode().Perm()&0o077 != 0 {
+			t.Errorf("%s has mode %v, readable by others", e.Name(), info.Mode().Perm())
+		}
+	}
+	// An older database made with looser permissions is tightened too.
+	s.Close()
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Errorf("an existing database kept mode %v", info.Mode().Perm())
 	}
 }

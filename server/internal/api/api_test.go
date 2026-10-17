@@ -107,17 +107,20 @@ func TestLoginSetsStrictHttpOnlyCookie(t *testing.T) {
 
 func TestCookieSecureModes(t *testing.T) {
 	cases := []struct {
-		mode string
-		hdr  map[string]string
-		want bool
+		mode  string
+		trust bool
+		hdr   map[string]string
+		want  bool
 	}{
-		{"auto", map[string]string{"X-Forwarded-Proto": "https"}, true},
-		{"auto", nil, false},
-		{"always", nil, true},
-		{"never", map[string]string{"X-Forwarded-Proto": "https"}, false},
+		{"auto", true, map[string]string{"X-Forwarded-Proto": "https"}, true},
+		// Anyone can send that header, so it counts only behind a proxy that is trusted to set it.
+		{"auto", false, map[string]string{"X-Forwarded-Proto": "https"}, false},
+		{"auto", true, nil, false},
+		{"always", false, nil, true},
+		{"never", true, map[string]string{"X-Forwarded-Proto": "https"}, false},
 	}
 	for _, c := range cases {
-		e := newEnv(t, config.Config{CookieSecure: c.mode}, fakeStatus{})
+		e := newEnv(t, config.Config{CookieSecure: c.mode, TrustProxy: c.trust}, fakeStatus{})
 		resp, _ := e.do(t, "POST", "/api/login", `{"user":"matt","password":"a-long-password"}`, c.hdr, nil)
 		got := false
 		for _, ck := range resp.Cookies() {
