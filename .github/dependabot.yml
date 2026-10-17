@@ -8,6 +8,11 @@ updates:
     directory: /web
     schedule:
       interval: weekly
+    ignore:
+      # svelte-check cannot yet type-check with TypeScript 7 (it needs TypeScript 6 installed beside it, plus a flag),
+      # so the major bump breaks `npm run check`. Revisit when svelte-check supports it plainly.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -16,3 +21,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Node's odd-numbered releases are short-lived. The image stays on a long-term-support line, moved by hand.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
