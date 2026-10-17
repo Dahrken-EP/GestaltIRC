@@ -1,15 +1,15 @@
 name: release
 
 # Makes a release: the web client, the Linux AppImage and the Windows installer, attached to a tag. Run it by hand from
-# the Actions tab with the version (for example 0.1.6), on the branch to release (normally master). The tag is made
+# the Actions tab with the version (for example 0.1.7), on the branch to release (normally master). The tag is made
 # for you, at the commit it ran on.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version, without the v (for example 0.1.6). It must match desktop/package.json and desktop/src-tauri/tauri.conf.json.'
+        description: 'Version, without the v (for example 0.1.7). It must match desktop/package.json and desktop/src-tauri/tauri.conf.json.'
         required: true
-        default: '0.1.6'
+        default: '0.1.7'
 
 permissions:
   contents: read
