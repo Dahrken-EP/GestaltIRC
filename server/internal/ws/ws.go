@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
 
@@ -39,12 +40,17 @@ func (c *Conn) ReadLine() (string, error) {
 	if len(data) > readLimit {
 		return "", irc.ErrLineTooLong
 	}
+	if !utf8.Valid(data) {
+		return "", irc.ErrInvalidUTF8
+	}
 	return strings.TrimRight(string(data), "\r\n"), nil
 }
 
-// WriteLine sends one line as a text message. No terminator is added.
+// WriteLine sends one line as a text message. No terminator is added. A text
+// frame must be valid UTF-8 or browsers drop the connection, so bytes from an
+// IRC network in another encoding are replaced with U+FFFD.
 func (c *Conn) WriteLine(line string) error {
-	return c.ws.Write(c.ctx, websocket.MessageText, []byte(line))
+	return c.ws.Write(c.ctx, websocket.MessageText, []byte(strings.ToValidUTF8(line, "\uFFFD")))
 }
 
 // Close sends a normal closure and closes the socket.

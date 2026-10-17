@@ -2,22 +2,28 @@
   import { nickColor } from '../lib/nickcolor'
   import { tokenize } from '../lib/render'
   import { settings } from '../lib/settings.svelte'
-  import type { ChatMessage, NetworkState } from '../lib/network.svelte'
+  import type { Buffer, ChatMessage, NetworkState } from '../lib/network.svelte'
   import TokenText from './TokenText.svelte'
 
   let {
     msg,
     prev,
     net,
+    buf,
     onnick,
     onchannel,
+    onreply,
   }: {
     msg: ChatMessage
     prev: ChatMessage | undefined
     net: NetworkState
+    buf: Buffer
     onnick: (nick: string) => void
     onchannel: (name: string) => void
+    onreply: (msg: ChatMessage) => void
   } = $props()
+
+  const QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '😢']
 
   const words = $derived([net.nick, ...settings.keywords])
   const tokens = $derived(tokenize(msg.text, words))
@@ -29,59 +35,132 @@
   const time = $derived(new Date(msg.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
   const full = $derived(new Date(msg.time).toLocaleString())
   const color = (nick: string) => nickColor(nick, settings.nickColors)
+
+  // Replies, reactions and deletion need the message to have an id and the network to support them.
+  const canInteract = $derived(isChat && !!msg.msgid && buf.kind !== 'status')
+  const canReact = $derived(canInteract && net.caps.has('message-tags'))
+  const canReply = $derived(canInteract && net.caps.has('message-tags'))
+  const canDelete = $derived(canInteract && msg.self && net.canRedact)
+  const replied = $derived(msg.replyTo ? buf.byMsgId(msg.replyTo) : undefined)
+  const reactions = $derived(msg.msgid ? [...(buf.reactions.get(msg.msgid) ?? [])] : [])
+  let picking = $state(false)
+
+  function snippet(text: string): string {
+    return text.length > 90 ? text.slice(0, 89) + '…' : text
+  }
+
+  function react(emoji: string) {
+    net.react(buf, msg, emoji)
+    picking = false
+  }
 </script>
 
-<div class="line {msg.kind}" class:mention={msg.mention && isChat} class:self={msg.self}>
-  {#if settings.timestamps}
-    <time class="time" datetime={new Date(msg.time).toISOString()} title={full}>{time}</time>
+<div class="line {msg.kind}" class:mention={msg.mention && isChat} class:self={msg.self} data-msgid={msg.msgid}>
+  {#if msg.replyTo}
+    <div class="reply">
+      <span class="dim">↳</span>
+      {#if replied}
+        <button class="nick small" style:color={color(replied.nick)} onclick={() => onnick(replied.nick)}>{replied.nick}</button>
+        <span class="quote">{snippet(replied.text)}</span>
+      {:else}
+        <span class="quote">a message that is not loaded</span>
+      {/if}
+    </div>
   {/if}
 
-  {#if msg.kind === 'msg' || msg.kind === 'notice'}
-    <span class="who">
-      {#if !merged}
-        {#if msg.kind === 'notice'}<span class="dim">-</span>{:else}<span class="dim">&lt;</span>{/if}<button class="nick" style:color={color(msg.nick)} onclick={() => onnick(msg.nick)}>{msg.nick}</button>{#if msg.kind === 'notice'}<span class="dim">-</span>{:else}<span class="dim">&gt;</span>{/if}
-      {/if}
-    </span>
-    <span class="text"><TokenText {tokens} {onchannel} /></span>
-  {:else if msg.kind === 'action'}
-    <span class="who"><span class="dim">*</span></span>
-    <span class="text">
-      <button class="nick" style:color={color(msg.nick)} onclick={() => onnick(msg.nick)}>{msg.nick}</button>
-      <TokenText {tokens} {onchannel} />
-    </span>
-  {:else}
-    <span class="who"><span class="dim">{msg.kind === 'error' ? '!' : '–'}</span></span>
-    <span class="text event">
-      {#if msg.kind === 'join'}
-        <span style:color={color(msg.nick)}>{msg.nick}</span> joined
-      {:else if msg.kind === 'part'}
-        <span style:color={color(msg.nick)}>{msg.nick}</span> left{msg.text ? ` (${msg.text})` : ''}
-      {:else if msg.kind === 'quit'}
-        <span style:color={color(msg.nick)}>{msg.nick}</span> quit{msg.text ? ` (${msg.text})` : ''}
-      {:else if msg.kind === 'nick'}
-        <span style:color={color(msg.nick)}>{msg.nick}</span> is now known as <span style:color={color(msg.target ?? '')}>{msg.target}</span>
-      {:else if msg.kind === 'kick'}
-        <span style:color={color(msg.nick)}>{msg.nick}</span> kicked <span style:color={color(msg.target ?? '')}>{msg.target}</span>{msg.text ? ` (${msg.text})` : ''}
-      {:else if msg.kind === 'mode'}
-        <span style:color={color(msg.nick)}>{msg.nick}</span> set mode {msg.text}
-      {:else if msg.kind === 'topic'}
-        <span style:color={color(msg.nick)}>{msg.nick}</span> set the topic: <TokenText {tokens} {onchannel} />
-      {:else}
+  <div class="main">
+    {#if settings.timestamps}
+      <time class="time" datetime={new Date(msg.time).toISOString()} title={full}>{time}</time>
+    {/if}
+
+    {#if msg.kind === 'msg' || msg.kind === 'notice'}
+      <span class="who">
+        {#if !merged}
+          {#if msg.kind === 'notice'}<span class="dim">-</span>{:else}<span class="dim">&lt;</span>{/if}<button class="nick" style:color={color(msg.nick)} onclick={() => onnick(msg.nick)}>{msg.nick}</button>{#if msg.kind === 'notice'}<span class="dim">-</span>{:else}<span class="dim">&gt;</span>{/if}
+        {/if}
+      </span>
+      <span class="text"><TokenText {tokens} {onchannel} /></span>
+    {:else if msg.kind === 'action'}
+      <span class="who"><span class="dim">*</span></span>
+      <span class="text">
+        <button class="nick" style:color={color(msg.nick)} onclick={() => onnick(msg.nick)}>{msg.nick}</button>
         <TokenText {tokens} {onchannel} />
-      {/if}
-    </span>
+      </span>
+    {:else}
+      <span class="who"><span class="dim">{msg.kind === 'error' ? '!' : '–'}</span></span>
+      <span class="text event">
+        {#if msg.kind === 'join'}
+          <span style:color={color(msg.nick)}>{msg.nick}</span> joined
+        {:else if msg.kind === 'part'}
+          <span style:color={color(msg.nick)}>{msg.nick}</span> left{msg.text ? ` (${msg.text})` : ''}
+        {:else if msg.kind === 'quit'}
+          <span style:color={color(msg.nick)}>{msg.nick}</span> quit{msg.text ? ` (${msg.text})` : ''}
+        {:else if msg.kind === 'nick'}
+          <span style:color={color(msg.nick)}>{msg.nick}</span> is now known as <span style:color={color(msg.target ?? '')}>{msg.target}</span>
+        {:else if msg.kind === 'kick'}
+          <span style:color={color(msg.nick)}>{msg.nick}</span> kicked <span style:color={color(msg.target ?? '')}>{msg.target}</span>{msg.text ? ` (${msg.text})` : ''}
+        {:else if msg.kind === 'mode'}
+          <span style:color={color(msg.nick)}>{msg.nick}</span> set mode {msg.text}
+        {:else if msg.kind === 'topic'}
+          <span style:color={color(msg.nick)}>{msg.nick}</span> set the topic: <TokenText {tokens} {onchannel} />
+        {:else}
+          <TokenText {tokens} {onchannel} />
+        {/if}
+      </span>
+    {/if}
+
+    {#if canReply || canReact || canDelete}
+      <span class="tools" class:open={picking}>
+        {#if canReply}
+          <button title="Reply" aria-label="Reply to {msg.nick}" onclick={() => onreply(msg)}>↩</button>
+        {/if}
+        {#if canReact}
+          <button title="Add reaction" aria-label="Add reaction" aria-expanded={picking} onclick={() => (picking = !picking)}>☺</button>
+        {/if}
+        {#if canDelete}
+          <button class="del" title="Delete message" aria-label="Delete message" onclick={() => net.redact(buf, msg)}>🗑</button>
+        {/if}
+        {#if picking}
+          <span class="palette" role="group" aria-label="Choose a reaction">
+            {#each QUICK_REACTIONS as emoji (emoji)}
+              <button aria-label="React with {emoji}" onclick={() => react(emoji)}>{emoji}</button>
+            {/each}
+          </span>
+        {/if}
+      </span>
+    {/if}
+  </div>
+
+  {#if reactions.length}
+    <div class="reactions">
+      {#each reactions as [emoji, nicks] (emoji)}
+        <button
+          class="chip"
+          class:mine={nicks.some((n) => n.toLowerCase() === net.nick.toLowerCase())}
+          disabled={!canReact}
+          title={nicks.join(', ')}
+          aria-pressed={nicks.some((n) => n.toLowerCase() === net.nick.toLowerCase())}
+          aria-label="{emoji} from {nicks.join(', ')}"
+          onclick={() => react(emoji)}>{emoji} {nicks.length}</button
+        >
+      {/each}
+    </div>
   {/if}
 </div>
 
 <style>
   .line {
-    display: flex;
-    gap: 8px;
     padding: var(--row-pad) 10px var(--row-pad) 8px;
     border-left: 3px solid transparent;
+    position: relative;
+  }
+  .main {
+    display: flex;
+    gap: 8px;
     align-items: baseline;
   }
-  .line:hover {
+  .line:hover,
+  .line:focus-within {
     background: var(--bg-hover);
   }
   .line.mention {
@@ -116,6 +195,9 @@
   .nick:hover {
     text-decoration: underline;
   }
+  .nick.small {
+    font-size: 0.9em;
+  }
   .dim,
   .event {
     color: var(--fg-dim);
@@ -131,5 +213,76 @@
   }
   .self .text {
     color: var(--fg);
+  }
+
+  .reply {
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+    padding-left: calc(3.2em + 16px);
+    font-size: 0.85em;
+    color: var(--fg-dim);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .quote {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tools {
+    position: absolute;
+    right: 8px;
+    top: -2px;
+    display: none;
+    gap: 2px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0 2px;
+    z-index: 2;
+  }
+  .line:hover .tools,
+  .line:focus-within .tools,
+  .tools.open {
+    display: flex;
+  }
+  .tools button {
+    padding: 0 6px;
+    line-height: 1.6;
+  }
+  .tools button:hover {
+    background: var(--bg-hover);
+    border-radius: 4px;
+  }
+  .del:hover {
+    color: var(--danger);
+  }
+  .palette {
+    display: flex;
+    gap: 0;
+    border-left: 1px solid var(--border);
+    margin-left: 2px;
+  }
+
+  .reactions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 2px 0 0 calc(3.2em + 16px);
+  }
+  .chip {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0 8px;
+    font-size: 0.85em;
+    background: var(--bg-panel);
+  }
+  .chip.mine {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 18%, var(--bg-panel));
+  }
+  .chip:disabled {
+    cursor: default;
   }
 </style>

@@ -3,6 +3,7 @@ package bouncer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"irc-webclient/server/internal/api"
 	"irc-webclient/server/internal/irc"
 )
 
@@ -17,25 +19,78 @@ import (
 // behind is disconnected, so one stalled client cannot use all the memory.
 const maxQueue = 50000
 
-// supportedCaps are the capabilities the bouncer offers to its clients.
+// supportedCaps are the capabilities the bouncer offers to its clients. Each
+// one is either handled by the bouncer itself (read markers, history) or turned
+// into the right form for the client in prepareLocked, whatever the upstream
+// network offers.
 var supportedCaps = map[string]bool{
-	"message-tags": true,
-	"server-time":  true,
-	"batch":        true,
-	"echo-message": true,
-	"sasl":         true,
-	"chathistory":  true,
-	"message-ids":  true,
+	"message-tags":            true,
+	"server-time":             true,
+	"batch":                   true,
+	"echo-message":            true,
+	"sasl":                    true,
+	"chathistory":             true,
+	"message-ids":             true,
+	"away-notify":             true,
+	"account-notify":          true,
+	"account-tag":             true,
+	"extended-join":           true,
+	"multi-prefix":            true,
+	"userhost-in-names":       true,
+	"invite-notify":           true,
+	"chghost":                 true,
+	"setname":                 true,
+	"cap-notify":              true,
+	"standard-replies":        true,
+	"draft/read-marker":       true,
+	"draft/message-redaction": true,
 }
 
-// advertisedCaps is the CAP LS list. It includes the SASL mechanism.
-const advertisedCaps = "message-tags server-time batch echo-message sasl=PLAIN chathistory message-ids"
+// capOrder fixes the order of CAP LS so the output is stable.
+var capOrder = []string{
+	"message-tags", "server-time", "batch", "echo-message", "sasl", "chathistory", "message-ids",
+	"away-notify", "account-notify", "account-tag", "extended-join", "multi-prefix", "userhost-in-names",
+	"invite-notify", "chghost", "setname", "cap-notify", "standard-replies",
+	"draft/read-marker", "draft/message-redaction",
+}
+
+// capList renders the CAP LS reply. Values (such as sasl=PLAIN) are only sent to
+// clients that asked for version 302 or later. sts is sent only when configured,
+// and its value depends on whether this connection is already secure.
+func (b *Bouncer) capList(version int, secure bool) string {
+	var out []string
+	for _, name := range capOrder {
+		if name == "sasl" && version >= 302 {
+			out = append(out, "sasl=PLAIN")
+			continue
+		}
+		out = append(out, name)
+	}
+	if sts := b.stsValue(secure); sts != "" && version >= 302 {
+		out = append(out, "sts="+sts)
+	}
+	return strings.Join(out, " ")
+}
+
+// stsValue is the sts capability value, or "" when the policy is off. A secure
+// connection learns how long to remember it. An insecure one is told which port to
+// reconnect on and must not be given a duration.
+func (b *Bouncer) stsValue(secure bool) string {
+	if b.conf.STSDuration <= 0 {
+		return ""
+	}
+	if secure {
+		return "duration=" + strconv.Itoa(b.conf.STSDuration)
+	}
+	return "port=" + strconv.Itoa(b.conf.STSPort)
+}
 
 // Session is one client connected to the bouncer over WebSocket.
 type Session struct {
 	b      *Bouncer
 	conn   irc.LineConn
-	target *Network // chosen at login; nil until authenticated
+	id     api.Identity // who the transport says this is; User is set for a browser with a session cookie
+	target *Network     // chosen at login; nil until authenticated
 
 	// mu guards everything below it. Lock order: Network.mu, then Session.mu.
 	mu       sync.Mutex
@@ -43,10 +98,13 @@ type Session struct {
 	queue    []string
 	closed   bool
 	batchSeq int
-	notifyc  chan struct{}
-	done     chan struct{}
+	// replyNick is the nick shown to the client in notices the bouncer sends it.
+	replyNick string
+	notifyc   chan struct{}
+	done      chan struct{}
 
 	// Read-loop state. Only the read loop touches these.
+	capVersion     int
 	capNegotiating bool
 	authed         bool
 	saslPending    bool
@@ -58,10 +116,11 @@ type Session struct {
 	attached       bool
 }
 
-func newSession(b *Bouncer, conn irc.LineConn) *Session {
+func newSession(b *Bouncer, conn irc.LineConn, id api.Identity) *Session {
 	return &Session{
 		b:       b,
 		conn:    conn,
+		id:      id,
 		caps:    map[string]bool{},
 		notifyc: make(chan struct{}, 1),
 		done:    make(chan struct{}),
@@ -80,8 +139,17 @@ func (s *Session) run(ctx context.Context) {
 
 	for ctx.Err() == nil {
 		line, err := s.conn.ReadLine()
+		if errors.Is(err, irc.ErrInvalidUTF8) {
+			s.sendFail("*", "INVALID_UTF8", "", "Message rejected for containing invalid UTF-8")
+			continue
+		}
 		if err != nil {
 			return
+		}
+		// A line is one command. An embedded newline or NUL would let a client
+		// smuggle a second command through the parser, so such lines are dropped.
+		if strings.ContainsAny(line, "\r\n\x00") {
+			continue
 		}
 		m, err := irc.Parse(line)
 		if err != nil {
@@ -125,6 +193,22 @@ func (s *Session) handle(m *irc.Message) bool {
 			break
 		}
 		s.handleCHATHISTORY(m)
+	case "MARKREAD":
+		if !s.registered {
+			s.sendNumeric(451, "You have not registered")
+			break
+		}
+		s.handleMARKREAD(m)
+	case "REDACT":
+		if !s.registered {
+			s.sendNumeric(451, "You have not registered")
+			break
+		}
+		if _, ok := s.target.Caps()["draft/message-redaction"]; !ok {
+			s.sendFail("REDACT", "REDACT_FORBIDDEN", m.Param(0)+" "+m.Param(1), "This network does not support message redaction")
+			break
+		}
+		s.forward(m)
 	default:
 		if !s.registered {
 			s.sendNumeric(451, "You have not registered")
@@ -147,7 +231,10 @@ func (s *Session) handleCAP(m *irc.Message) {
 	switch strings.ToUpper(m.Param(0)) {
 	case "LS":
 		s.capNegotiating = true
-		s.enqueueLine(fmt.Sprintf(":%s CAP %s LS :%s", bouncerPrefix, s.nickOr("*"), advertisedCaps))
+		if v, err := strconv.Atoi(m.Param(1)); err == nil && v > s.capVersion {
+			s.capVersion = v
+		}
+		s.enqueueLine(fmt.Sprintf(":%s CAP %s LS :%s", bouncerPrefix, s.nickOr("*"), s.b.capList(s.capVersion, s.id.Secure)))
 	case "LIST":
 		s.mu.Lock()
 		var on []string
@@ -231,7 +318,7 @@ func (s *Session) handleAuthenticate(m *irc.Message) {
 		return
 	}
 	login := string(parts[1])
-	target, err := s.b.authenticate(login, string(parts[2]))
+	target, err := s.b.authenticate(login, string(parts[2]), s.id)
 	if err != nil {
 		s.sendNumeric(904, err.Error())
 		return
@@ -253,7 +340,7 @@ func (s *Session) handlePass(m *irc.Message) {
 	var target *Network
 	var err error
 	if ok {
-		target, err = s.b.authenticate(login, pass)
+		target, err = s.b.authenticate(login, pass, s.id)
 	}
 	if !ok || err != nil {
 		s.enqueueLine(fmt.Sprintf(":%s 464 %s :Password incorrect", bouncerPrefix, s.nickOr("*")))
@@ -279,6 +366,9 @@ func (s *Session) maybeRegister() {
 	s.attached = true
 	// The network decides the nick. Use it from now on, even if the client asked for another.
 	s.nick = s.target.Nick()
+	s.mu.Lock()
+	s.replyNick = s.nick
+	s.mu.Unlock()
 }
 
 // --- CHATHISTORY ---
@@ -352,6 +442,64 @@ func (s *Session) handleCHATHISTORY(m *irc.Message) {
 	s.enqueueBatch("chathistory", target, lines, true)
 }
 
+// --- MARKREAD (draft/read-marker) ---
+
+// markTime formats a marker the way the specification wants it.
+func markTime(ms int64) string {
+	return time.UnixMilli(ms).UTC().Format("2006-01-02T15:04:05.000Z")
+}
+
+// enqueueMarker tells the client where a buffer's read marker is, if it asked
+// for read markers. "*" means nothing has been read there.
+func (s *Session) enqueueMarker(target string, ms int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.caps["draft/read-marker"] {
+		return
+	}
+	stamp := "*"
+	if ms > 0 {
+		stamp = markTime(ms)
+	}
+	m := &irc.Message{Prefix: bouncerPrefix, Command: "MARKREAD", Params: []string{target, "timestamp=" + stamp}}
+	s.enqueueLocked(m.Format())
+}
+
+// handleMARKREAD answers "MARKREAD target" with the stored marker, and
+// "MARKREAD target timestamp=T" by moving the marker forward to T.
+func (s *Session) handleMARKREAD(m *irc.Message) {
+	s.mu.Lock()
+	on := s.caps["draft/read-marker"]
+	s.mu.Unlock()
+	if !on {
+		s.enqueueLine(fmt.Sprintf(":%s 421 %s MARKREAD :Unknown command", bouncerPrefix, s.nickOr("*")))
+		return
+	}
+	target := m.Param(0)
+	if target == "" {
+		s.sendFail("MARKREAD", "NEED_MORE_PARAMS", "", "Missing parameters")
+		return
+	}
+	if len(m.Params) == 1 {
+		ms, err := s.target.ReadMarker(target)
+		if err != nil {
+			s.sendFail("MARKREAD", "INTERNAL_ERROR", "", "Could not read the marker")
+			return
+		}
+		s.enqueueMarker(target, ms)
+		return
+	}
+	value, ok := strings.CutPrefix(m.Param(1), "timestamp=")
+	t, err := time.Parse(time.RFC3339Nano, value)
+	if !ok || err != nil {
+		s.sendFail("MARKREAD", "INVALID_PARAMS", m.Param(1), "Invalid timestamp")
+		return
+	}
+	if err := s.target.SetReadMarker(target, t.UnixMilli()); err != nil {
+		s.sendFail("MARKREAD", "INTERNAL_ERROR", "", "Could not save the marker")
+	}
+}
+
 // --- outbound queue ---
 
 // writeLoop sends queued lines to the client in order.
@@ -415,7 +563,13 @@ func (s *Session) enqueueLocked(line string) {
 
 // enqueueMsg formats m, applies the client's capabilities, and queues it.
 func (s *Session) enqueueMsg(m *irc.Message) {
-	s.enqueueMessage(m, "", false)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// replyNick is used only to address a notice. Messages the bouncer builds are from
+	// the bouncer, so they are never mistaken for the client's own echo.
+	if line, ok := s.prepareLocked(m, s.replyNick, false); ok {
+		s.enqueueLocked(line)
+	}
 }
 
 // enqueueMessage is the path for messages from the network. ownNick is the
@@ -441,7 +595,10 @@ func (s *Session) prepareLocked(m *irc.Message, ownNick string, history bool) (s
 		return "", false
 	}
 
-	cp := *m
+	cp, ok := adapt(m, s.caps, ownNick)
+	if !ok {
+		return "", false
+	}
 	cp.Tags = nil
 	if s.caps["message-tags"] {
 		for _, t := range m.Tags {
@@ -449,6 +606,7 @@ func (s *Session) prepareLocked(m *irc.Message, ownNick string, history bool) (s
 			case t.Key == "time" && !s.caps["server-time"]:
 			case t.Key == "msgid" && !s.caps["message-ids"]:
 			case t.Key == "batch" && !s.caps["batch"]:
+			case t.Key == "account" && !s.caps["account-tag"]:
 			default:
 				cp.Tags = append(cp.Tags, t)
 			}
@@ -494,12 +652,13 @@ func (s *Session) sendNumeric(code int, text string) {
 	s.enqueueLine(fmt.Sprintf(":%s %03d %s :%s", bouncerPrefix, code, s.nickOr("*"), text))
 }
 
+// sendFail sends a standard reply FAIL. An empty context is left out.
 func (s *Session) sendFail(command, code, context, text string) {
-	s.enqueueMsg(&irc.Message{
-		Prefix:  bouncerPrefix,
-		Command: "FAIL",
-		Params:  []string{command, code, context, text},
-	})
+	params := []string{command, code}
+	if context != "" {
+		params = append(params, context)
+	}
+	s.enqueueMsg(&irc.Message{Prefix: bouncerPrefix, Command: "FAIL", Params: append(params, text)})
 }
 
 func (s *Session) nickOr(fallback string) string {

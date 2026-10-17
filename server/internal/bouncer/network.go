@@ -5,6 +5,7 @@ package bouncer
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log"
@@ -31,13 +32,71 @@ const (
 // ErrNotConnected is returned when a client sends a command while the network is down.
 var ErrNotConnected = errors.New("bouncer: not connected to network")
 
+// member is one nick in a channel.
+type member struct {
+	nick     string
+	prefix   string // prefix symbols, highest first, such as "@+"
+	userhost string // "user@host", when the network told us
+}
+
 // channelState is what the bouncer remembers about a channel it is in. It is
 // replayed to a client when that client attaches.
 type channelState struct {
 	name     string // display name as the server sent it
 	topic    string // empty if none
 	hasTopic bool
-	names    []string // nicks with their prefix characters, as sent in NAMES
+	members  []member
+}
+
+func (cs *channelState) index(nick string) int {
+	for i, m := range cs.members {
+		if strings.EqualFold(m.nick, nick) {
+			return i
+		}
+	}
+	return -1
+}
+
+func (cs *channelState) remove(nick string) {
+	if i := cs.index(nick); i >= 0 {
+		cs.members = append(cs.members[:i], cs.members[i+1:]...)
+	}
+}
+
+// upsert adds a member, or replaces the one with the same nick.
+func (cs *channelState) upsert(m member) {
+	if i := cs.index(m.nick); i >= 0 {
+		cs.members[i] = m
+		return
+	}
+	cs.members = append(cs.members, m)
+}
+
+// names renders the members as a NAMES list in its fullest form, with every
+// prefix and the user@host. Each client's view trims it to what it asked for.
+func (cs *channelState) names() []string {
+	out := make([]string, 0, len(cs.members))
+	for _, m := range cs.members {
+		entry := m.prefix + m.nick
+		if m.userhost != "" {
+			entry += "!" + m.userhost
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// parseNames reads a 353 list. Prefix symbols come first, and a nick may carry "!user@host".
+func parseNames(list string) []member {
+	var out []member
+	for _, entry := range strings.Fields(list) {
+		rest := nickOf(entry)
+		nick, userhost, _ := strings.Cut(rest, "!")
+		if nick != "" {
+			out = append(out, member{nick: nick, prefix: prefixOf(entry), userhost: userhost})
+		}
+	}
+	return out
 }
 
 // Network is one upstream IRC connection, kept alive for the user.
@@ -58,10 +117,14 @@ type Network struct {
 	isupport  [][]string // params of upstream 005 lines
 	channels  map[string]*channelState
 	wanted    map[string]string // channels to rejoin on reconnect, lower -> display
-	pending   map[string][]string
+	pending   map[string][]member
 	sessions  map[*Session]struct{}
 	connected bool
 	lastRecv  int64 // time of the last message from the network, in ms
+
+	// alert, if set, is told about messages that arrive while no client is
+	// attached, so the user can be notified another way. It must not block.
+	alert func(Alert)
 }
 
 // NewNetwork builds an upstream connection manager. Call Run to start it.
@@ -77,7 +140,7 @@ func NewNetwork(spec accounts.NetworkSpec, st *store.Store, historyLimit, replay
 		caps:        map[string]string{},
 		channels:    map[string]*channelState{},
 		wanted:      map[string]string{},
-		pending:     map[string][]string{},
+		pending:     map[string][]member{},
 		sessions:    map[*Session]struct{}{},
 	}
 	for _, ch := range spec.Join {
@@ -179,6 +242,9 @@ func (n *Network) connect(ctx context.Context) (*upstream.Client, error) {
 		sasl = &irc.PlainMechanism{Username: n.spec.SASLUser, Password: n.spec.SASLPassword}
 	case "SCRAM-SHA-256":
 		sasl = &irc.ScramSHA256Mechanism{Username: n.spec.SASLUser, Password: n.spec.SASLPassword}
+	case "EXTERNAL":
+		// The certificate was presented in the TLS handshake. SASLUser, if set, is the identity to act as.
+		sasl = &irc.ExternalMechanism{Authzid: n.spec.SASLUser}
 	}
 
 	client, err := upstream.Connect(irc.NewNetConn(conn), upstream.Config{
@@ -195,6 +261,15 @@ func (n *Network) connect(ctx context.Context) (*upstream.Client, error) {
 	return client, nil
 }
 
+// upstreamRootCAs replaces the system roots when verifying a network's TLS
+// certificate. It is nil outside tests.
+var upstreamRootCAs *x509.CertPool
+
+// SetUpstreamRootCAs makes the bouncer trust pool, instead of the system roots,
+// when it connects to a network over TLS. It exists for tests that run a network
+// with a self-signed certificate. Call it before starting the bouncer.
+func SetUpstreamRootCAs(pool *x509.CertPool) { upstreamRootCAs = pool }
+
 func dialUpstream(ctx context.Context, nc accounts.NetworkSpec) (net.Conn, error) {
 	d := &net.Dialer{Timeout: 20 * time.Second}
 	raw, err := d.DialContext(ctx, "tcp", net.JoinHostPort(nc.Host, strconv.Itoa(nc.Port)))
@@ -204,7 +279,16 @@ func dialUpstream(ctx context.Context, nc accounts.NetworkSpec) (net.Conn, error
 	if !nc.TLS {
 		return raw, nil
 	}
-	tc := tls.Client(raw, &tls.Config{ServerName: nc.Host, MinVersion: tls.VersionTLS12})
+	conf := &tls.Config{ServerName: nc.Host, MinVersion: tls.VersionTLS12, RootCAs: upstreamRootCAs}
+	if nc.ClientCert != "" {
+		cert, err := accounts.ParseClientCert(nc.ClientCert, nc.ClientKey)
+		if err != nil {
+			raw.Close()
+			return nil, err
+		}
+		conf.Certificates = []tls.Certificate{cert}
+	}
+	tc := tls.Client(raw, conf)
 	if err := tc.HandshakeContext(ctx); err != nil {
 		raw.Close()
 		return nil, err
@@ -223,7 +307,7 @@ func (n *Network) attachUpstream(c *upstream.Client) {
 	n.lastRecv = nowMS()
 	n.isupport = nil
 	n.channels = map[string]*channelState{}
-	n.pending = map[string][]string{}
+	n.pending = map[string][]member{}
 
 	for _, display := range n.wanted {
 		if err := c.Send(irc.New("JOIN", display)); err != nil {
@@ -240,7 +324,7 @@ func (n *Network) detachUpstream(err error) {
 	n.client = nil
 	n.connected = false
 	n.channels = map[string]*channelState{}
-	n.pending = map[string][]string{}
+	n.pending = map[string][]member{}
 	reason := "connection closed"
 	if err != nil {
 		reason = err.Error()
@@ -265,9 +349,15 @@ func (n *Network) Forward(m *irc.Message) error {
 	selfPfx := n.selfPfx
 	n.mu.Unlock()
 
+	// TAGMSG exists only to carry tags (typing, reactions). Without message-tags
+	// upstream it would arrive as a bare command the network does not know.
+	if m.Command == "TAGMSG" && !upstreamHasTags {
+		return nil
+	}
 	out := *m
-	if !upstreamHasTags {
-		out.Tags = nil
+	out.Tags = nil
+	if upstreamHasTags {
+		out.Tags = clientOnlyTags(m.Tags)
 	}
 	if err := c.Send(&out); err != nil {
 		return err
@@ -278,7 +368,9 @@ func (n *Network) Forward(m *irc.Message) error {
 		if prefix == "" {
 			prefix = self
 		}
-		echo := &irc.Message{Prefix: prefix, Command: m.Command, Params: m.Params}
+		// The echo carries the tags that were sent, so the sender sees a reply or
+		// reaction the same way the other people in the channel will.
+		echo := &irc.Message{Tags: out.Tags, Prefix: prefix, Command: m.Command, Params: m.Params}
 		n.handleUpstream(echo)
 	}
 	return nil
@@ -305,8 +397,37 @@ func (n *Network) Attach(s *Session) error {
 	for _, t := range missed {
 		s.enqueueBatch("chathistory", t.Name, t.Lines, false)
 	}
+	markers, err := n.store.ReadMarkers(n.id)
+	if err != nil {
+		return err
+	}
+	for _, mk := range markers {
+		s.enqueueMarker(mk.Target, mk.TimeMS)
+	}
 	n.sessions[s] = struct{}{}
 	return nil
+}
+
+// SetReadMarker moves a buffer's read marker forward and tells every attached
+// client that understands read markers, the sender included. Markers never move
+// back, so the value sent is the one now stored, which may be newer than ms.
+func (n *Network) SetReadMarker(target string, ms int64) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	key := strings.ToLower(target)
+	stored, err := n.store.SetReadMarker(n.id, key, ms)
+	if err != nil {
+		return err
+	}
+	for s := range n.sessions {
+		s.enqueueMarker(target, stored)
+	}
+	return nil
+}
+
+// ReadMarker returns a buffer's read marker in ms, or 0 if there is none.
+func (n *Network) ReadMarker(target string) (int64, error) {
+	return n.store.GetReadMarker(n.id, strings.ToLower(target))
 }
 
 // Detach removes a session. When the last session leaves, the current time
@@ -358,8 +479,20 @@ func (n *Network) handleUpstream(m *irc.Message) {
 	}
 
 	n.applyStateLocked(m)
+	if m.Command == "REDACT" {
+		// REDACT target msgid [reason]: the message is gone for everyone, so it must
+		// not come back in a later history replay.
+		if _, err := n.store.DeleteByMsgID(n.id, m.Param(1)); err != nil {
+			log.Printf("redact %s on %s: %v", m.Param(1), n.name, err)
+		}
+	}
 	if target, ok := n.historyTarget(m); ok {
 		n.record(target, m)
+	}
+	if n.alert != nil && len(n.sessions) == 0 {
+		if a, ok := n.alertFor(m); ok {
+			go n.alert(a)
+		}
 	}
 	n.broadcastLocked(m)
 }
@@ -376,7 +509,8 @@ func (n *Network) applyStateLocked(m *irc.Message) {
 			return
 		}
 		if cs := n.channels[strings.ToLower(ch)]; cs != nil {
-			cs.names = append(cs.names, m.Nick())
+			_, userhost, _ := strings.Cut(m.Prefix, "!")
+			cs.upsert(member{nick: m.Nick(), userhost: userhost})
 		}
 	case "PART":
 		ch := strings.ToLower(m.Param(0))
@@ -386,7 +520,7 @@ func (n *Network) applyStateLocked(m *irc.Message) {
 			return
 		}
 		if cs := n.channels[ch]; cs != nil {
-			cs.names = removeName(cs.names, m.Nick())
+			cs.remove(m.Nick())
 		}
 	case "KICK":
 		ch := strings.ToLower(m.Param(0))
@@ -396,23 +530,30 @@ func (n *Network) applyStateLocked(m *irc.Message) {
 			return
 		}
 		if cs := n.channels[ch]; cs != nil {
-			cs.names = removeName(cs.names, m.Param(1))
+			cs.remove(m.Param(1))
 		}
 	case "QUIT":
 		for _, cs := range n.channels {
-			cs.names = removeName(cs.names, m.Nick())
+			cs.remove(m.Nick())
 		}
 	case "NICK":
 		if n.isSelf(m.Nick()) {
 			n.nick = m.Param(0)
 		}
 		for _, cs := range n.channels {
-			for i, name := range cs.names {
-				if nickOf(name) == m.Nick() {
-					cs.names[i] = prefixOf(name) + m.Param(0)
-				}
+			if i := cs.index(m.Nick()); i >= 0 {
+				cs.members[i].nick = m.Param(0)
 			}
 		}
+	case "CHGHOST":
+		// CHGHOST newuser newhost
+		for _, cs := range n.channels {
+			if i := cs.index(m.Nick()); i >= 0 && len(m.Params) >= 2 {
+				cs.members[i].userhost = m.Param(0) + "@" + m.Param(1)
+			}
+		}
+	case "MODE":
+		n.applyModeLocked(m)
 	case "TOPIC":
 		if cs := n.channels[strings.ToLower(m.Param(0))]; cs != nil {
 			cs.topic, cs.hasTopic = m.Param(1), true
@@ -423,14 +564,95 @@ func (n *Network) applyStateLocked(m *irc.Message) {
 		}
 	case "353": // RPL_NAMREPLY
 		key := strings.ToLower(m.Param(2))
-		n.pending[key] = append(n.pending[key], strings.Fields(m.Param(3))...)
+		n.pending[key] = append(n.pending[key], parseNames(m.Param(3))...)
 	case "366": // RPL_ENDOFNAMES
 		key := strings.ToLower(m.Param(1))
 		if cs := n.channels[key]; cs != nil {
-			cs.names = n.pending[key]
+			cs.members = n.pending[key]
 		}
 		delete(n.pending, key)
 	}
+}
+
+// modeInfo reads the prefix modes and the CHANMODES groups from the network's
+// ISUPPORT. Without them it assumes the common ops and voice.
+func (n *Network) modeInfo() (prefix map[byte]byte, symbols string, groups [4]string) {
+	prefix = map[byte]byte{'o': '@', 'v': '+'}
+	symbols = "@+"
+	groups = [4]string{"beI", "k", "l", "imnpst"}
+	for _, params := range n.isupport {
+		for _, tok := range params {
+			key, val, _ := strings.Cut(tok, "=")
+			switch key {
+			case "PREFIX":
+				if modes, syms, ok := strings.Cut(strings.TrimPrefix(val, "("), ")"); ok && len(modes) == len(syms) {
+					prefix = map[byte]byte{}
+					for i := 0; i < len(modes); i++ {
+						prefix[modes[i]] = syms[i]
+					}
+					symbols = syms
+				}
+			case "CHANMODES":
+				if g := strings.Split(val, ","); len(g) >= 4 {
+					copy(groups[:], g[:4])
+				}
+			}
+		}
+	}
+	return prefix, symbols, groups
+}
+
+// applyModeLocked tracks channel privilege changes, such as +o and -v, so a
+// client that attaches later sees the current prefixes.
+func (n *Network) applyModeLocked(m *irc.Message) {
+	cs := n.channels[strings.ToLower(m.Param(0))]
+	if cs == nil || len(m.Params) < 2 {
+		return
+	}
+	prefix, symbols, groups := n.modeInfo()
+	args := m.Params[2:]
+	add := true
+	for _, c := range []byte(m.Param(1)) {
+		switch {
+		case c == '+':
+			add = true
+		case c == '-':
+			add = false
+		default:
+			_, isPrefix := prefix[c]
+			takesArg := isPrefix || strings.IndexByte(groups[0], c) >= 0 || strings.IndexByte(groups[1], c) >= 0 ||
+				(add && strings.IndexByte(groups[2], c) >= 0)
+			if !takesArg {
+				continue
+			}
+			var arg string
+			if len(args) > 0 {
+				arg, args = args[0], args[1:]
+			}
+			if !isPrefix {
+				continue
+			}
+			if i := cs.index(arg); i >= 0 {
+				cs.members[i].prefix = setPrefix(cs.members[i].prefix, prefix[c], add, symbols)
+			}
+		}
+	}
+}
+
+// setPrefix adds or removes one prefix symbol and keeps the symbols in rank order.
+func setPrefix(current string, sym byte, add bool, order string) string {
+	has := map[byte]bool{}
+	for i := 0; i < len(current); i++ {
+		has[current[i]] = true
+	}
+	has[sym] = add
+	var out []byte
+	for i := 0; i < len(order); i++ {
+		if has[order[i]] {
+			out = append(out, order[i])
+		}
+	}
+	return string(out)
 }
 
 // historyTarget reports which buffer a message belongs to. Only user messages
@@ -489,6 +711,19 @@ func (n *Network) notifyAll(text string) {
 	n.broadcastLocked(notice(n.nick, text))
 }
 
+// clientOnlyTags keeps the tags a client is allowed to originate: the ones that
+// start with "+". Anything else, such as time, msgid or account, is the
+// network's to set, and a client must not be able to forge it.
+func clientOnlyTags(tags []irc.Tag) []irc.Tag {
+	var out []irc.Tag
+	for _, t := range tags {
+		if strings.HasPrefix(t.Key, "+") {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func (n *Network) isSelf(nick string) bool {
 	return strings.EqualFold(nick, n.nick)
 }
@@ -509,6 +744,9 @@ func (n *Network) sendWelcomeLocked(s *Session) {
 		s.enqueueLine(fmt.Sprintf(":%s 005 %s NETWORK=%s CHANTYPES=#& PREFIX=(ov)@+ :are supported by this server",
 			bouncerPrefix, nick, n.name))
 	}
+	// Clients reach the bouncer over WebSocket text frames, which carry only UTF-8,
+	// and lines that are not valid UTF-8 are rejected.
+	s.enqueueLine(fmt.Sprintf(":%s 005 %s UTF8ONLY :are supported by this server", bouncerPrefix, nick))
 	s.enqueueLine(fmt.Sprintf(":%s 422 %s :MOTD is not available", bouncerPrefix, nick))
 	if !n.connected {
 		s.enqueueLine(fmt.Sprintf(":%s NOTICE %s :Not connected to %s yet. Reconnecting in the background.", bouncerPrefix, nick, n.name))
@@ -516,6 +754,8 @@ func (n *Network) sendWelcomeLocked(s *Session) {
 }
 
 // sendStateLocked replays joined channels: JOIN, topic, and members. Caller holds n.mu.
+// Messages go through the same per-client adaptation as live ones, so a client
+// that negotiated extended-join or multi-prefix gets those forms here too.
 func (n *Network) sendStateLocked(s *Session) {
 	nick := n.nick
 	keys := make([]string, 0, len(n.channels))
@@ -530,12 +770,12 @@ func (n *Network) sendStateLocked(s *Session) {
 	}
 	for _, k := range keys {
 		cs := n.channels[k]
-		s.enqueueLine(fmt.Sprintf(":%s JOIN %s", prefix, cs.name))
+		s.enqueueMessage(&irc.Message{Prefix: prefix, Command: "JOIN", Params: []string{cs.name}}, nick, true)
 		if cs.hasTopic {
 			s.enqueueLine((&irc.Message{Prefix: bouncerPrefix, Command: "332", Params: []string{nick, cs.name, cs.topic}}).Format())
 		}
-		for _, chunk := range chunkNames(cs.names, 400) {
-			s.enqueueLine((&irc.Message{Prefix: bouncerPrefix, Command: "353", Params: []string{nick, "=", cs.name, chunk}}).Format())
+		for _, chunk := range chunkNames(cs.names(), 400) {
+			s.enqueueMessage(&irc.Message{Prefix: bouncerPrefix, Command: "353", Params: []string{nick, "=", cs.name, chunk}}, nick, true)
 		}
 		s.enqueueLine((&irc.Message{Prefix: bouncerPrefix, Command: "366", Params: []string{nick, cs.name, "End of /NAMES list"}}).Format())
 	}
@@ -562,17 +802,6 @@ func hasCap(caps map[string]string, name string) bool {
 
 func notice(nick, text string) *irc.Message {
 	return &irc.Message{Prefix: bouncerPrefix, Command: "NOTICE", Params: []string{nick, text}}
-}
-
-// removeName drops the entry for nick, ignoring prefix characters.
-func removeName(names []string, nick string) []string {
-	out := names[:0]
-	for _, n := range names {
-		if !strings.EqualFold(nickOf(n), nick) {
-			out = append(out, n)
-		}
-	}
-	return out
 }
 
 const prefixChars = "~&@%+"

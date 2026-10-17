@@ -3,7 +3,7 @@
 //	bouncer -config bouncer.yaml init                 create the database and secret key
 //	bouncer -config bouncer.yaml serve                run the bouncer (default)
 //	bouncer -config bouncer.yaml user add|passwd|list|remove ...
-//	bouncer -config bouncer.yaml network add|list|remove ...
+//	bouncer -config bouncer.yaml network add|list|cert|remove ...
 //	bouncer hash-password                             print an argon2id hash of a stdin line
 package main
 
@@ -24,6 +24,7 @@ import (
 	"irc-webclient/server/internal/auth"
 	"irc-webclient/server/internal/bouncer"
 	"irc-webclient/server/internal/config"
+	"irc-webclient/server/internal/push"
 	"irc-webclient/server/internal/secret"
 	"irc-webclient/server/internal/store"
 )
@@ -39,6 +40,7 @@ commands:
   user remove NAME             delete a user, their networks, and their history
   network add USER NAME ...    add a network; SASL password from stdin (see -h)
   network list USER
+  network cert USER NAME       print the SHA-256 fingerprint of the network's client certificate
   network remove USER NAME
   hash-password                print an argon2id hash of one stdin line
 `
@@ -85,26 +87,26 @@ func main() {
 
 // openApp opens the database and secret key. Commands other than init need
 // both to exist already, so a wrong config path cannot quietly create an empty database.
-func openApp(cfg *config.Config, create bool) (*store.Store, *accounts.Service, error) {
+func openApp(cfg *config.Config, create bool) (*store.Store, *accounts.Service, *secret.Box, error) {
 	key, err := loadKey(cfg, create)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	box, err := secret.NewBox(key)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	dbPath := filepath.Join(cfg.DataDir, "bouncer.db")
 	if !create {
 		if _, err := os.Stat(dbPath); err != nil {
-			return nil, nil, fmt.Errorf("no database at %s; run `bouncer init` first", dbPath)
+			return nil, nil, nil, fmt.Errorf("no database at %s; run `bouncer init` first", dbPath)
 		}
 	}
 	st, err := store.Open(dbPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return st, accounts.New(st, box), nil
+	return st, accounts.New(st, box), box, nil
 }
 
 func loadKey(cfg *config.Config, create bool) ([]byte, error) {
@@ -117,7 +119,7 @@ func loadKey(cfg *config.Config, create bool) ([]byte, error) {
 }
 
 func initialise(cfg *config.Config) error {
-	st, _, err := openApp(cfg, true)
+	st, _, _, err := openApp(cfg, true)
 	if err != nil {
 		return err
 	}
@@ -128,13 +130,19 @@ func initialise(cfg *config.Config) error {
 }
 
 func serve(cfg *config.Config) error {
-	st, acc, err := openApp(cfg, false)
+	st, acc, box, err := openApp(cfg, false)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 
 	b := bouncer.New(cfg, st, acc)
+	pushSvc, err := push.New(st, box, cfg.PushContact)
+	if err != nil {
+		return err
+	}
+	b.SetPush(pushSvc)
+	b.API().EnablePush(pushSvc)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

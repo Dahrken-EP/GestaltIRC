@@ -90,8 +90,9 @@ func TestNickHelpers(t *testing.T) {
 	if nickOf("@+alice") != "alice" || prefixOf("@+alice") != "@+" {
 		t.Errorf("nickOf/prefixOf wrong for @+alice")
 	}
-	names := removeName([]string{"@alice", "bob"}, "ALICE")
-	if !reflect.DeepEqual(names, []string{"bob"}) {
-		t.Errorf("removeName = %q", names)
+	cs := &channelState{members: []member{{nick: "alice", prefix: "@"}, {nick: "bob"}}}
+	cs.remove("ALICE")
+	if len(cs.members) != 1 || cs.members[0].nick != "bob" {
+		t.Errorf("remove = %+v", cs.members)
 	}
 }

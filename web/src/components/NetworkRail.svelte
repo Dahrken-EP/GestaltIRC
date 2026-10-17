@@ -23,7 +23,6 @@
       {/if}
     </button>
   {/each}
-  <button class="net add" title="Add network" aria-label="Add network" onclick={() => (app.showLogin = true)}>+</button>
   <span class="grow"></span>
   <button class="net add" title="Settings" aria-label="Settings" onclick={() => (app.showSettings = true)}>⚙</button>
 </nav>

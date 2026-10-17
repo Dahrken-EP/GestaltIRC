@@ -4,7 +4,7 @@
 
 import { parseInput, HELP, type Action } from './commands'
 import type { Batch, Status } from './irc/connection'
-import { isServerPrefix, nickOf, timeOf, type Message } from './irc/message'
+import { format, isServerPrefix, nickOf, timeOf, type Message } from './irc/message'
 import { pageUnfocused } from './notify'
 import { mentions } from './render'
 import { settings } from './settings.svelte'
@@ -36,20 +36,33 @@ export interface ChatMessage {
   self: boolean
   mention: boolean
   msgid?: string
+  /** The msgid this line answers, from the +draft/reply tag. */
+  replyTo?: string
+}
+
+export interface Member {
+  nick: string
+  /** Prefix symbols, highest first, such as "@+". */
+  prefix: string
+  away?: boolean
 }
 
 /** Messages kept in memory per buffer. Older ones are fetched again with CHATHISTORY. */
 export const MAX_MESSAGES = 1500
 const HISTORY_PAGE = 100
-
-let nextId = 1
+/** How long "is typing" lasts without another update. Clients refresh it every few seconds. */
+const TYPING_TTL_MS = 8000
+/** Read markers are sent this long after the last change, so reading a busy channel is one message. */
+const MARKER_DELAY_MS = 800
+/** At most this often is a typing notice sent for one buffer. */
+const TYPING_SEND_GAP_MS = 3000
 
 /** Numerics sent while logging in or reading the MOTD. They go to the status buffer. */
-const STATUS_NUMERICS: ReadonlySet<number> = new Set([
-  900, 901, 903, 251, 252, 253, 254, 255, 265, 266, 372, 375, 376, 422,
-])
+const STATUS_NUMERICS: ReadonlySet<number> = new Set([900, 901, 903, 251, 252, 253, 254, 255, 265, 266, 372, 375, 376, 422])
 
 const COUNTS_AS_UNREAD: ReadonlySet<Kind> = new Set(['msg', 'action', 'notice'])
+
+let nextId = 1
 
 export class Buffer {
   readonly name: string
@@ -63,17 +76,26 @@ export class Buffer {
   joined = $state(false)
   historyLoading = $state(false)
   historyExhausted = $state(false)
+  /** msgid -> emoji -> nicks who reacted with it. */
+  reactions = $state.raw<Map<string, Map<string, string[]>>>(new Map())
+  /** Nicks currently typing here. */
+  typing = $state.raw<string[]>([])
   /** Bumped whenever `members` changes. Read it to depend on the map. */
   membersRev = $state(0)
 
-  /** Lowercase nick -> { nick, prefix symbols }. */
-  members = new Map<string, { nick: string; prefix: string }>()
+  /** Lowercase nick -> member. */
+  members = new Map<string, Member>()
   /** Time of the newest message the user has seen. */
   lastRead: number
+  /** True once the bouncer has told us where this buffer is read to. */
+  markerKnown = false
+  /** True until the first batch of history for this buffer has been handled. */
+  fresh = true
   /** The next 353 reply starts a fresh member list. */
   namesFresh = true
 
   private seen = new Set<string>()
+  private typingTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   constructor(name: string, kind: Buffer['kind'], lastRead: number) {
     this.name = name
@@ -111,6 +133,22 @@ export class Buffer {
     return true
   }
 
+  byMsgId(id: string): ChatMessage | undefined {
+    return this.messages.find((m) => m.msgid === id)
+  }
+
+  /** Removes a message, for a redaction. Returns false if it is not here. */
+  removeByMsgId(id: string): boolean {
+    const m = this.byMsgId(id)
+    if (!m) return false
+    this.messages = this.messages.filter((x) => x !== m)
+    this.seen.delete(m.key)
+    this.reactions.delete(id)
+    this.reactions = new Map(this.reactions)
+    if (m.time > this.lastRead && !m.self && COUNTS_AS_UNREAD.has(m.kind)) this.recount()
+    return true
+  }
+
   clear(): void {
     this.messages = []
     this.seen.clear()
@@ -120,11 +158,66 @@ export class Buffer {
     this.membersRev++
   }
 
+  /** Recounts unread and mentions from what is newer than `lastRead`. */
+  recount(): void {
+    let unread = 0
+    let mentioned = 0
+    for (const m of this.messages) {
+      if (m.time <= this.lastRead || m.self || !COUNTS_AS_UNREAD.has(m.kind)) continue
+      unread++
+      if (m.mention) mentioned++
+    }
+    this.unread = unread
+    this.mentionCount = mentioned
+  }
+
   markRead(): void {
     this.unread = 0
     this.mentionCount = 0
     const last = this.messages[this.messages.length - 1]
     this.lastRead = Math.max(this.lastRead, last?.time ?? Date.now())
+  }
+
+  addReaction(msgid: string, emoji: string, nick: string): void {
+    const byEmoji = new Map(this.reactions.get(msgid) ?? [])
+    const nicks = byEmoji.get(emoji) ?? []
+    if (nicks.some((n) => n.toLowerCase() === nick.toLowerCase())) return
+    byEmoji.set(emoji, [...nicks, nick])
+    this.reactions = new Map(this.reactions).set(msgid, byEmoji)
+  }
+
+  removeReaction(msgid: string, emoji: string, nick: string): void {
+    const byEmoji = new Map(this.reactions.get(msgid) ?? [])
+    const nicks = (byEmoji.get(emoji) ?? []).filter((n) => n.toLowerCase() !== nick.toLowerCase())
+    if (nicks.length) byEmoji.set(emoji, nicks)
+    else byEmoji.delete(emoji)
+    const next = new Map(this.reactions)
+    if (byEmoji.size) next.set(msgid, byEmoji)
+    else next.delete(msgid)
+    this.reactions = next
+  }
+
+  hasReacted(msgid: string, emoji: string, nick: string): boolean {
+    return !!this.reactions.get(msgid)?.get(emoji)?.some((n) => n.toLowerCase() === nick.toLowerCase())
+  }
+
+  setTyping(nick: string, on: boolean): void {
+    const key = nick.toLowerCase()
+    clearTimeout(this.typingTimers.get(key))
+    this.typingTimers.delete(key)
+    const without = this.typing.filter((n) => n.toLowerCase() !== key)
+    if (!on) {
+      if (without.length !== this.typing.length) this.typing = without
+      return
+    }
+    this.typing = [...without, nick]
+    // Typing that is never followed by "done" must not show forever.
+    this.typingTimers.set(key, setTimeout(() => this.setTyping(nick, false), TYPING_TTL_MS))
+  }
+
+  dispose(): void {
+    for (const t of this.typingTimers.values()) clearTimeout(t)
+    this.typingTimers.clear()
   }
 }
 
@@ -144,6 +237,10 @@ export class NetworkState {
   activeKey = $state('')
   /** True while this network is the one on screen. */
   viewing = $state(false)
+  /** Capabilities the bouncer acknowledged for this connection. */
+  caps = $state.raw<ReadonlySet<string>>(new Set())
+  /** A buffer to switch to as soon as it exists, for a notification click that beat the replay. */
+  wantOpen = ''
 
   chanTypes = '#&'
   /** Prefix symbols from highest to lowest, e.g. "@+". */
@@ -158,6 +255,11 @@ export class NetworkState {
 
   private readStore: Record<string, number> = {}
   private saveTimer: ReturnType<typeof setTimeout> | undefined
+  private markerTimer: ReturnType<typeof setTimeout> | undefined
+  private dirtyMarkers = new Set<string>()
+  /** Markers that arrived before their buffer existed. */
+  private pendingMarkers = new Map<string, number>()
+  private typingSent = new Map<string, { at: number; active: boolean }>()
   private activateOnJoin = new Set<string>()
   private send: (line: string) => void
   private hooks: NetworkHooks
@@ -190,6 +292,15 @@ export class NetworkState {
     return this.buffers.reduce((n, b) => n + b.mentionCount, 0)
   }
 
+  get canRedact(): boolean {
+    return this.caps.has('draft/message-redaction')
+  }
+
+  /** Records what the bouncer agreed to, once the connection is up. */
+  setCaps(caps: ReadonlySet<string>): void {
+    this.caps = new Set(caps)
+  }
+
   find(key: string): Buffer | undefined {
     return this.buffers.find((b) => b.key === key.toLowerCase())
   }
@@ -207,21 +318,40 @@ export class NetworkState {
     const existing = this.find(name)
     if (existing) return existing
     const kind = this.isChannel(name) ? 'channel' : 'query'
-    // A buffer we have not seen before starts with nothing unread.
-    const lastRead = this.readStore[name.toLowerCase()] ?? Date.now()
-    const buf = new Buffer(name, kind, lastRead)
+    const key = name.toLowerCase()
+    // With read markers, a buffer starts unread-everything and the bouncer's marker
+    // says where reading stopped. Without them, a new buffer starts with nothing unread.
+    const fallback = this.caps.has('draft/read-marker') ? 0 : Date.now()
+    const buf = new Buffer(name, kind, this.readStore[key] ?? fallback)
     this.buffers = [...this.buffers, buf].sort((a, b) => (a.kind === 'status' ? -1 : b.kind === 'status' ? 1 : bufferOrder(a, b)))
+    const pending = this.pendingMarkers.get(key)
+    if (pending !== undefined) {
+      this.pendingMarkers.delete(key)
+      this.applyMarker(buf, pending)
+    }
+    if (this.wantOpen === key) {
+      this.wantOpen = ''
+      this.select(key)
+    }
     return buf
   }
 
   select(key: string): void {
     this.activeKey = key.toLowerCase()
-    this.active.markRead()
+    this.markActiveRead()
+  }
+
+  /** The user is looking at the active buffer, so everything in it counts as read. */
+  markActiveRead(): void {
+    const buf = this.active
+    buf.markRead()
+    this.queueMarker(buf)
     this.saveReadSoon()
   }
 
   removeBuffer(buf: Buffer): void {
     if (buf.kind === 'status') return
+    buf.dispose()
     this.buffers = this.buffers.filter((b) => b !== buf)
     if (this.activeKey === buf.key) this.activeKey = ''
     delete this.readStore[buf.key]
@@ -242,6 +372,7 @@ export class NetworkState {
   /** Called when the connection drops. Channel state is rebuilt when the bouncer replays it. */
   connectionLost(): void {
     for (const b of this.buffers) {
+      b.typing = []
       if (b.kind !== 'channel') continue
       b.joined = false
       b.members.clear()
@@ -252,26 +383,36 @@ export class NetworkState {
 
   // --- input ---
 
-  /** Handles text typed in the active buffer. Each line is a message or a command. */
-  submit(input: string): void {
+  /**
+   * Handles text typed in the active buffer. Each line is a message or a command.
+   * `replyTo` is the msgid of the message being answered, if any; it is attached to
+   * plain messages, not to commands.
+   */
+  submit(input: string, replyTo?: string): void {
     for (const line of input.split(/\r?\n/)) {
       if (!line.trim()) continue
       const buf = this.active
       const inBuffer = buf.kind !== 'status'
       for (const a of parseInput(line, { target: inBuffer ? buf.name : '', inBuffer, chanTypes: this.chanTypes })) {
-        this.run(a, buf)
+        this.run(a, buf, replyTo)
       }
     }
+    // Sending ends any typing notice for this buffer.
+    this.sendTyping(this.active, 'done')
   }
 
-  private run(a: Action, buf: Buffer): void {
+  private run(a: Action, buf: Buffer, replyTo?: string): void {
     switch (a.type) {
       case 'raw': {
         if (/^JOIN /i.test(a.line)) {
           const first = a.line.slice(5).split(' ')[0]!.split(',')[0]!
           this.activateOnJoin.add(first.toLowerCase())
         }
-        this.send(a.line)
+        if (replyTo && a.line.startsWith('PRIVMSG ') && this.caps.has('message-tags')) {
+          this.send(format({ tags: { '+draft/reply': replyTo }, command: 'PRIVMSG', params: this.splitPrivmsg(a.line) }))
+        } else {
+          this.send(a.line)
+        }
         break
       }
       case 'open':
@@ -289,9 +430,85 @@ export class NetworkState {
     }
   }
 
+  /** Splits "PRIVMSG target :text" into its parameters. */
+  private splitPrivmsg(line: string): string[] {
+    const rest = line.slice('PRIVMSG '.length)
+    const sp = rest.indexOf(' :')
+    return sp < 0 ? [rest] : [rest.slice(0, sp), rest.slice(sp + 2)]
+  }
+
   /** Adds a line that exists only in this browser. */
   local(buf: Buffer, kind: Kind, text: string): void {
     this.push(buf, { kind, nick: '', text, time: Date.now(), self: false, mention: false }, false)
+  }
+
+  // --- typing, reactions, redaction ---
+
+  /** Tells the channel whether we are typing. Throttled, and off unless the user opted in. */
+  sendTyping(buf: Buffer, state: 'active' | 'done'): void {
+    if (buf.kind === 'status' || !settings.sendTyping || !this.caps.has('message-tags')) return
+    const prev = this.typingSent.get(buf.key)
+    const now = Date.now()
+    if (state === 'active' && prev?.active && now - prev.at < TYPING_SEND_GAP_MS) return
+    if (state === 'done' && !prev?.active) return
+    this.typingSent.set(buf.key, { at: now, active: state === 'active' })
+    this.send(format({ tags: { '+typing': state }, command: 'TAGMSG', params: [buf.name] }))
+  }
+
+  /** Reacts to a message, or removes our reaction if we already made it. */
+  react(buf: Buffer, msg: ChatMessage, emoji: string): void {
+    if (!msg.msgid || buf.kind === 'status' || !this.caps.has('message-tags')) return
+    const removing = buf.hasReacted(msg.msgid, emoji, this.nick)
+    const tags: Record<string, string> = removing
+      ? { '+draft/unreact': emoji, '+draft/reply': msg.msgid }
+      : { '+draft/react': emoji, '+draft/reply': msg.msgid }
+    this.send(format({ tags, command: 'TAGMSG', params: [buf.name] }))
+    // Show it at once. A network that echoes TAGMSG will repeat it, which changes nothing.
+    if (removing) buf.removeReaction(msg.msgid, emoji, this.nick)
+    else buf.addReaction(msg.msgid, emoji, this.nick)
+  }
+
+  /** Asks the network to delete one of our messages. It disappears when the network confirms. */
+  redact(buf: Buffer, msg: ChatMessage): void {
+    if (!msg.msgid || !this.canRedact) return
+    this.send(`REDACT ${buf.name} ${msg.msgid}`)
+  }
+
+  // --- read markers ---
+
+  private applyMarker(buf: Buffer, ms: number): void {
+    // The first marker is the bouncer's record and replaces our guess. After that
+    // markers only move forward, because the bouncer never moves one back.
+    buf.lastRead = buf.markerKnown ? Math.max(buf.lastRead, ms) : ms
+    buf.markerKnown = true
+    buf.recount()
+  }
+
+  private queueMarker(buf: Buffer): void {
+    if (buf.kind === 'status' || !this.caps.has('draft/read-marker') || buf.lastRead <= 0) return
+    this.dirtyMarkers.add(buf.key)
+    if (this.markerTimer) return
+    this.markerTimer = setTimeout(() => this.flushMarkers(), MARKER_DELAY_MS)
+  }
+
+  private flushMarkers(): void {
+    this.markerTimer = undefined
+    for (const key of this.dirtyMarkers) {
+      const buf = this.find(key)
+      if (buf && buf.lastRead > 0) this.send(`MARKREAD ${buf.name} timestamp=${new Date(buf.lastRead).toISOString()}`)
+    }
+    this.dirtyMarkers.clear()
+  }
+
+  private onMarkRead(m: Message): void {
+    const target = m.params[0] ?? ''
+    const value = (m.params[1] ?? '').replace(/^timestamp=/, '')
+    if (!target) return
+    const ms = value === '*' || value === '' ? 0 : Date.parse(value)
+    if (Number.isNaN(ms)) return
+    const buf = this.find(target)
+    if (buf) this.applyMarker(buf, ms)
+    else this.pendingMarkers.set(target.toLowerCase(), ms)
   }
 
   // --- history ---
@@ -310,13 +527,31 @@ export class NetworkState {
       for (const m of b.messages) this.handleMessage(m)
       return
     }
-    const target = b.params[0] ? this.find(b.params[0]) : undefined
-    const before = target?.messages.length ?? 0
+    const key = (b.params[0] ?? '').toLowerCase()
+    const before = this.find(key)?.messages.length ?? 0
     for (const m of b.messages) this.handleMessage(m, true)
-    if (target?.historyLoading) {
+    const target = key ? this.find(key) : undefined
+    if (!target) return
+    if (target.historyLoading) {
       target.historyLoading = false
       if (target.messages.length === before) target.historyExhausted = true
     }
+    this.settleFirstHistory(target)
+  }
+
+  /**
+   * The first history that arrives for a buffer nobody has marked as read. With no
+   * marker from the bouncer and no saved position, "unread" means nothing yet, so
+   * what is already there counts as read. A marker that arrives later overrides this.
+   */
+  private settleFirstHistory(buf: Buffer): void {
+    if (!buf.fresh) return
+    buf.fresh = false
+    if (buf.markerKnown || buf.lastRead !== 0) return
+    const newest = buf.messages[buf.messages.length - 1]
+    if (!newest) return
+    buf.lastRead = newest.time
+    buf.recount()
   }
 
   // --- incoming ---
@@ -333,6 +568,18 @@ export class NetworkState {
       case 'PRIVMSG':
       case 'NOTICE':
         this.onText(m, history)
+        break
+      case 'TAGMSG':
+        this.onTagmsg(m, history)
+        break
+      case 'MARKREAD':
+        this.onMarkRead(m)
+        break
+      case 'REDACT':
+        this.onRedact(m)
+        break
+      case 'AWAY':
+        this.onAway(m)
         break
       case 'JOIN':
         this.onJoin(m, history)
@@ -422,6 +669,12 @@ export class NetworkState {
     this.local(target, code >= 400 && code < 600 ? 'error' : 'info', text)
   }
 
+  /** The buffer a message to `target` from `from` belongs in, if it is already open. */
+  private existingBufferFor(target: string, from: string): Buffer | undefined {
+    if (this.isChannel(target)) return this.find(target)
+    return this.find(this.isSelf(from) ? target : from)
+  }
+
   private onText(m: Message, history: boolean): void {
     const from = nickOf(m.prefix)
     const target = m.params[0] ?? ''
@@ -447,15 +700,65 @@ export class NetworkState {
     else if (this.isChannel(target)) buf = this.buffer(target)
     else buf = this.buffer(self ? target : from)
 
+    // Someone who sends a message has stopped typing.
+    if (!self) buf.setTyping(from, false)
+
     const words = [this.nick, ...settings.keywords]
     const isQuery = buf.kind === 'query'
     const mention = !self && buf.kind !== 'status' && (isQuery || mentions(text, words))
 
     this.push(
       buf,
-      { kind, nick: isServerPrefix(m.prefix) ? m.prefix : from, text, time, self, mention, msgid: m.tags.msgid },
+      {
+        kind,
+        nick: isServerPrefix(m.prefix) ? m.prefix : from,
+        text,
+        time,
+        self,
+        mention,
+        msgid: m.tags.msgid,
+        replyTo: m.tags['+draft/reply'] || undefined,
+      },
       history,
     )
+  }
+
+  private onTagmsg(m: Message, history: boolean): void {
+    if (history || isServerPrefix(m.prefix)) return
+    const from = nickOf(m.prefix)
+    const buf = this.existingBufferFor(m.params[0] ?? '', from)
+    if (!buf) return
+    const self = this.isSelf(from)
+
+    const typing = m.tags['+typing']
+    if (typing !== undefined && !self) buf.setTyping(from, typing === 'active')
+
+    const reply = m.tags['+draft/reply']
+    if (!reply) return
+    const react = m.tags['+draft/react']
+    const unreact = m.tags['+draft/unreact']
+    if (react) buf.addReaction(reply, react, from)
+    if (unreact) buf.removeReaction(reply, unreact, from)
+  }
+
+  private onRedact(m: Message): void {
+    const buf = this.existingBufferFor(m.params[0] ?? '', nickOf(m.prefix))
+    const msgid = m.params[1]
+    if (buf && msgid) buf.removeByMsgId(msgid)
+  }
+
+  private onAway(m: Message): void {
+    const nick = nickOf(m.prefix).toLowerCase()
+    // "AWAY :reason" sets away, a bare "AWAY" clears it.
+    const away = m.params.length > 0
+    for (const buf of this.buffers) {
+      const member = buf.members.get(nick)
+      if (member && !!member.away !== away) {
+        // A new object, not a change in place: the member list redraws a row only when its object changes.
+        buf.members.set(nick, { ...member, away })
+        buf.touchMembers()
+      }
+    }
   }
 
   private onCtcp(m: Message, from: string, name: string, arg: string): void {
@@ -482,7 +785,9 @@ export class NetworkState {
       buf.touchMembers()
       if (this.activateOnJoin.delete(chan.toLowerCase())) this.select(buf.key)
       // A buffer with nothing in it gets its recent history.
-      if (!existed && !history) this.send(`CHATHISTORY LATEST ${buf.name} * ${HISTORY_PAGE}`)
+      if (!existed && !history) {
+        this.send(`CHATHISTORY LATEST ${buf.name} * ${HISTORY_PAGE}`)
+      }
       return
     }
     buf.members.set(nick.toLowerCase(), { nick, prefix: '' })
@@ -499,6 +804,7 @@ export class NetworkState {
       return
     }
     buf.members.delete(nick.toLowerCase())
+    buf.setTyping(nick, false)
     buf.touchMembers()
     this.push(buf, { kind: 'part', nick, text: m.params[1] ?? '', time: timeOf(m), self: false, mention: false }, false)
   }
@@ -526,6 +832,7 @@ export class NetworkState {
     const nick = nickOf(m.prefix)
     for (const buf of this.buffers) {
       if (buf.kind === 'channel' && buf.members.delete(nick.toLowerCase())) {
+        buf.setTyping(nick, false)
         buf.touchMembers()
         this.push(buf, { kind: 'quit', nick, text: m.params[0] ?? '', time: timeOf(m), self: false, mention: false }, false)
       }
@@ -540,7 +847,7 @@ export class NetworkState {
       const entry = buf.members.get(old.toLowerCase())
       if (buf.kind === 'channel' && entry) {
         buf.members.delete(old.toLowerCase())
-        buf.members.set(next.toLowerCase(), { nick: next, prefix: entry.prefix })
+        buf.members.set(next.toLowerCase(), { nick: next, prefix: entry.prefix, away: entry.away })
         buf.touchMembers()
         this.push(buf, { kind: 'nick', nick: old, target: next, text: '', time: timeOf(m), self: this.isSelf(next), mention: false }, false)
       }
@@ -580,9 +887,10 @@ export class NetworkState {
     for (const c of changes) {
       const symbol = this.prefixModes.get(c.mode)
       if (!symbol || !c.arg) continue
-      const entry = buf.members.get(c.arg.toLowerCase())
+      const key = c.arg.toLowerCase()
+      const entry = buf.members.get(key)
       if (!entry) continue
-      entry.prefix = this.setPrefix(entry.prefix, symbol, c.add)
+      buf.members.set(key, { ...entry, prefix: this.setPrefix(entry.prefix, symbol, c.add) })
     }
     buf.touchMembers()
     this.push(
@@ -602,11 +910,8 @@ export class NetworkState {
 
   // --- adding messages ---
 
-  private push(
-    buf: Buffer,
-    m: Omit<ChatMessage, 'id' | 'key'>,
-    history: boolean,
-  ): void {
+  /** Adds a message. `history` lines came from the bouncer's store and never notify. */
+  private push(buf: Buffer, m: Omit<ChatMessage, 'id' | 'key'>, history: boolean): void {
     const msg: ChatMessage = {
       ...m,
       id: nextId++,
@@ -621,6 +926,7 @@ export class NetworkState {
     const watching = this.viewing && this.activeKey === buf.key && !pageUnfocused()
     if (watching && !history) {
       buf.lastRead = Math.max(buf.lastRead, m.time)
+      this.queueMarker(buf)
       this.saveReadSoon()
     } else {
       buf.unread++
@@ -641,6 +947,8 @@ export class NetworkState {
 
   dispose(): void {
     clearTimeout(this.saveTimer)
+    clearTimeout(this.markerTimer)
+    for (const b of this.buffers) b.dispose()
   }
 }
 

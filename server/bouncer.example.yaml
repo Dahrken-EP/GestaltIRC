@@ -5,6 +5,12 @@ listen: "127.0.0.1:8080"        # serve plain HTTP here; terminate TLS in a reve
 allowed_origins: []             # extra WebSocket Origin patterns, if the web client is hosted elsewhere
 web_dir: ""                     # set to ../web/dist to serve the web client from the bouncer
 data_dir: "./data"              # bouncer.db lives here
-secret_key_file: "./data/secret.key"  # encrypts network passwords; back this up
+secret_key_file: "./data/secret.key"  # encrypts network passwords and the push key; back this up
 history_limit: 2000             # messages kept per buffer
 replay_limit: 200               # messages per buffer replayed when a client attaches
+
+cookie_secure: auto             # auto: Secure when the request came over TLS. always, or never
+trust_proxy: false              # true only behind a proxy that sets X-Forwarded-For
+sts_duration: 0                 # seconds clients should insist on TLS. 0 = off. Set after TLS works
+sts_port: 443                   # TLS port plain-text clients are told to use
+push_contact: "mailto:admin@localhost"  # shown to push services; use a real address

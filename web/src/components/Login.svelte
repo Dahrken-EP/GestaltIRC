@@ -1,62 +1,38 @@
 <script lang="ts">
-  import { app, defaultUrl } from '../lib/app.svelte'
+  import { app } from '../lib/app.svelte'
 
-  let login = $state(app.lastLogin.login)
+  let user = $state('')
   let password = $state('')
-  let nick = $state(app.lastLogin.nick)
-  let url = $state(app.lastLogin.url || defaultUrl())
-  let error = $state('')
-  let el: HTMLInputElement
+  let userEl: HTMLInputElement
 
-  $effect(() => {
-    // Show the server's reason when a login attempt just failed.
-    if (app.loginError) error = app.loginError
-  })
-  $effect(() => {
-    ;(login ? document.getElementById('password') : el)?.focus()
-  })
+  $effect(() => userEl?.focus())
 
   function submit(e: SubmitEvent) {
     e.preventDefault()
-    const err = app.add(login, password, nick, url)
-    if (err) error = err
-    else password = ''
+    const pw = password
+    password = ''
+    void app.login(user, pw)
   }
 </script>
 
 <div class="backdrop">
   <form class="card" onsubmit={submit} aria-labelledby="login-title">
-    <h2 id="login-title">Connect to a network</h2>
-    <p class="hint">Log in with your bouncer account as <code>user/network</code>.</p>
+    <h2 id="login-title">Log in</h2>
+    <p class="hint">Use the account the bouncer's administrator created for you.</p>
 
     <label>
-      Login
-      <input bind:this={el} bind:value={login} placeholder="matt/libera" autocomplete="username" required />
+      User name
+      <input bind:this={userEl} bind:value={user} autocomplete="username" autocapitalize="off" spellcheck="false" required />
     </label>
     <label>
       Password
-      <input id="password" type="password" bind:value={password} autocomplete="current-password" required />
-    </label>
-    <label>
-      Nick <span class="opt">(optional)</span>
-      <input bind:value={nick} placeholder="defaults to your username" />
+      <input type="password" bind:value={password} autocomplete="current-password" required />
     </label>
 
-    <details>
-      <summary>Server</summary>
-      <label>
-        WebSocket URL
-        <input bind:value={url} spellcheck="false" />
-      </label>
-    </details>
-
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
+    {#if app.loginError}<p class="error" role="alert">{app.loginError}</p>{/if}
 
     <div class="actions">
-      {#if app.networks.length}
-        <button type="button" class="btn" onclick={() => { app.showLogin = false; app.loginError = '' }}>Cancel</button>
-      {/if}
-      <button class="btn primary" type="submit">Connect</button>
+      <button class="btn primary" type="submit" disabled={app.loginBusy}>{app.loginBusy ? 'Logging in…' : 'Log in'}</button>
     </div>
   </form>
 </div>
@@ -67,12 +43,12 @@
     inset: 0;
     display: grid;
     place-items: center;
-    background: color-mix(in srgb, var(--bg) 85%, transparent);
+    background: var(--bg);
     padding: 16px;
     z-index: 20;
   }
   .card {
-    width: min(420px, 100%);
+    width: min(380px, 100%);
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -95,21 +71,12 @@
     gap: 4px;
     font-weight: 600;
   }
-  .opt {
-    font-weight: 400;
-    color: var(--fg-dim);
-  }
   input {
     padding: 6px 8px;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--bg);
     font-weight: 400;
-  }
-  summary {
-    cursor: pointer;
-    color: var(--fg-dim);
-    margin-bottom: 8px;
   }
   .error {
     margin: 0;
@@ -118,9 +85,9 @@
   .actions {
     display: flex;
     justify-content: flex-end;
-    gap: 8px;
   }
-  code {
-    font-family: var(--mono);
+  .btn:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 </style>

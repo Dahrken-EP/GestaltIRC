@@ -1,12 +1,10 @@
 <script lang="ts">
-  import { app } from '../lib/app.svelte'
   import type { NetworkState } from '../lib/network.svelte'
 
   let { net, onpick }: { net: NetworkState; onpick?: () => void } = $props()
 
   const channels = $derived(net.buffers.filter((b) => b.kind === 'channel'))
   const queries = $derived(net.buffers.filter((b) => b.kind === 'query'))
-  let confirmRemove = $state(false)
 
   function pick(key: string) {
     net.select(key)
@@ -33,12 +31,6 @@
     <span class="netname" title={net.statusDetail || net.status}>
       <span class="status {net.status}" aria-hidden="true"></span>{net.label}
     </span>
-    {#if confirmRemove}
-      <button class="btn small danger" onclick={() => app.remove(net.id)}>Disconnect</button>
-      <button class="btn small" onclick={() => (confirmRemove = false)}>Keep</button>
-    {:else}
-      <button class="icon" title="Disconnect network" aria-label="Disconnect network" onclick={() => (confirmRemove = true)}>⏻</button>
-    {/if}
   </header>
 
   <ul>
@@ -103,21 +95,6 @@
   }
   .status.failed {
     background: var(--danger);
-  }
-  .icon {
-    color: var(--fg-dim);
-    padding: 0 4px;
-  }
-  .icon:hover {
-    color: var(--danger);
-  }
-  .small {
-    padding: 1px 8px;
-    font-size: 0.85em;
-    font-weight: 400;
-  }
-  .danger {
-    color: var(--danger);
   }
   h3 {
     margin: 10px 10px 2px;

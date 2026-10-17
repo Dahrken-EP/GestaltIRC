@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"irc-webclient/server/internal/accounts"
+	"irc-webclient/server/internal/api"
 	"irc-webclient/server/internal/config"
 	"irc-webclient/server/internal/irc"
+	"irc-webclient/server/internal/push"
 	"irc-webclient/server/internal/store"
 	"irc-webclient/server/internal/ws"
 )
@@ -20,6 +22,9 @@ import (
 // syncInterval is how often the bouncer checks the database for networks to start or stop.
 // The admin CLI writes to the same database, so changes apply without a restart.
 const syncInterval = 5 * time.Second
+
+// ErrTooManyAttempts is returned when a client or user has failed to log in too often.
+var ErrTooManyAttempts = errors.New("too many failed logins; try again later")
 
 // ErrBadLogin is returned for an unknown user, wrong password, or network the user does not own.
 var ErrBadLogin = errors.New("bad user, password, or network")
@@ -29,6 +34,9 @@ type Bouncer struct {
 	conf     *config.Config
 	store    *store.Store
 	accounts *accounts.Service
+	api      *api.API
+	push     *push.Service // nil until SetPush
+	keywords keywordCache
 
 	mu      sync.Mutex
 	ctx     context.Context
@@ -42,12 +50,28 @@ type runningNetwork struct {
 
 // New builds a bouncer. Call Run to start the networks.
 func New(conf *config.Config, st *store.Store, acc *accounts.Service) *Bouncer {
-	return &Bouncer{
+	b := &Bouncer{
 		conf:     conf,
 		store:    st,
 		accounts: acc,
 		running:  map[int64]*runningNetwork{},
 	}
+	b.api = api.New(acc, b, conf)
+	return b
+}
+
+// API returns the HTTP API, so other packages can add routes to it.
+func (b *Bouncer) API() *api.API { return b.api }
+
+// Status reports a network's nick and whether it is connected. It implements api.NetworkStatus.
+func (b *Bouncer) Status(networkID int64) (nick string, connected bool, ok bool) {
+	n := b.network(networkID)
+	if n == nil {
+		return "", false, false
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.nick, n.connected, true
 }
 
 // Run starts every enabled network and keeps the set in step with the
@@ -131,12 +155,15 @@ func (b *Bouncer) network(id int64) *Network {
 	return nil
 }
 
-// Handler serves the client WebSocket at /ws.
+// Handler serves the client WebSocket at /ws, the HTTP API under /api/, and the
+// web client files when web_dir is set.
 func (b *Bouncer) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/ws", ws.Handler(b.conf.AllowedOrigins, func(ctx context.Context, conn irc.LineConn) {
-		newSession(b, conn).run(ctx)
-	}))
+	wsHandler := ws.Handler(b.conf.AllowedOrigins, func(ctx context.Context, conn irc.LineConn) {
+		newSession(b, conn, api.IdentityFrom(ctx)).run(ctx)
+	})
+	mux.Handle("/ws", b.api.WithIdentity(wsHandler))
+	mux.Handle("/api/", b.api.Handler())
 	if b.conf.WebDir != "" {
 		mux.Handle("/", http.FileServer(http.Dir(b.conf.WebDir)))
 		return mux
@@ -153,15 +180,35 @@ func (b *Bouncer) Handler() http.Handler {
 
 // authenticate checks a login and returns the network it selects. The login
 // name is "user/network", or just "user" when the user has exactly one network.
-func (b *Bouncer) authenticate(login, password string) (*Network, error) {
+//
+// A browser that already holds a session cookie for the user may log in with an
+// empty password. Everyone else is checked against the password, and failures
+// are counted per client address and per user.
+func (b *Bouncer) authenticate(login, password string, id api.Identity) (*Network, error) {
 	userName, netName, hasNet := strings.Cut(login, "/")
-	_, ok, err := b.accounts.CheckPassword(userName, password)
-	if err != nil {
-		return nil, err
+
+	viaCookie := password == "" && id.User != "" && id.User == userName
+	if !viaCookie {
+		ipKey, userKey := "ip:"+id.IP, "user:"+strings.ToLower(userName)
+		if blocked, _ := b.api.LoginByIP.Blocked(ipKey); blocked {
+			return nil, ErrTooManyAttempts
+		}
+		if blocked, _ := b.api.LoginByUser.Blocked(userKey); blocked {
+			return nil, ErrTooManyAttempts
+		}
+		_, ok, err := b.accounts.CheckPassword(userName, password)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			b.api.LoginByIP.Fail(ipKey)
+			b.api.LoginByUser.Fail(userKey)
+			return nil, ErrBadLogin
+		}
+		b.api.LoginByIP.Reset(ipKey)
+		b.api.LoginByUser.Reset(userKey)
 	}
-	if !ok {
-		return nil, ErrBadLogin
-	}
+
 	if !hasNet {
 		nets, err := b.accounts.ListNetworks(userName)
 		if err != nil {

@@ -1,12 +1,40 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import { notificationsSupported, requestNotifyPermission } from '../lib/notify'
+  import { disablePush, enablePush, pushSubscribed, pushSupported } from '../lib/push'
   import { settings, type Density, type Theme } from '../lib/settings.svelte'
 
   let keywordText = $state(settings.keywords.join('\n'))
   let colorNick = $state('')
   let colorValue = $state('#c0392b')
   let notifyMsg = $state('')
+  let pushOn = $state(false)
+  let pushMsg = $state('')
+  let pushBusy = $state(false)
+
+  $effect(() => {
+    void pushSubscribed().then((on) => (pushOn = on))
+  })
+
+  async function togglePush(e: Event) {
+    const want = (e.currentTarget as HTMLInputElement).checked
+    pushBusy = true
+    pushMsg = ''
+    try {
+      if (want) {
+        const result = await enablePush()
+        pushOn = result === 'ok'
+        if (result === 'denied') pushMsg = 'The browser did not allow notifications. Check the site permissions.'
+        else if (result === 'unsupported') pushMsg = 'This browser cannot receive background notifications.'
+        else if (result === 'error') pushMsg = 'Could not set up background notifications. Is the page served over HTTPS?'
+      } else {
+        await disablePush()
+        pushOn = false
+      }
+    } finally {
+      pushBusy = false
+    }
+  }
 
   function close() {
     app.showSettings = false
@@ -64,16 +92,38 @@
     <label class="check"><input type="checkbox" bind:checked={settings.timestamps} onchange={() => settings.save()} /> Show timestamps</label>
 
     <label class="check">
+      <input type="checkbox" bind:checked={settings.sendTyping} onchange={() => settings.save()} />
+      Tell others when I am typing
+    </label>
+
+    <label class="check">
       <input type="checkbox" checked={settings.notify} onchange={toggleNotify} disabled={!notificationsSupported()} />
       Desktop notifications for mentions and private messages
     </label>
     {#if notifyMsg}<p class="note">{notifyMsg}</p>{/if}
-    <p class="note">Notifications show while this page is open in a tab. Alerts with the tab closed need push support on the bouncer, which is not built yet.</p>
+
+    <label class="check">
+      <input type="checkbox" checked={pushOn} onchange={togglePush} disabled={!pushSupported() || pushBusy} />
+      Background notifications, even when this tab is closed
+    </label>
+    {#if pushMsg}<p class="note">{pushMsg}</p>{/if}
+    <p class="note">
+      The first option shows alerts while this page is open. The second asks the bouncer to send them to this browser when no
+      client is connected. It needs HTTPS, and each browser opts in separately.
+    </p>
 
     <label>
       Highlight words <span class="opt">(your nick always highlights; one per line)</span>
       <textarea rows="3" bind:value={keywordText} onblur={saveKeywords}></textarea>
     </label>
+
+    <fieldset>
+      <legend>Account</legend>
+      <div class="row">
+        <span class="grow">Logged in as <strong>{app.user}</strong></span>
+        <button class="btn" onclick={() => app.logout()}>Log out</button>
+      </div>
+    </fieldset>
 
     <fieldset>
       <legend>Nick colours</legend>
@@ -195,6 +245,9 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+  .grow {
+    flex: 1;
   }
   .swatch {
     width: 12px;

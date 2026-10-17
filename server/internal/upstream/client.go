@@ -32,6 +32,7 @@ var DefaultCaps = []string{
 	"message-ids",
 	"monitor",
 	"whox",
+	"draft/message-redaction",
 }
 
 var (

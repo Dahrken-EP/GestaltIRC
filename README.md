@@ -18,26 +18,31 @@ and multi-network) is in place:
 - `server/internal/secret`: the AES-GCM box and key file handling.
 
 The web client (DESIGN.md phase 3) is in `web/`. It is Svelte 5 and TypeScript, about
-34 KB gzipped. It logs in to the bouncer over WebSocket with SASL PLAIN, one connection
-per network, shown as icons in the left rail. It has:
+40 KB gzipped. It has:
 
+- login with an account name and password, then a session cookie (HttpOnly, SameSite=Strict).
+  No password is kept in the page. One WebSocket per network, shown as icons in the left
+  rail, logged in with the cookie
 - channels, queries and a status buffer, with unread and mention badges
 - the full command set from the design (`/help` lists it), and any other `/command` is
   sent to the server as it is
 - nick colours with per-nick overrides, mention and keyword highlighting, tab completion
   for nicks, channels and commands, and input history on Up and Down
-- scrollback through `CHATHISTORY`, with replay on reconnect and de-duplication
-- light, dark and system themes and compact and comfortable density
-- desktop notifications for mentions and private messages while the page is open
+- scrollback through `CHATHISTORY`, with replay on reconnect and de-duplication, in a list
+  that renders only the rows near the view, so memory stays flat in a long channel
+- replies, reactions, deleting your own messages, "is typing" (off until you turn it on),
+  and away members shown dimmed
+- light, dark and system themes and compact and comfortable density. Preferences are saved
+  on the bouncer and follow the account to other devices
+- read position kept by the bouncer, so reading a channel on one device clears it on the others
+- desktop notifications while the page is open, and background notifications through Web
+  Push when no client is connected
 
 Message text is never inserted as HTML. Only `http` and `https` links are clickable.
 
-Not done yet, from the design's phase 3 list: preferences are kept in the browser, not on the
-bouncer, because the bouncer has no preferences API; the message list keeps the newest 1500
-messages per buffer and loads older ones on demand, but it is not virtualised; background push
-needs a service worker and a push endpoint on the bouncer. Inline media waits for the media
-proxy (phase 5). The login password is kept in `sessionStorage` so a reload reconnects, and is
-cleared when the tab closes. Session tokens from the bouncer would replace that.
+Limits to know about: replying, reacting and deleting appear when you hover a message, so a
+touch screen has no way to reach them yet. Inline media waits for the media proxy (phase 5).
+Reactions, replies and typing need the network to support message tags.
 
 To run it:
 
@@ -51,7 +56,64 @@ npm run check                    # type check
 
 Set `web_dir: ../web/dist` in `bouncer.yaml` and the bouncer serves the client at `/` with the
 WebSocket at `/ws` on the same origin. For development, `npm run dev` serves the client on
-port 5173 and proxies `/ws` to a bouncer on `127.0.0.1:8080`. Log in as `user/network`.
+port 5173 and proxies `/ws` and `/api` to a bouncer on `127.0.0.1:8080`.
+
+`test/e2e/run.sh` drives the built client in Chromium against a real bouncer and a scripted
+IRC network. See `test/e2e/README.md`.
+
+## Accounts, networks and the bouncer's HTTP API
+
+Users and networks are managed with the admin commands below. The web client logs in at
+`/api/login`, which sets the session cookie; `/api/session` returns the user's networks and
+preferences, and `/api/prefs` saves preferences. Failed logins, over HTTP or WebSocket, are
+rate limited per client address and per user. A password change ends every session.
+
+Put the bouncer behind a TLS reverse proxy. The cookie gets the `Secure` flag when the request
+arrives over TLS or the proxy sends `X-Forwarded-Proto: https` (`cookie_secure` forces it either
+way). Set `trust_proxy: true` only when the proxy sets `X-Forwarded-For`, so rate limits count
+real client addresses. Set `sts_duration` once the site works over TLS, to tell clients to keep
+using it.
+
+**Background notifications** use Web Push. Keys are created on first start and the private key
+is sealed with the instance key. When a private message or a mention arrives and no client is
+attached to the network, the bouncer pushes to the user's browsers, at most one push per buffer
+every five seconds. Services notices and CTCP requests are not pushed. It needs HTTPS in the
+browser. Set `push_contact` to a real `mailto:` address, since Apple's push service rejects an
+implausible one.
+
+**Client certificates and SASL EXTERNAL** are supported for upstream networks:
+
+```
+bouncer network add matt libera --host irc.libera.chat --tls --nick matt --sasl EXTERNAL --generate-cert
+bouncer network cert matt libera        # prints the fingerprint to register with NickServ
+```
+
+or `--cert-file` and `--key-file` for a certificate you already have.
+
+## IRCv3 support for other clients
+
+The bouncer is not only for the web client. It offers these capabilities to any client, and
+adapts each message to what that client asked for, so clients with different capabilities can
+share one network connection: `message-tags`, `server-time`, `batch`, `echo-message`, `sasl`
+(PLAIN), `chathistory`, `message-ids`, `away-notify`, `account-notify`, `account-tag`,
+`extended-join`, `multi-prefix`, `userhost-in-names`, `invite-notify`, `chghost`, `setname`,
+`cap-notify`, `standard-replies`, `draft/read-marker` and `draft/message-redaction`. It also
+advertises `UTF8ONLY`, and `sts` when configured.
+
+Not offered, and why:
+
+- `labeled-response`: replies to a labelled command would need routing to the one client that
+  sent it, and the bouncer sends every reply to every client.
+- `draft/multiline`: networks rarely support it, and splitting it for those that do not is not done.
+- `MONITOR` and `WHOX` are passed through from the network when it has them, but one `MONITOR`
+  list is shared by all clients of a network.
+- `soju.im/bouncer-networks`: the web client lists a user's networks through `/api/session`
+  instead, and other clients log in once per network as `user/network`.
+- SASL SCRAM-SHA-256 and EXTERNAL from a client to the bouncer: accounts store an argon2id
+  hash, which cannot answer a SCRAM exchange, and TLS client certificates are terminated at
+  the reverse proxy. Use PLAIN over TLS.
+- `CHGHOST` is dropped for clients without the capability. A server may fake it with a QUIT
+  and JOIN; this one does not.
 
 Phase 2 pieces, still in place:
 

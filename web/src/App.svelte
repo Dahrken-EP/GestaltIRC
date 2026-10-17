@@ -11,11 +11,20 @@
   import NetworkRail from './components/NetworkRail.svelte'
   import SettingsDialog from './components/SettingsDialog.svelte'
 
+  import type { ChatMessage } from './lib/network.svelte'
+
   const net = $derived(app.active)
   const buf = $derived(net?.active)
   let navOpen = $state(false)
+  /** The message the user chose to reply to. It belongs to one buffer, so switching drops it. */
+  let reply = $state<ChatMessage | null>(null)
+  $effect(() => {
+    void buf?.key
+    void net?.id
+    reply = null
+  })
 
-  onMount(() => app.restore())
+  onMount(() => void app.init())
 
   // Theme and density are attributes on <html>, so the CSS variables switch together.
   $effect(() => {
@@ -34,7 +43,7 @@
 
   // Reading position: coming back to the tab counts as reading the open buffer.
   function onfocus() {
-    net?.active.markRead()
+    net?.markActiveRead()
   }
 
   function openNick(nick: string) {
@@ -58,6 +67,11 @@
 
 <svelte:window onfocus={onfocus} {onkeydown} />
 
+{#if app.phase === 'loading'}
+  <div class="splash" role="status">Loading…</div>
+{:else if app.phase === 'login'}
+  <Login />
+{:else}
 <div class="app" class:nav-open={navOpen}>
   <NetworkRail />
   {#if net && buf}
@@ -67,34 +81,45 @@
       <div class="body">
         <div class="messages">
           {#key net.id + '/' + buf.key}
-            <MessagePane {net} {buf} onnick={openNick} onchannel={openChannel} />
+            <MessagePane {net} {buf} onnick={openNick} onchannel={openChannel} onreply={(m) => (reply = m)} />
           {/key}
         </div>
         {#if buf.kind === 'channel' && settings.showMembers}
           <div class="members"><MemberList {net} {buf} onnick={openNick} /></div>
         {/if}
       </div>
-      <InputBar {net} {buf} />
+      <InputBar {net} {buf} {reply} oncancelreply={() => (reply = null)} />
     </main>
   {:else}
-    <main class="blank"><p>Not connected to any network.</p></main>
+    <main class="blank"><p>This account has no networks yet. Ask the administrator to add one.</p></main>
   {/if}
 </div>
 
-{#if app.showLogin}<Login />{/if}
 {#if app.showSettings}<SettingsDialog />{/if}
+{/if}
 
 <style>
   .app {
     display: grid;
     grid-template-columns: auto auto minmax(0, 1fr);
+    /* One row exactly as tall as the app. With the default "auto" row, a long
+       channel stretches the row to fit all its messages and pushes the input
+       bar off the screen. */
+    grid-template-rows: minmax(0, 1fr);
     height: 100%;
   }
   main {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    min-height: 0;
     height: 100%;
+  }
+  .splash {
+    height: 100%;
+    display: grid;
+    place-items: center;
+    color: var(--fg-dim);
   }
   .blank {
     display: grid;

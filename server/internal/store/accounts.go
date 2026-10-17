@@ -41,8 +41,12 @@ type NetworkRow struct {
 	SASLMech       string
 	SASLUser       string
 	SASLPassword   string
-	Join           []string
-	Enabled        bool
+	// ClientCert and ClientKey are the PEM client certificate and key for SASL
+	// EXTERNAL, sealed. Empty when the network does not use one.
+	ClientCert string
+	ClientKey  string
+	Join       []string
+	Enabled    bool
 }
 
 // sqlite's constraint error code for UNIQUE violations.
@@ -147,10 +151,10 @@ func (s *Store) DeleteUser(name string) error {
 func (s *Store) CreateNetwork(n NetworkRow) (int64, error) {
 	res, err := s.db.Exec(`
 INSERT INTO networks (user_id, name, host, port, tls, nick, ident, realname,
-	server_password, sasl_mech, sasl_user, sasl_password, join_list, enabled)
-SELECT id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM users WHERE name = ?`,
+	server_password, sasl_mech, sasl_user, sasl_password, client_cert, client_key, join_list, enabled)
+SELECT id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM users WHERE name = ?`,
 		n.Name, n.Host, n.Port, boolInt(n.TLS), n.Nick, n.Ident, n.RealName,
-		n.ServerPassword, n.SASLMech, n.SASLUser, n.SASLPassword,
+		n.ServerPassword, n.SASLMech, n.SASLUser, n.SASLPassword, n.ClientCert, n.ClientKey,
 		strings.Join(n.Join, "\n"), boolInt(n.Enabled), n.UserName)
 	if isUnique(err) {
 		return 0, ErrExists
@@ -216,6 +220,9 @@ func deleteNetworkData(tx *sql.Tx, id int64) error {
 	if _, err := tx.Exec(`DELETE FROM kv WHERE key = ?`, LastSeenKey(id)); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM read_markers WHERE network_id = ?`, id); err != nil {
+		return err
+	}
 	_, err := tx.Exec(`DELETE FROM networks WHERE id = ?`, id)
 	return err
 }
@@ -227,7 +234,7 @@ func LastSeenKey(networkID int64) string {
 
 func (s *Store) queryNetworks(where string, args ...any) ([]NetworkRow, error) {
 	q := `SELECT n.id, n.user_id, u.name, n.name, n.host, n.port, n.tls, n.nick, n.ident, n.realname,
-	n.server_password, n.sasl_mech, n.sasl_user, n.sasl_password, n.join_list, n.enabled
+	n.server_password, n.sasl_mech, n.sasl_user, n.sasl_password, n.client_cert, n.client_key, n.join_list, n.enabled
 FROM networks n JOIN users u ON u.id = n.user_id ` + where + ` ORDER BY u.name, n.name`
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
@@ -240,7 +247,7 @@ FROM networks n JOIN users u ON u.id = n.user_id ` + where + ` ORDER BY u.name, 
 		var tls, enabled int
 		var join string
 		if err := rows.Scan(&n.ID, &n.UserID, &n.UserName, &n.Name, &n.Host, &n.Port, &tls, &n.Nick, &n.Ident,
-			&n.RealName, &n.ServerPassword, &n.SASLMech, &n.SASLUser, &n.SASLPassword, &join, &enabled); err != nil {
+			&n.RealName, &n.ServerPassword, &n.SASLMech, &n.SASLUser, &n.SASLPassword, &n.ClientCert, &n.ClientKey, &join, &enabled); err != nil {
 			return nil, err
 		}
 		n.TLS = tls != 0

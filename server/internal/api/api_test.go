@@ -1,0 +1,356 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"irc-webclient/server/internal/accounts"
+	"irc-webclient/server/internal/config"
+	"irc-webclient/server/internal/secret"
+	"irc-webclient/server/internal/store"
+)
+
+type fakeStatus map[int64]struct {
+	nick      string
+	connected bool
+}
+
+func (f fakeStatus) Status(id int64) (string, bool, bool) {
+	s, ok := f[id]
+	return s.nick, s.connected, ok
+}
+
+type env struct {
+	api *API
+	acc *accounts.Service
+	srv *httptest.Server
+}
+
+func newEnv(t *testing.T, conf config.Config, status NetworkStatus) *env {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "b.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	box, _ := secret.NewBox(make([]byte, 32))
+	acc := accounts.New(st, box)
+	if err := acc.CreateUser("matt", "a-long-password"); err != nil {
+		t.Fatal(err)
+	}
+	if conf.CookieSecure == "" {
+		conf.CookieSecure = "auto"
+	}
+	a := New(acc, status, &conf)
+	srv := httptest.NewServer(a.Handler())
+	t.Cleanup(srv.Close)
+	return &env{api: a, acc: acc, srv: srv}
+}
+
+func (e *env) do(t *testing.T, method, path, body string, hdr map[string]string, cookie *http.Cookie) (*http.Response, map[string]any) {
+	t.Helper()
+	req, _ := http.NewRequest(method, e.srv.URL+path, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return resp, out
+}
+
+func (e *env) login(t *testing.T) *http.Cookie {
+	t.Helper()
+	resp, _ := e.do(t, "POST", "/api/login", `{"user":"matt","password":"a-long-password"}`, nil, nil)
+	for _, c := range resp.Cookies() {
+		if c.Name == CookieName {
+			return c
+		}
+	}
+	t.Fatalf("login set no cookie (status %d)", resp.StatusCode)
+	return nil
+}
+
+func TestLoginSetsStrictHttpOnlyCookie(t *testing.T) {
+	e := newEnv(t, config.Config{}, fakeStatus{})
+	resp, body := e.do(t, "POST", "/api/login", `{"user":"matt","password":"a-long-password"}`, nil, nil)
+	if resp.StatusCode != 200 || body["user"] != "matt" {
+		t.Fatalf("login = %d %v", resp.StatusCode, body)
+	}
+	var c *http.Cookie
+	for _, x := range resp.Cookies() {
+		if x.Name == CookieName {
+			c = x
+		}
+	}
+	if c == nil || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" || c.MaxAge <= 0 {
+		t.Fatalf("cookie = %+v", c)
+	}
+	if c.Secure {
+		t.Error("Secure set on a plain HTTP request in auto mode")
+	}
+}
+
+func TestCookieSecureModes(t *testing.T) {
+	cases := []struct {
+		mode string
+		hdr  map[string]string
+		want bool
+	}{
+		{"auto", map[string]string{"X-Forwarded-Proto": "https"}, true},
+		{"auto", nil, false},
+		{"always", nil, true},
+		{"never", map[string]string{"X-Forwarded-Proto": "https"}, false},
+	}
+	for _, c := range cases {
+		e := newEnv(t, config.Config{CookieSecure: c.mode}, fakeStatus{})
+		resp, _ := e.do(t, "POST", "/api/login", `{"user":"matt","password":"a-long-password"}`, c.hdr, nil)
+		got := false
+		for _, ck := range resp.Cookies() {
+			got = ck.Secure
+		}
+		if got != c.want {
+			t.Errorf("mode %q headers %v: Secure = %v, want %v", c.mode, c.hdr, got, c.want)
+		}
+	}
+}
+
+func TestBadLoginsLookTheSame(t *testing.T) {
+	e := newEnv(t, config.Config{}, fakeStatus{})
+	r1, b1 := e.do(t, "POST", "/api/login", `{"user":"matt","password":"wrong"}`, nil, nil)
+	r2, b2 := e.do(t, "POST", "/api/login", `{"user":"ghost","password":"wrong"}`, nil, nil)
+	if r1.StatusCode != 401 || r2.StatusCode != 401 || b1["error"] != b2["error"] {
+		t.Errorf("unknown user and wrong password differ: %d %v vs %d %v", r1.StatusCode, b1, r2.StatusCode, b2)
+	}
+	if len(r1.Cookies()) != 0 {
+		t.Error("failed login set a cookie")
+	}
+}
+
+func TestLoginRateLimitByIP(t *testing.T) {
+	e := newEnv(t, config.Config{}, fakeStatus{})
+	for i := 0; i < 10; i++ {
+		if resp, _ := e.do(t, "POST", "/api/login", `{"user":"matt","password":"wrong"}`, nil, nil); resp.StatusCode != 401 {
+			t.Fatalf("attempt %d = %d", i, resp.StatusCode)
+		}
+	}
+	// Blocked even with the right password: a guesser must not learn that it was right.
+	resp, _ := e.do(t, "POST", "/api/login", `{"user":"matt","password":"a-long-password"}`, nil, nil)
+	if resp.StatusCode != 429 || resp.Header.Get("Retry-After") == "" {
+		t.Errorf("after 10 failures: %d, Retry-After %q", resp.StatusCode, resp.Header.Get("Retry-After"))
+	}
+}
+
+func TestLoginRateLimitByUserAcrossAddresses(t *testing.T) {
+	e := newEnv(t, config.Config{TrustProxy: true}, fakeStatus{})
+	for i := 0; i < 20; i++ {
+		hdr := map[string]string{"X-Forwarded-For": "10.0.0." + string(rune('a'+i%26)) + "x"}
+		e.do(t, "POST", "/api/login", `{"user":"matt","password":"wrong"}`, hdr, nil)
+	}
+	resp, _ := e.do(t, "POST", "/api/login", `{"user":"matt","password":"a-long-password"}`, map[string]string{"X-Forwarded-For": "203.0.113.9"}, nil)
+	if resp.StatusCode != 429 {
+		t.Errorf("a fresh address could still guess the user's password: %d", resp.StatusCode)
+	}
+}
+
+func TestSuccessfulLoginClearsFailures(t *testing.T) {
+	e := newEnv(t, config.Config{}, fakeStatus{})
+	for i := 0; i < 9; i++ {
+		e.do(t, "POST", "/api/login", `{"user":"matt","password":"wrong"}`, nil, nil)
+	}
+	e.login(t)
+	for i := 0; i < 9; i++ {
+		if resp, _ := e.do(t, "POST", "/api/login", `{"user":"matt","password":"wrong"}`, nil, nil); resp.StatusCode != 401 {
+			t.Fatalf("counter was not reset: attempt %d = %d", i, resp.StatusCode)
+		}
+	}
+}
+
+func TestClientIPUsesProxyHeaderOnlyWhenTrusted(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "192.0.2.1:5555"
+	req.Header.Set("X-Forwarded-For", "1.1.1.1, 198.51.100.7")
+
+	untrusted := &API{Conf: &config.Config{}}
+	if got := untrusted.ClientIP(req); got != "192.0.2.1" {
+		t.Errorf("untrusted ClientIP = %q", got)
+	}
+	trusted := &API{Conf: &config.Config{TrustProxy: true}}
+	if got := trusted.ClientIP(req); got != "198.51.100.7" {
+		t.Errorf("trusted ClientIP = %q, want the last entry the proxy added", got)
+	}
+}
+
+func TestSessionEndpoint(t *testing.T) {
+	status := fakeStatus{}
+	e := newEnv(t, config.Config{}, status)
+	id, err := e.acc.AddNetwork("matt", accounts.NetworkInput{Name: "libera", Host: "irc.libera.chat", Port: 6697, TLS: true, Nick: "matt", ServerPassword: "hunter2", SASLMech: "PLAIN", SASLUser: "matt", SASLPassword: "s3cret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status[id] = struct {
+		nick      string
+		connected bool
+	}{"matt_", true}
+
+	if resp, _ := e.do(t, "GET", "/api/session", "", nil, nil); resp.StatusCode != 401 {
+		t.Errorf("anonymous /api/session = %d", resp.StatusCode)
+	}
+
+	c := e.login(t)
+	req, _ := http.NewRequest("GET", e.srv.URL+"/api/session", nil)
+	req.AddCookie(c)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var raw strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(buf)
+		raw.Write(buf[:n])
+		if err != nil {
+			break
+		}
+	}
+	text := raw.String()
+	for _, secret := range []string{"hunter2", "s3cret"} {
+		if strings.Contains(text, secret) {
+			t.Errorf("/api/session leaked %q", secret)
+		}
+	}
+	var body struct {
+		User     string `json:"user"`
+		Networks []struct {
+			Name      string `json:"name"`
+			Nick      string `json:"nick"`
+			Connected bool   `json:"connected"`
+		} `json:"networks"`
+		Prefs json.RawMessage `json:"prefs"`
+	}
+	if err := json.Unmarshal([]byte(text), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.User != "matt" || len(body.Networks) != 1 || body.Networks[0].Name != "libera" ||
+		!body.Networks[0].Connected || body.Networks[0].Nick != "matt_" || string(body.Prefs) != "null" {
+		t.Errorf("session = %s", text)
+	}
+}
+
+func TestLogoutEndsSession(t *testing.T) {
+	e := newEnv(t, config.Config{}, fakeStatus{})
+	c := e.login(t)
+	resp, _ := e.do(t, "POST", "/api/logout", `{}`, nil, c)
+	if resp.StatusCode != 200 {
+		t.Fatalf("logout = %d", resp.StatusCode)
+	}
+	cleared := false
+	for _, x := range resp.Cookies() {
+		if x.Name == CookieName && x.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Error("logout did not clear the cookie")
+	}
+	if resp, _ := e.do(t, "GET", "/api/session", "", nil, c); resp.StatusCode != 401 {
+		t.Errorf("old cookie still works after logout: %d", resp.StatusCode)
+	}
+}
+
+func TestPrefsRoundTripAndLimits(t *testing.T) {
+	e := newEnv(t, config.Config{}, fakeStatus{})
+	if resp, _ := e.do(t, "GET", "/api/prefs", "", nil, nil); resp.StatusCode != 401 {
+		t.Errorf("anonymous prefs = %d", resp.StatusCode)
+	}
+	c := e.login(t)
+
+	if _, body := e.do(t, "GET", "/api/prefs", "", nil, c); len(body) != 0 {
+		t.Errorf("new account prefs = %v, want {}", body)
+	}
+	if resp, _ := e.do(t, "PUT", "/api/prefs", `{"theme":"dark","keywords":["deploy"]}`, nil, c); resp.StatusCode != 200 {
+		t.Fatalf("PUT = %d", resp.StatusCode)
+	}
+	_, body := e.do(t, "GET", "/api/prefs", "", nil, c)
+	if body["theme"] != "dark" {
+		t.Errorf("prefs after PUT = %v", body)
+	}
+
+	for _, bad := range []string{`[1,2]`, `"str"`, `null`, `{bad`} {
+		if resp, _ := e.do(t, "PUT", "/api/prefs", bad, nil, c); resp.StatusCode != 400 {
+			t.Errorf("PUT %q = %d, want 400", bad, resp.StatusCode)
+		}
+	}
+	big := `{"x":"` + strings.Repeat("a", accounts.MaxPrefsBytes) + `"}`
+	if resp, _ := e.do(t, "PUT", "/api/prefs", big, nil, c); resp.StatusCode != 413 {
+		t.Errorf("oversized PUT = %d, want 413", resp.StatusCode)
+	}
+	req, _ := http.NewRequest("PUT", e.srv.URL+"/api/prefs", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "text/plain")
+	req.AddCookie(c)
+	resp, _ := http.DefaultClient.Do(req)
+	if resp.StatusCode != 415 {
+		t.Errorf("text/plain PUT = %d, want 415", resp.StatusCode)
+	}
+}
+
+func TestCrossOriginWritesAreRefused(t *testing.T) {
+	e := newEnv(t, config.Config{AllowedOrigins: []string{"app.example.org"}}, fakeStatus{})
+	c := e.login(t)
+	evil := map[string]string{"Origin": "https://evil.example"}
+	if resp, _ := e.do(t, "PUT", "/api/prefs", `{"a":1}`, evil, c); resp.StatusCode != 403 {
+		t.Errorf("cross-origin PUT = %d, want 403", resp.StatusCode)
+	}
+	if resp, _ := e.do(t, "POST", "/api/login", `{"user":"matt","password":"a-long-password"}`, evil, nil); resp.StatusCode != 403 {
+		t.Errorf("cross-origin login = %d, want 403", resp.StatusCode)
+	}
+	if resp, _ := e.do(t, "POST", "/api/logout", `{}`, evil, c); resp.StatusCode != 403 {
+		t.Errorf("cross-origin logout = %d, want 403", resp.StatusCode)
+	}
+	same := map[string]string{"Origin": e.srv.URL}
+	if resp, _ := e.do(t, "PUT", "/api/prefs", `{"a":1}`, same, c); resp.StatusCode != 200 {
+		t.Errorf("same-origin PUT = %d, want 200", resp.StatusCode)
+	}
+	allowed := map[string]string{"Origin": "https://app.example.org"}
+	if resp, _ := e.do(t, "PUT", "/api/prefs", `{"a":1}`, allowed, c); resp.StatusCode != 200 {
+		t.Errorf("allowed-origin PUT = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestWithIdentity(t *testing.T) {
+	e := newEnv(t, config.Config{}, fakeStatus{})
+	c := e.login(t)
+	var got Identity
+	h := e.api.WithIdentity(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got = IdentityFrom(r.Context()) }))
+
+	req := httptest.NewRequest("GET", "/ws", nil)
+	req.RemoteAddr = "192.0.2.4:1"
+	req.AddCookie(c)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if got.User != "matt" || got.IP != "192.0.2.4" {
+		t.Errorf("identity = %+v", got)
+	}
+
+	req = httptest.NewRequest("GET", "/ws", nil)
+	req.RemoteAddr = "192.0.2.4:1"
+	req.AddCookie(&http.Cookie{Name: CookieName, Value: "forged"})
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if got.User != "" {
+		t.Errorf("forged cookie produced identity %+v", got)
+	}
+}

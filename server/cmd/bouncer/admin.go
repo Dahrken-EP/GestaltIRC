@@ -16,7 +16,7 @@ func userCommand(cfg *config.Config, args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: user add|passwd|list|remove")
 	}
-	st, acc, err := openApp(cfg, false)
+	st, acc, _, err := openApp(cfg, false)
 	if err != nil {
 		return err
 	}
@@ -67,9 +67,9 @@ func userCommand(cfg *config.Config, args []string) error {
 
 func networkCommand(cfg *config.Config, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: network add|list|remove")
+		return errors.New("usage: network add|list|cert|remove")
 	}
-	st, acc, err := openApp(cfg, false)
+	st, acc, _, err := openApp(cfg, false)
 	if err != nil {
 		return err
 	}
@@ -91,9 +91,26 @@ func networkCommand(cfg *config.Config, args []string) error {
 			if n.TLS {
 				tls = " tls"
 			}
-			fmt.Printf("%s\t%s:%d%s\tnick=%s\tsasl=%s\tjoin=%s\n",
-				n.Name, n.Host, n.Port, tls, n.Nick, orNone(n.SASLMech), strings.Join(n.Join, ","))
+			cert := ""
+			if n.ClientCert != "" {
+				cert = "\tcert=yes"
+			}
+			fmt.Printf("%s\t%s:%d%s\tnick=%s\tsasl=%s\tjoin=%s%s\n",
+				n.Name, n.Host, n.Port, tls, n.Nick, orNone(n.SASLMech), strings.Join(n.Join, ","), cert)
 		}
+		return nil
+	case "cert":
+		if len(args) != 3 {
+			return errors.New("usage: network cert USER NAME")
+		}
+		fp, err := acc.ClientCertFingerprint(args[1], args[2])
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("no network %s for user %s", args[2], args[1])
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Printf("SHA-256 fingerprint of the client certificate for %s/%s:\n%s\n", args[1], args[2], fp)
 		return nil
 	case "remove":
 		if len(args) != 3 {
@@ -121,8 +138,8 @@ func networkAdd(acc *accounts.Service, args []string) error {
 
 	fs := flag.NewFlagSet("network add", flag.ContinueOnError)
 	in := accounts.NetworkInput{Name: name}
-	var join string
-	var serverPwStdin bool
+	var join, certFile, keyFile string
+	var serverPwStdin, genCert bool
 	fs.StringVar(&in.Host, "host", "", "server host name")
 	fs.IntVar(&in.Port, "port", 0, "server port (default 6697 with --tls, else 6667)")
 	fs.BoolVar(&in.TLS, "tls", false, "connect with TLS")
@@ -130,7 +147,10 @@ func networkAdd(acc *accounts.Service, args []string) error {
 	fs.StringVar(&in.Ident, "ident", "", "user name (default: nick)")
 	fs.StringVar(&in.RealName, "realname", "", "real name (default: nick)")
 	fs.StringVar(&join, "join", "", "comma-separated channels to join")
-	fs.StringVar(&in.SASLMech, "sasl", "", "SASL mechanism: PLAIN or SCRAM-SHA-256")
+	fs.StringVar(&in.SASLMech, "sasl", "", "SASL mechanism: PLAIN, SCRAM-SHA-256 or EXTERNAL")
+	fs.StringVar(&certFile, "cert-file", "", "PEM client certificate for CertFP and SASL EXTERNAL (may also hold the key)")
+	fs.StringVar(&keyFile, "key-file", "", "PEM private key for --cert-file, if it is in a separate file")
+	fs.BoolVar(&genCert, "generate-cert", false, "make a new client certificate and print its fingerprint")
 	fs.StringVar(&in.SASLUser, "sasl-user", "", "SASL user name (default: nick)")
 	fs.BoolVar(&serverPwStdin, "server-password-stdin", false, "read a server password from the second stdin line")
 	if err := fs.Parse(args[2:]); err != nil {
@@ -148,7 +168,32 @@ func networkAdd(acc *accounts.Service, args []string) error {
 	if join != "" {
 		in.Join = strings.Split(join, ",")
 	}
-	if in.SASLMech != "" {
+	if genCert && certFile != "" {
+		return errors.New("use either --generate-cert or --cert-file, not both")
+	}
+	switch {
+	case genCert:
+		cert, key, err := accounts.GenerateClientCert(in.Nick)
+		if err != nil {
+			return err
+		}
+		in.ClientCert, in.ClientKey = cert, key
+	case certFile != "":
+		cert, err := os.ReadFile(certFile)
+		if err != nil {
+			return err
+		}
+		in.ClientCert = string(cert)
+		if keyFile != "" {
+			key, err := os.ReadFile(keyFile)
+			if err != nil {
+				return err
+			}
+			in.ClientKey = string(key)
+		}
+	}
+	// EXTERNAL needs no password. Its SASL user, if given, is only the identity to act as.
+	if in.SASLMech != "" && !strings.EqualFold(in.SASLMech, "EXTERNAL") {
 		if in.SASLUser == "" {
 			in.SASLUser = in.Nick
 		}
@@ -171,6 +216,16 @@ func networkAdd(acc *accounts.Service, args []string) error {
 		return err
 	}
 	fmt.Printf("added network %s/%s (id %d); the bouncer picks it up within %s\n", user, name, id, "5s")
+	if in.ClientCert != "" {
+		fp, err := accounts.CertFingerprint(in.ClientCert)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("client certificate SHA-256 fingerprint: %s\n", fp)
+		if genCert {
+			fmt.Println("register it with the network's services, for example on Libera: /msg NickServ CERT ADD " + fp)
+		}
+	}
 	return nil
 }
 

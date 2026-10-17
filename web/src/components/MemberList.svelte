@@ -23,7 +23,7 @@
   <ul>
     {#each sorted as m (m.nick)}
       <li>
-        <button onclick={() => onnick(m.nick)} title={m.nick}>
+        <button class:away={m.away} onclick={() => onnick(m.nick)} title={m.away ? `${m.nick} (away)` : m.nick}>
           <span class="prefix">{m.prefix[0] ?? ''}</span><span class="n" style:color={nickColor(m.nick, settings.nickColors)}>{m.nick}</span>
         </button>
       </li>
@@ -65,6 +65,9 @@
   }
   button:hover {
     background: var(--bg-hover);
+  }
+  button.away {
+    opacity: 0.5;
   }
   .prefix {
     width: 1.1em;

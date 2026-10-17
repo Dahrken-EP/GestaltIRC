@@ -116,6 +116,75 @@ CREATE TABLE IF NOT EXISTS kv (
 	if err != nil {
 		return fmt.Errorf("store: migrate: %w", err)
 	}
+	return s.upgrade()
+}
+
+// migrations run in order, once each. A database's position is kept in
+// PRAGMA user_version, so adding an entry here upgrades existing databases.
+var migrations = []string{
+	// 1: web sessions, per-user preferences, read markers, push subscriptions,
+	// text settings, and client certificates for SASL EXTERNAL.
+	`
+CREATE TABLE sessions (
+	token_hash TEXT    PRIMARY KEY,
+	user_id    INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+	created_ms INTEGER NOT NULL,
+	expires_ms INTEGER NOT NULL
+);
+CREATE INDEX sessions_user ON sessions (user_id);
+CREATE TABLE prefs (
+	user_id    INTEGER PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+	json       TEXT    NOT NULL,
+	updated_ms INTEGER NOT NULL
+);
+CREATE TABLE read_markers (
+	network_id INTEGER NOT NULL,
+	target     TEXT    NOT NULL,
+	time_ms    INTEGER NOT NULL,
+	PRIMARY KEY (network_id, target)
+);
+CREATE TABLE push_subscriptions (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id    INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+	endpoint   TEXT    NOT NULL UNIQUE,
+	p256dh     TEXT    NOT NULL,
+	auth       TEXT    NOT NULL,
+	created_ms INTEGER NOT NULL
+);
+CREATE INDEX push_user ON push_subscriptions (user_id);
+CREATE TABLE settings (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
+ALTER TABLE networks ADD COLUMN client_cert TEXT NOT NULL DEFAULT '';
+ALTER TABLE networks ADD COLUMN client_key  TEXT NOT NULL DEFAULT '';
+`,
+}
+
+// upgrade applies any migrations the database has not seen.
+func (s *Store) upgrade() error {
+	var version int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("store: read schema version: %w", err)
+	}
+	for i := version; i < len(migrations); i++ {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(migrations[i]); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("store: migration %d: %w", i+1, err)
+		}
+		// PRAGMA does not take bound parameters.
+		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, i+1)); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

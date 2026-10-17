@@ -16,6 +16,7 @@ export interface ConnectionOptions {
   url: string
   /** Login as the bouncer expects it: "user/network". */
   login: string
+  /** Leave empty when the browser holds a session cookie, which the bouncer accepts instead. */
   password: string
   nick: string
   onMessage(m: Message): void
@@ -37,7 +38,21 @@ export interface SocketLike {
 }
 
 /** Capabilities the client asks for, when the bouncer offers them. */
-export const WANTED_CAPS = ['message-tags', 'server-time', 'batch', 'echo-message', 'chathistory', 'message-ids', 'sasl']
+export const WANTED_CAPS = [
+  'message-tags',
+  'server-time',
+  'batch',
+  'echo-message',
+  'chathistory',
+  'message-ids',
+  'sasl',
+  'multi-prefix',
+  'away-notify',
+  'standard-replies',
+  'cap-notify',
+  'draft/read-marker',
+  'draft/message-redaction',
+]
 
 const KEEPALIVE_MS = 45_000
 const DEAD_AFTER_MS = 120_000
