@@ -638,9 +638,53 @@ async function send(page, text) {
   await speakingOf(vJane.p, 'matt').first().waitFor({ timeout: 10000 })
   ok(true, 'unmuting makes them heard again')
 
+  // Push to talk: the microphone is open only while the button (or Ctrl+Space) is held.
+  await page.getByLabel('Push to talk').check()
+  await page.getByTestId('talk').waitFor()
+  ok((await page.getByRole('button', { name: 'Mute' }).count()) === 0, 'push to talk replaces the mute button')
+  await sleep(1500)
+  let heard = false
+  for (let i = 0; i < 25; i++) {
+    if ((await speakingOf(vJane.p, 'matt').count()) > 0) heard = true
+    await sleep(150)
+  }
+  ok(!heard, 'with push to talk on and nothing held, nobody hears you')
+  await page.getByTestId('talk').hover()
+  await page.mouse.down()
+  await speakingOf(vJane.p, 'matt').first().waitFor({ timeout: 15000 })
+  ok((await page.getByTestId('talk').getAttribute('aria-pressed')) === 'true', 'holding the button opens the microphone, and they hear you')
+  await page.mouse.up()
+  await vJane.p.waitForFunction(() => ![...document.querySelectorAll('[data-testid=voice-person]')].some((l) => l.textContent.includes('matt') && l.classList.contains('speaking')), null, { timeout: 8000 })
+  ok(true, 'letting go closes it again')
+  await page.keyboard.down('Control')
+  await page.keyboard.down('Space')
+  await speakingOf(vJane.p, 'matt').first().waitFor({ timeout: 15000 })
+  await page.keyboard.up('Space')
+  await page.keyboard.up('Control')
+  ok(true, 'Ctrl+Space does the same from the keyboard')
+  await page.getByLabel('Push to talk').uncheck()
+  await page.getByRole('button', { name: 'Mute' }).waitFor()
+
   await vKim.p.getByRole('button', { name: 'Leave voice' }).click()
   await page.waitForFunction(() => document.querySelectorAll('[data-testid=voice-person]').length === 1, null, { timeout: 10000 })
   ok(true, 'someone leaving disappears from the others')
+
+  // Listening only: hear the room, never be heard, and no microphone prompt.
+  await vKim.p.getByRole('button', { name: /Listen only/ }).click()
+  await vKim.p.getByText('You hear the room but cannot be heard').waitFor()
+  await vKim.p.waitForFunction(() => document.querySelectorAll('[data-testid=voice-person][data-state=connected]').length === 2, null, { timeout: 25000 })
+  ok(true, 'a listener connects to everyone in the room')
+  ok((await vKim.p.getByRole('button', { name: 'Mute' }).count()) === 0 && (await vKim.p.getByTestId('talk').count()) === 0, 'a listener has nothing to mute and nothing to hold')
+  await speakingOf(vKim.p, 'jane').first().waitFor({ timeout: 15000 })
+  ok(true, 'the listener hears the others')
+  let overheard = false
+  for (let i = 0; i < 25; i++) {
+    if ((await speakingOf(page, 'kim').count()) > 0 || (await speakingOf(vJane.p, 'kim').count()) > 0) overheard = true
+    await sleep(150)
+  }
+  ok(!overheard, 'and is never heard')
+  await vKim.p.getByRole('button', { name: 'Leave voice' }).click()
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid=voice-person]').length === 1, null, { timeout: 10000 })
 
   // The room is limited to one voice chat: a private call cannot start while in it.
   await send(page, '/call jane')

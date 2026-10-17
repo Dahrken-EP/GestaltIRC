@@ -437,8 +437,9 @@ export class NetworkState {
     return this.roomFor(buf)
   }
 
-  joinVoice(buf: Buffer): void {
-    if (buf.kind === 'channel' && buf.joined && this.canVoice) void this.roomFor(buf).join()
+  /** Joins the channel's voice room. `listenOnly` joins without a microphone; push to talk follows the setting. */
+  joinVoice(buf: Buffer, listenOnly = false): void {
+    if (buf.kind === 'channel' && buf.joined && this.canVoice) void this.roomFor(buf).join({ listenOnly, pushToTalk: settings.pushToTalk })
   }
 
   leaveVoice(buf: Buffer): void {
@@ -755,7 +756,7 @@ export class NetworkState {
       case 'voice':
         if (buf.kind !== 'channel') this.local(buf, 'error', '/voice works in a channel.')
         else if (!this.canVoice) this.local(buf, 'error', 'This network does not support message tags, which voice needs.')
-        else if (a.on) this.joinVoice(buf)
+        else if (a.on) this.joinVoice(buf, a.listen === true)
         else this.leaveVoice(buf)
         break
       case 'clear':

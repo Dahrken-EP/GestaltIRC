@@ -6,7 +6,7 @@ export type Action =
   | { type: 'raw'; line: string }
   | { type: 'open'; target: string }
   | { type: 'direct'; target: string }
-  | { type: 'voice'; on: boolean }
+  | { type: 'voice'; on: boolean; listen?: boolean }
   | { type: 'call'; target: string }
   | { type: 'clear' }
   | { type: 'help' }
@@ -79,7 +79,7 @@ export const HELP = [
   'Channels: /join #chan [key], /part [#chan] [reason], /topic [text], /names [#chan], /list [mask], /invite NICK [#chan]',
   'Moderation: /kick NICK [reason], /ban NICK, /unban NICK, /mode [target] [modes]',
   'Info: /whois NICK, /whowas NICK, /who MASK, /time, /version, /motd, /stats, /links, /ping NICK',
-  'Voice: /voice joins or leaves the voice room of this channel (up to 10 people). /call NICK rings one person privately',
+  'Voice: /voice joins or leaves the voice room of this channel (up to 10 people); /voice listen joins without a microphone. /call NICK rings one person privately',
   'Direct: /direct NICK opens a private chat that goes straight between your browser and theirs, and can send files',
   'Other: /nick NEW, /away [reason], /back, /quit [reason], /clear, /raw LINE',
   'Any other /command is sent to the server as it is. Start a line with // to send a literal "/".',
@@ -159,8 +159,10 @@ export function parseInput(input: string, ctx: CommandContext): Action[] {
     case 'clear':
       return [{ type: 'clear' }]
     case 'voice':
-      if (args && args !== 'on' && args !== 'off' && args !== 'join' && args !== 'leave') return [{ type: 'error', text: 'Usage: /voice [join|leave]. Joins or leaves the voice room of the channel.' }]
-      return [{ type: 'voice', on: args !== 'off' && args !== 'leave' }]
+      if (args && args !== 'on' && args !== 'off' && args !== 'join' && args !== 'leave' && args !== 'listen') {
+        return [{ type: 'error', text: 'Usage: /voice [join|listen|leave]. Joins the voice room of the channel (listen: without a microphone) or leaves it.' }]
+      }
+      return [{ type: 'voice', on: args !== 'off' && args !== 'leave', ...(args === 'listen' ? { listen: true } : {}) }]
     case 'call': {
       const nick = args.split(' ')[0] ?? ''
       if (!nick) return [{ type: 'error', text: 'Usage: /call NICK. Rings them for a private voice call.' }]

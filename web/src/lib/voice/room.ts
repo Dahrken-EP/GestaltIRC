@@ -29,6 +29,12 @@ export interface RoomView {
   state: 'idle' | 'joining' | 'active'
   error: string
   muted: boolean
+  /** Joined without a microphone: hears the room, cannot be heard. */
+  listenOnly: boolean
+  /** The microphone is only open while the talk key or button is held. */
+  pushToTalk: boolean
+  /** Push to talk is being held right now. */
+  talking: boolean
   speaking: boolean
   participants: Participant[]
 }
@@ -69,7 +75,7 @@ interface Peer {
 }
 
 export class VoiceRoom {
-  private view: RoomView = { state: 'idle', error: '', muted: false, speaking: false, participants: [] }
+  private view: RoomView = { state: 'idle', error: '', muted: false, listenOnly: false, pushToTalk: false, talking: false, speaking: false, participants: [] }
   private peers = new Map<string, Peer>()
   private local: MediaStream | null = null
   private localMeter: Meter | null = null
@@ -98,7 +104,11 @@ export class VoiceRoom {
 
   // --- joining and leaving ---
 
-  async join(): Promise<void> {
+  /**
+   * Joins the room. `listenOnly` joins without asking for the microphone (so without a prompt, and without ever being
+   * heard); `pushToTalk` starts with the microphone closed until `setTalking(true)`.
+   */
+  async join(opts: { listenOnly?: boolean; pushToTalk?: boolean } = {}): Promise<void> {
     if (this.view.state !== 'idle') return
     if (!this.slot.claim(this)) {
       this.update({ error: 'You are already in a voice chat. Leave it first.' })
@@ -106,23 +116,28 @@ export class VoiceRoom {
     }
     primeAudio()
     const epoch = ++this.epoch
+    const listenOnly = opts.listenOnly === true
+    const pushToTalk = !listenOnly && opts.pushToTalk === true
     this.update({ state: 'joining', error: '' })
-    let stream: MediaStream
-    try {
-      stream = await this.o.getMedia()
-    } catch (e) {
-      if (epoch === this.epoch) this.fail(`Could not use the microphone: ${e instanceof Error ? e.message : 'not allowed'}`)
-      return
-    }
-    if (epoch !== this.epoch) {
-      stopStream(stream)
-      return
+    let stream: MediaStream | null = null
+    if (!listenOnly) {
+      try {
+        stream = await this.o.getMedia()
+      } catch (e) {
+        if (epoch === this.epoch) this.fail(`Could not use the microphone: ${e instanceof Error ? e.message : 'not allowed'}`)
+        return
+      }
+      if (epoch !== this.epoch) {
+        stopStream(stream)
+        return
+      }
     }
     this.local = stream
     this.answered.clear()
     this.ice = null
-    this.localMeter = (this.o.createMeter ?? audioMeter)(stream)
-    this.update({ state: 'active', muted: false })
+    this.localMeter = stream ? (this.o.createMeter ?? audioMeter)(stream) : null
+    this.update({ state: 'active', muted: false, listenOnly, pushToTalk, talking: false })
+    this.applyMicrophone()
     this.ticker = setInterval(() => this.tick(), this.o.tickMs ?? 50)
     this.o.sendPresence(this.o.channel, formatPresence({ t: 'join' }))
   }
@@ -136,7 +151,7 @@ export class VoiceRoom {
       for (const p of this.peers.values()) this.o.sendSignal(p.nick, p.sid, { k: 'voice', t: 'bye', room: this.o.channel })
     }
     this.teardown()
-    this.update({ state: 'idle', error: reason, participants: [], speaking: false })
+    this.update({ state: 'idle', error: reason, participants: [], speaking: false, talking: false, listenOnly: false })
   }
 
   dispose(): void {
@@ -145,7 +160,7 @@ export class VoiceRoom {
 
   private fail(error: string): void {
     this.teardown()
-    this.update({ state: 'idle', error, participants: [], speaking: false })
+    this.update({ state: 'idle', error, participants: [], speaking: false, talking: false, listenOnly: false })
   }
 
   private teardown(): void {
@@ -251,8 +266,32 @@ export class VoiceRoom {
   // --- controls ---
 
   setMuted(muted: boolean): void {
-    for (const t of this.local?.getAudioTracks() ?? []) t.enabled = !muted
     this.update({ muted })
+    this.applyMicrophone()
+  }
+
+  /** Switches between an open microphone (mute and unmute) and one that is open only while the talk key is held. */
+  setPushToTalk(on: boolean): void {
+    if (this.view.listenOnly) return
+    this.update({ pushToTalk: on, talking: false })
+    this.applyMicrophone()
+  }
+
+  /** The talk key or button went down (true) or up (false). Does nothing unless push to talk is on. */
+  setTalking(talking: boolean): void {
+    if (!this.view.pushToTalk || this.view.state !== 'active' || this.view.talking === talking) return
+    this.update({ talking })
+    this.applyMicrophone()
+  }
+
+  /** True while what the microphone picks up is going out. */
+  private sending(): boolean {
+    return !!this.local && (this.view.pushToTalk ? this.view.talking : !this.view.muted)
+  }
+
+  private applyMicrophone(): void {
+    const on = this.sending()
+    for (const t of this.local?.getAudioTracks() ?? []) t.enabled = on
   }
 
   setVolume(nick: string, volume: number): void {
@@ -309,11 +348,12 @@ export class VoiceRoom {
 
   private async session(peer: Peer): Promise<PeerSession> {
     const servers = await this.servers()
-    if (this.peers.get(peer.nick.toLowerCase()) !== peer || !this.local) throw new Error('superseded')
+    if (this.peers.get(peer.nick.toLowerCase()) !== peer || this.view.state !== 'active') throw new Error('superseded')
     const session: PeerSession = new PeerSession({
       iceServers: servers,
       createConnection: this.o.createConnection,
-      stream: this.local,
+      stream: this.local ?? undefined,
+      receiveAudio: true,
       send: (d) => this.peers.get(peer.nick.toLowerCase()) === peer && this.o.sendSignal(peer.nick, peer.sid, { k: 'voice', t: d.t, room: this.o.channel, sdp: d.sdp }),
       onTrack: (s) => this.peers.get(peer.nick.toLowerCase()) === peer && this.gotStream(peer, s),
       onState: (s) => {
@@ -399,7 +439,7 @@ export class VoiceRoom {
   private tick(): void {
     const now = Date.now()
     let changed = false
-    const mine = this.localSpeaking.update(this.view.muted ? 0 : (this.localMeter?.level() ?? 0), now)
+    const mine = this.localSpeaking.update(this.sending() ? (this.localMeter?.level() ?? 0) : 0, now)
     if (mine !== this.view.speaking) {
       this.view = { ...this.view, speaking: mine }
       changed = true

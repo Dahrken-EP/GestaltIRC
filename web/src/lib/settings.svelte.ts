@@ -19,6 +19,8 @@ interface Stored {
   showBufferList: boolean
   timestamps: boolean
   sendTyping: boolean
+  /** In a voice room, the microphone is open only while the talk key or button is held. */
+  pushToTalk: boolean
   inlineMedia: boolean
   embeds: boolean
   previews: boolean
@@ -36,6 +38,7 @@ const DEFAULTS: Stored = {
   showBufferList: true,
   timestamps: true,
   sendTyping: false,
+  pushToTalk: false,
   inlineMedia: true,
   embeds: true,
   previews: true,
@@ -43,7 +46,7 @@ const DEFAULTS: Stored = {
 }
 
 /** The keys saved to the bouncer. */
-const SYNCED = ['theme', 'density', 'keywords', 'networkKeywords', 'networkMuted', 'nickColors', 'showMembers', 'showBufferList', 'timestamps', 'sendTyping', 'inlineMedia', 'embeds', 'previews'] as const
+const SYNCED = ['theme', 'density', 'keywords', 'networkKeywords', 'networkMuted', 'nickColors', 'showMembers', 'showBufferList', 'timestamps', 'sendTyping', 'pushToTalk', 'inlineMedia', 'embeds', 'previews'] as const
 
 const KEY = 'irc:settings'
 const PUSH_DELAY_MS = 800
@@ -79,6 +82,7 @@ class Settings {
   showBufferList = $state(true)
   timestamps = $state(true)
   sendTyping = $state(false)
+  pushToTalk = $state(false)
   /** Show pictures and video from links in the message list, fetched through the bouncer. */
   inlineMedia = $state(true)
   /** Offer YouTube and Streamable players. Nothing from them loads until the user clicks play. */
@@ -105,6 +109,7 @@ class Settings {
     if (typeof s.showBufferList === 'boolean') this.showBufferList = s.showBufferList
     if (typeof s.timestamps === 'boolean') this.timestamps = s.timestamps
     if (typeof s.sendTyping === 'boolean') this.sendTyping = s.sendTyping
+    if (typeof s.pushToTalk === 'boolean') this.pushToTalk = s.pushToTalk
     if (typeof s.inlineMedia === 'boolean') this.inlineMedia = s.inlineMedia
     if (typeof s.embeds === 'boolean') this.embeds = s.embeds
     if (typeof s.previews === 'boolean') this.previews = s.previews
