@@ -115,7 +115,7 @@ IRC text is never rendered as HTML, and the page has a strict content security p
 
 ## Roadmap
 Not built yet:
-- **A desktop app** for Linux and Windows, built with Tauri: one executable that connects to a bouncer elsewhere, or starts one of its own. The plan, and the first risk to settle (WebRTC in the Linux webview), are in **[docs/DESKTOP.md](docs/DESKTOP.md)**.
+- **A desktop app** for Linux and Windows, built with Tauri: one executable that connects to a bouncer elsewhere, or starts one of its own. A first version exists in `desktop/`; **WebRTC does not work in the Linux webview** on Ubuntu and Debian, so the Linux build needs a different engine. Details and the options are in **[docs/DESKTOP.md](docs/DESKTOP.md)**.
 - **Plugins that run on the server.**
 - **Multiline messages** (`draft/multiline`).
 - **DCC.** Direct chat and file transfer use WebRTC, so people on other IRC clients cannot be sent files this way.

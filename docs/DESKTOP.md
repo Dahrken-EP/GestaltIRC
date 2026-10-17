@@ -1,9 +1,14 @@
-# Desktop app (planned)
+# Desktop app
 
 A Linux and Windows desktop version of the client, built with [Tauri](https://tauri.app), as one executable (an AppImage on
 Linux, a single `.exe` on Windows). It can connect to a bouncer you run elsewhere, or run one itself.
 
-Status: **not built yet.** This is the plan, written down so it survives a change of plans.
+Status: **first version built** in `desktop/` (Tauri 2). It compiles on Linux, the launcher runs, and the local mode's steps
+(make the files, add the account, serve the web client, log in) were checked by hand against the bundled bouncer. **WebRTC does
+not work in the Linux webview** (see below), so the Linux build cannot yet do voice or direct chat. Windows is untested here.
+
+Build it with `cd desktop && npm ci && npm run build`, which builds the bouncer and web client it carries (`build-sidecar.sh`)
+and then runs `tauri build`. `.github/workflows/desktop.yml` does the same on Linux and Windows runners.
 
 ## Two ways to run
 
@@ -27,14 +32,24 @@ Both can be set up, and the user can switch between them from the app's menu.
 5. Desktop extras once it runs: a tray icon, start on login, an unread badge, and a system-wide push-to-talk key (which a
    browser cannot offer).
 
-## The risk to settle first: WebRTC in the webview
+## What was found about WebRTC in the webview
 
-Tauri uses the system webview. On Windows that is WebView2 (Chromium), which has full WebRTC. On Linux it is WebKitGTK, whose
-WebRTC and microphone support depends on the distribution's build and on settings (`enable-webrtc`, `enable-media-stream`) that
-the app has to switch on, and which can still fall short (codecs, PipeWire, permission prompts). **Before building anything else,
-build a minimal Tauri window on Linux that loads the client and passes the existing voice and direct-chat browser tests.** If
-WebKitGTK cannot do it well enough, the Linux build falls back to a bundled Chromium-based shell (Electron) while Windows stays
-on Tauri.
+The launcher checks what the webview can do and shows a warning if voice and direct chat cannot work. Run headless with
+`GESTALT_DIAG=1 xvfb-run target/debug/gestalt-desktop` to print the result.
+
+- **Linux, WebKitGTK 2.52 from Ubuntu 24.04:** `RTCPeerConnection`, `RTCDataChannel` and the prefixed form are all
+  **undefined**, although the microphone (`getUserMedia`), `MediaStream` and the audio API are there. Ubuntu and Debian build
+  WebKitGTK without WebRTC, and the app's own settings (`enable-webrtc`) cannot add what the build left out. So a Tauri
+  Linux app that uses the system webview has no voice, no direct chat and no files on these systems.
+- **Windows, WebView2:** Chromium, so it should be complete. Not yet tried.
+
+## Decision needed for Linux
+
+1. **Tauri with the Chromium Embedded Framework** (an experimental community runtime for Tauri). One code base, WebRTC like Chrome,
+   but the AppImage grows to about 200 MB and the runtime is young.
+2. **Electron for Linux only.** Windows stays on Tauri. Two shells to maintain, but Electron is proven and has full WebRTC.
+3. **Tauri as it is, with voice and direct chat off on Linux** until distributions ship WebKitGTK with WebRTC, and a message
+   in the launcher saying so. The smallest and fastest; the Linux app would be a plain IRC client.
 
 ## Other things to remember
 
