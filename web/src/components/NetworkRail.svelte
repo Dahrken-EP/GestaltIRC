@@ -2,6 +2,7 @@
   import { app } from '../lib/app.svelte'
   import { install } from '../lib/install.svelte'
   import { layout } from '../lib/layout.svelte'
+  import { t } from '../lib/i18n.svelte'
 
   const initials = (label: string) => label.slice(0, 2).toUpperCase()
 
@@ -12,7 +13,7 @@
   }
 </script>
 
-<nav class="rail" aria-label="Networks">
+<nav class="rail" aria-label={t('nav.networks')}>
   {#each app.configured as info (info.name)}
     {@const net = app.networks.find((n) => n.name === info.name)}
     {#if net}
@@ -38,8 +39,8 @@
     {:else}
       <button
         class="net off"
-        title="{info.name} (switched off)"
-        aria-label="{info.name}, switched off"
+        title={t('nav.off_title', { name: info.name })}
+        aria-label={t('nav.off_aria', { name: info.name })}
         aria-haspopup="menu"
         data-server={info.name}
         onclick={(e) => menu(info.name, e)}
@@ -49,15 +50,15 @@
       </button>
     {/if}
   {/each}
-  <button class="net plus" title="Add a server" aria-label="Add a server" onclick={() => app.openServerDialog()}>+</button>
+  <button class="net plus" title={t('nav.add_server')} aria-label={t('nav.add_server')} onclick={() => app.openServerDialog()}>+</button>
   <span class="grow"></span>
   {#if install.kind === 'prompt'}
-    <button class="net add" title="Install Gestalt as an app" aria-label="Install Gestalt as an app" data-testid="install" onclick={() => void install.install()}>⬇</button>
+    <button class="net add" title={t('nav.install_app')} aria-label={t('nav.install_app')} data-testid="install" onclick={() => void install.install()}>⬇</button>
   {:else if install.kind === 'ios'}
-    <button class="net add" title="Install Gestalt as an app" aria-label="Install Gestalt as an app" data-testid="install" onclick={() => (app.showSettings = true)}>⬇</button>
+    <button class="net add" title={t('nav.install_app')} aria-label={t('nav.install_app')} data-testid="install" onclick={() => (app.showSettings = true)}>⬇</button>
   {/if}
-  <button class="net add" title="Hide the server bar" aria-label="Hide the server bar" data-testid="hide-rail" onclick={() => layout.setRailHidden(true)}>‹</button>
-  <button class="net add" title="Settings" aria-label="Settings" onclick={() => (app.showSettings = true)}>⚙</button>
+  <button class="net add" title={t('nav.hide_rail')} aria-label={t('nav.hide_rail')} data-testid="hide-rail" onclick={() => layout.setRailHidden(true)}>‹</button>
+  <button class="net add" title={t('nav.settings')} aria-label={t('nav.settings')} onclick={() => (app.showSettings = true)}>⚙</button>
 </nav>
 
 <style>

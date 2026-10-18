@@ -2,6 +2,7 @@
   import { applyCompletion, findCompletions, type Completion } from '../lib/complete'
   import { emojiIfLoaded, expandShortcodes, loadEmoji, matchShortcodes, shortcodeQueryAt } from '../lib/emoji'
   import type { Buffer, ChatMessage, NetworkState } from '../lib/network.svelte'
+  import { t } from '../lib/i18n.svelte'
   import EmojiPicker from './EmojiPicker.svelte'
 
   let { net, buf, reply, oncancelreply }: {
@@ -194,35 +195,35 @@
 
   const placeholder = $derived(
     buf.kind === 'status'
-      ? 'Type a command, e.g. /join #channel'
+      ? t('input.type_command')
       : buf.kind === 'p2p'
         ? buf.p2p?.state === 'connected'
-          ? `Message ${buf.name} directly`
-          : 'Connect first to send messages'
-        : `Message ${buf.name}`,
+          ? t('input.message_direct', { name: buf.name })
+          : t('input.connect_first')
+        : t('input.message', { name: buf.name }),
   )
 
   const typingText = $derived.by(() => {
     const who = buf.typing
     if (who.length === 0) return ''
-    if (who.length === 1) return `${who[0]} is typing…`
-    if (who.length === 2) return `${who[0]} and ${who[1]} are typing…`
-    return 'Several people are typing…'
+    if (who.length === 1) return t('input.typing_one', { nick: who[0] ?? '' })
+    if (who.length === 2) return t('input.typing_two', { a: who[0] ?? '', b: who[1] ?? '' })
+    return t('input.typing_many')
   })
 </script>
 
 <form class="input" onsubmit={(e) => { e.preventDefault(); send() }}>
   {#if reply}
     <div class="replying">
-      <span>Replying to <strong>{reply.nick}</strong>: {reply.text.length > 80 ? reply.text.slice(0, 79) + '…' : reply.text}</span>
-      <button type="button" aria-label="Cancel reply" title="Cancel reply (Esc)" onclick={oncancelreply}>×</button>
+      <span>{t('input.replying')} <strong>{reply.nick}</strong>: {reply.text.length > 80 ? reply.text.slice(0, 79) + '…' : reply.text}</span>
+      <button type="button" aria-label={t('input.cancel_reply')} title={t('input.cancel_reply_title')} onclick={oncancelreply}>×</button>
     </div>
   {/if}
   {#if picking}
     <EmojiPicker onpick={insert} onclose={() => { picking = false; el?.focus() }} />
   {/if}
   {#if suggestions}
-    <ul class="suggest" id="emoji-suggest" role="listbox" aria-label="Emoji" data-testid="emoji-suggest">
+    <ul class="suggest" id="emoji-suggest" role="listbox" aria-label={t('emoji.title')} data-testid="emoji-suggest">
       {#each suggestions.matches as m, i (m.code)}
         <li id="emoji-suggest-{i}" role="option" aria-selected={i === picked} class:on={i === picked}>
           <button type="button" tabindex="-1" onmousedown={(e) => (e.preventDefault(), accept(i))}>
@@ -232,7 +233,7 @@
       {/each}
     </ul>
   {/if}
-  <label class="visually-hidden" for="msg-input">Message</label>
+  <label class="visually-hidden" for="msg-input">{t('input.label')}</label>
   <div class="field">
   <textarea
     id="msg-input"
@@ -252,7 +253,7 @@
     autocapitalize="off"
     disabled={buf.kind === 'p2p' ? buf.p2p?.state !== 'connected' : net.status !== 'connected'}
   ></textarea>
-  <button type="button" class="emoji" title="Emoji (Ctrl+E)" aria-label="Emoji" aria-expanded={picking} onclick={() => (picking = !picking)}>😊</button>
+  <button type="button" class="emoji" title={t('input.emoji_title')} aria-label={t('emoji.title')} aria-expanded={picking} onclick={() => (picking = !picking)}>😊</button>
   </div>
   <div class="typing" aria-live="polite">{typingText}</div>
 </form>

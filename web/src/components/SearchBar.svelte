@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { t } from '../lib/i18n.svelte'
 
   let { value = $bindable(''), onclose }: { value: string; onclose: () => void } = $props()
 
@@ -24,12 +25,12 @@
     bind:value
     {onkeydown}
     type="search"
-    placeholder="Search this conversation (from:nick narrows to one person)"
-    aria-label="Search this conversation"
+    placeholder={t('search.placeholder')}
+    aria-label={t('search.aria')}
     autocomplete="off"
     spellcheck="false"
   />
-  <button class="icon" title="Close search (Esc)" aria-label="Close search" onclick={onclose}>×</button>
+  <button class="icon" title={t('search.close_title')} aria-label={t('search.close')} onclick={onclose}>×</button>
 </div>
 
 <style>

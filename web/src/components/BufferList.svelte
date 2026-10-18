@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
   import type { NetworkState } from '../lib/network.svelte'
+  import { t } from '../lib/i18n.svelte'
 
   let { net, onpick }: { net: NetworkState; onpick?: () => void } = $props()
 
@@ -22,21 +23,21 @@
         {#if mentions}<span class="badge mention">{mentions}</span>{:else if unread}<span class="badge">{unread}</span>{/if}
       </button>
       {#if closable && buf}
-        <button class="close" title="Close {label}" aria-label="Close {label}" onclick={() => net.closeBuffer(buf)}>×</button>
+        <button class="close" title={t('buffer.close', { name: label })} aria-label={t('buffer.close', { name: label })} onclick={() => net.closeBuffer(buf)}>×</button>
       {/if}
     </div>
   </li>
 {/snippet}
 
-<aside class="list" aria-label="Channels and queries">
+<aside class="list" aria-label={t('buffer.list_aria')}>
   <header>
     <span class="netname" title={net.statusDetail || net.status}>
       <span class="status {net.status}" aria-hidden="true"></span>{net.label}
     </span>
     <button
       class="more"
-      title="Server menu: edit, switch off, remove"
-      aria-label="Server menu"
+      title={t('buffer.server_menu_hint')}
+      aria-label={t('buffer.server_menu')}
       aria-haspopup="menu"
       onclick={(e) => {
         const box = e.currentTarget.getBoundingClientRect()
@@ -46,11 +47,11 @@
   </header>
 
   <ul>
-    {@render item('', 'Status', net.statusBuffer.unread, net.statusBuffer.mentionCount, false, false)}
+    {@render item('', t('buffer.status'), net.statusBuffer.unread, net.statusBuffer.mentionCount, false, false)}
   </ul>
 
   {#if channels.length}
-    <h3>Channels</h3>
+    <h3>{t('buffer.channels')}</h3>
     <ul>
       {#each channels as b (b.key)}
         {@render item(b.key, (b.voice?.state === 'active' ? '🎙 ' : '') + b.name, b.unread, b.mentionCount, !b.joined, true, b)}
@@ -59,7 +60,7 @@
   {/if}
 
   {#if queries.length}
-    <h3>Messages</h3>
+    <h3>{t('buffer.queries')}</h3>
     <ul>
       {#each queries as b (b.key)}
         {@render item(b.key, b.name, b.unread, b.mentionCount, false, true, b)}
@@ -67,7 +68,7 @@
     </ul>
   {/if}
   {#if directs.length}
-    <h3>Direct</h3>
+    <h3>{t('buffer.direct')}</h3>
     <ul>
       {#each directs as b (b.key)}
         {@render item(b.key, (b.call?.state === 'connected' ? '📞 ' : '⚡ ') + b.title, b.unread, b.mentionCount, b.p2p?.state !== 'connected' && b.call?.state !== 'connected', true, b)}

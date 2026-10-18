@@ -8,6 +8,7 @@
   import MediaEmbeds from './MediaEmbeds.svelte'
   import ThreadIndicator from './ThreadIndicator.svelte'
   import TokenText from './TokenText.svelte'
+  import { t } from '../lib/i18n.svelte'
 
   let {
     msg,
@@ -41,6 +42,53 @@
   const time = $derived(new Date(msg.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
   const full = $derived(new Date(msg.time).toLocaleString())
   const color = (nick: string) => nickColor(nick, settings.nickColors)
+
+  // Event lines ("joined", "left"…) keep the coloured nick from the translation,
+  // by splitting the translated sentence around the placeholders' values.
+  type Seg = { text: string; colored: string | null }
+  const splitAround = (s: string, toks: string[]): Seg[] => {
+    const segs: Seg[] = []
+    let rest = s
+    for (const tok of toks) {
+      if (!tok) continue
+      const i = rest.indexOf(tok)
+      if (i < 0) continue
+      if (i > 0) segs.push({ text: rest.slice(0, i), colored: null })
+      segs.push({ text: tok, colored: tok })
+      rest = rest.slice(i + tok.length)
+    }
+    if (rest) segs.push({ text: rest, colored: null })
+    return segs.length ? segs : [{ text: s, colored: null }]
+  }
+  const ev = $derived.by(() => {
+    const reason = msg.text ? ` (${msg.text})` : ''
+    const key =
+      msg.kind === 'join'
+        ? 'msg.joined'
+        : msg.kind === 'part'
+          ? 'msg.left'
+          : msg.kind === 'quit'
+            ? 'msg.quit'
+            : msg.kind === 'nick'
+              ? 'msg.renamed'
+              : msg.kind === 'kick'
+                ? 'msg.kicked'
+                : msg.kind === 'mode'
+                  ? 'msg.set_mode'
+                  : msg.kind === 'topic'
+                    ? 'msg.set_topic'
+                    : null
+    if (!key) return null
+    const vars: Record<string, string | number> =
+      msg.kind === 'nick'
+        ? { nick: msg.nick, target: msg.target ?? '' }
+        : msg.kind === 'kick'
+          ? { nick: msg.nick, target: msg.target ?? '', reason }
+          : msg.kind === 'mode'
+            ? { nick: msg.nick, mode: msg.text ?? '' }
+            : { nick: msg.nick, reason }
+    return splitAround(t(key, vars), [msg.nick, ...(msg.kind === 'nick' || msg.kind === 'kick' ? [msg.target ?? ''] : [])])
+  })
 
   // Replies, reactions and deletion need the message to have an id and the network to support them.
   const canInteract = $derived(isChat && !!msg.msgid && buf.onNetwork)
@@ -109,41 +157,28 @@
     {:else}
       <span class="who"><span class="dim">{msg.kind === 'error' ? '!' : '–'}</span></span>
       <span class="text event">
-        {#if msg.kind === 'join'}
-          <span style:color={color(msg.nick)}>{msg.nick}</span> joined
-        {:else if msg.kind === 'part'}
-          <span style:color={color(msg.nick)}>{msg.nick}</span> left{msg.text ? ` (${msg.text})` : ''}
-        {:else if msg.kind === 'quit'}
-          <span style:color={color(msg.nick)}>{msg.nick}</span> quit{msg.text ? ` (${msg.text})` : ''}
-        {:else if msg.kind === 'nick'}
-          <span style:color={color(msg.nick)}>{msg.nick}</span> is now known as <span style:color={color(msg.target ?? '')}>{msg.target}</span>
-        {:else if msg.kind === 'kick'}
-          <span style:color={color(msg.nick)}>{msg.nick}</span> kicked <span style:color={color(msg.target ?? '')}>{msg.target}</span>{msg.text ? ` (${msg.text})` : ''}
-        {:else if msg.kind === 'mode'}
-          <span style:color={color(msg.nick)}>{msg.nick}</span> set mode {msg.text}
-        {:else if msg.kind === 'topic'}
-          <span style:color={color(msg.nick)}>{msg.nick}</span> set the topic: <TokenText {tokens} {onchannel} />
-        {:else}
-          <TokenText {tokens} {onchannel} />
-        {/if}
+        {#each ev as seg, i (i)}
+          {#if seg.colored !== null}<span style:color={color(seg.colored)}>{seg.colored}</span>{:else}{seg.text}{/if}
+        {/each}
+        {#if msg.kind === 'topic'} <TokenText {tokens} {onchannel} />{/if}
       </span>
     {/if}
 
     {#if canReply || canReact || canDelete}
       <span class="tools" class:open={picking || selected}>
         {#if canReply}
-          <button title="Reply" aria-label="Reply to {msg.nick}" onclick={() => (onreply(msg), done())}>↩</button>
+          <button title={t('msg.reply')} aria-label={t('msg.reply_to', { nick: msg.nick })} onclick={() => (onreply(msg), done())}>↩</button>
         {/if}
         {#if canReact}
-          <button title="Add reaction" aria-label="Add reaction" aria-expanded={picking} onclick={() => (picking = !picking)}>☺</button>
+          <button title={t('msg.react')} aria-label={t('msg.react')} aria-expanded={picking} onclick={() => (picking = !picking)}>☺</button>
         {/if}
         {#if canDelete}
-          <button class="del" title="Delete message" aria-label="Delete message" onclick={() => (net.redact(buf, msg), done())}>🗑</button>
+          <button class="del" title={t('msg.delete')} aria-label={t('msg.delete')} onclick={() => (net.redact(buf, msg), done())}>🗑</button>
         {/if}
         {#if picking}
-          <span class="palette" role="group" aria-label="Choose a reaction">
+          <span class="palette" role="group" aria-label={t('msg.palette')}>
             {#each QUICK_REACTIONS as emoji (emoji)}
-              <button aria-label="React with {emoji}" onclick={() => react(emoji)}>{emoji}</button>
+              <button aria-label={t('msg.react_with', { emoji })} onclick={() => react(emoji)}>{emoji}</button>
             {/each}
           </span>
         {/if}
@@ -167,7 +202,7 @@
           disabled={!canReact}
           title={nicks.join(', ')}
           aria-pressed={nicks.some((n) => n.toLowerCase() === net.nick.toLowerCase())}
-          aria-label="{emoji} from {nicks.join(', ')}"
+          aria-label={t('msg.from', { emoji, nicks: nicks.join(', ') })}
           onclick={() => react(emoji)}>{emoji} {nicks.length}</button
         >
       {/each}

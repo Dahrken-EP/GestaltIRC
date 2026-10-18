@@ -2,6 +2,7 @@
   import { tokenize } from '../lib/render'
   import type { Buffer, NetworkState } from '../lib/network.svelte'
   import { settings } from '../lib/settings.svelte'
+  import { t } from '../lib/i18n.svelte'
   import TokenText from './TokenText.svelte'
 
   let { net, buf, onmenu, onchannel, onsearch }: {
@@ -16,29 +17,29 @@
 </script>
 
 <header class="bar">
-  <button class="icon menu" title="Show channels" aria-label="Show channels" onclick={onmenu}>☰</button>
+  <button class="icon menu" title={t('nav.show_channels')} aria-label={t('nav.show_channels')} onclick={onmenu}>☰</button>
   <h1>{buf.kind === 'status' ? net.label : buf.kind === 'p2p' ? `⚡ ${buf.title}` : buf.name}</h1>
   {#if buf.kind === 'channel' && buf.topic}
     <span class="topic" title={buf.topic}><TokenText tokens={topic} {onchannel} /></span>
   {:else if buf.kind === 'p2p'}
-    <span class="topic">Direct chat, browser to browser</span>
+    <span class="topic">{t('header.direct_hint')}</span>
   {:else if buf.kind === 'status'}
-    <span class="topic">{net.status === 'connected' ? `Connected as ${net.nick}` : net.statusDetail || net.status}</span>
+    <span class="topic">{net.status === 'connected' ? t('header.connected_as', { nick: net.nick }) : net.statusDetail || net.status}</span>
   {/if}
   <span class="grow"></span>
   {#if buf.kind === 'query'}
-    <button class="btn" title="Chat straight between your browser and theirs" onclick={() => net.openDirect(buf.name)}>⚡ Direct chat</button>
+    <button class="btn" title={t('button.direct_hint')} onclick={() => net.openDirect(buf.name)}>{t('button.direct')}</button>
     {#if net.canVoice}
-      <button class="btn" title="Ring them for a private voice call" onclick={() => net.callNick(buf.name)}>📞 Call</button>
+      <button class="btn" title={t('button.call_hint')} onclick={() => net.callNick(buf.name)}>{t('button.call')}</button>
     {/if}
   {/if}
-  <button class="icon" title="Search this conversation (Ctrl+F)" aria-label="Search this conversation" onclick={onsearch}>🔍</button>
+  <button class="icon" title={t('button.search_title')} aria-label={t('search.aria')} onclick={onsearch}>🔍</button>
   {#if buf.kind === 'channel'}
     <button
       class="icon"
       class:on={settings.showMembers}
-      title="Toggle member list"
-      aria-label="Toggle member list"
+      title={t('button.toggle_members')}
+      aria-label={t('button.toggle_members')}
       aria-pressed={settings.showMembers}
       onclick={() => { settings.showMembers = !settings.showMembers; settings.save() }}>👥</button
     >

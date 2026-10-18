@@ -2,6 +2,7 @@
   import { formatBytes } from '../lib/p2p/protocol'
   import type { Transfer } from '../lib/p2p/chat'
   import type { Buffer, NetworkState } from '../lib/network.svelte'
+  import { t as t2 } from '../lib/i18n.svelte'
 
   let { net, buf }: { net: NetworkState; buf: Buffer } = $props()
 
@@ -31,6 +32,17 @@
     picker.value = ''
   }
 
+  /** Splits a translated sentence around the nickname so it can be bolded in any language. */
+  const boldAround = (s: string, name: string): { text: string; bold: boolean }[] => {
+    const i = name ? s.indexOf(name) : -1
+    if (i < 0) return [{ text: s, bold: false }]
+    const out: { text: string; bold: boolean }[] = []
+    if (i > 0) out.push({ text: s.slice(0, i), bold: false })
+    out.push({ text: name, bold: true })
+    if (i + name.length < s.length) out.push({ text: s.slice(i + name.length), bold: false })
+    return out
+  }
+
   function ondrop(e: DragEvent) {
     e.preventDefault()
     dragging = false
@@ -52,21 +64,21 @@
   }
 
   const percent = (t: Transfer) => (t.size === 0 ? 100 : Math.min(100, Math.floor((t.done / t.size) * 100)))
-  const verb: Record<Transfer['state'], string> = {
-    offered: 'Wants to send',
-    waiting: 'Waiting for them to accept',
-    active: 'Transferring',
-    done: 'Done',
-    failed: 'Failed',
-    declined: 'Declined',
-    cancelled: 'Cancelled',
-  }
+  const verb = $derived<Record<Transfer['state'], string>>({
+    offered: t2('transfer.offered'),
+    waiting: t2('transfer.waiting'),
+    active: t2('transfer.active'),
+    done: t2('transfer.done'),
+    failed: t2('transfer.failed'),
+    declined: t2('transfer.declined'),
+    cancelled: t2('transfer.cancelled'),
+  })
 </script>
 
 <section
   class="panel"
   class:dragging
-  aria-label="Direct chat with {buf.title}"
+  aria-label={t2('p2p.aria', { name: buf.title })}
   ondragover={(e) => {
     // Always claimed, or the browser would open a dropped file in this tab and leave the chat.
     if (e.dataTransfer?.types.includes('Files')) {
@@ -79,82 +91,80 @@
 >
   <div class="status" data-state={st} role="status">
     {#if st === 'idle'}
-      <span>Not connected.</span>
-      <button class="btn primary" onclick={() => void chat.invite()}>Connect</button>
+      <span>{t2('p2p.not_connected')}</span>
+      <button class="btn primary" onclick={() => void chat.invite()}>{t2('button.connect')}</button>
     {:else if st === 'calling'}
-      <span>Waiting for {buf.title} to accept…</span>
-      <button class="btn" onclick={() => chat.hangUp()}>Cancel</button>
+      <span>{t2('p2p.waiting', { name: buf.title })}</span>
+      <button class="btn" onclick={() => chat.hangUp()}>{t2('button.cancel')}</button>
     {:else if st === 'incoming'}
       <span>
-        <strong>{buf.title}</strong> wants to chat directly. If you accept, your browsers connect to each other, and
-        they will be able to see your network address.
+        {#each boldAround(t2('p2p.incoming', { name: buf.title }), buf.title) as seg}
+          {#if seg.bold}<strong>{seg.text}</strong>{:else}{seg.text}{/if}
+        {/each}
       </span>
-      <button class="btn primary" onclick={() => void chat.acceptIncoming()}>Accept</button>
-      <button class="btn" onclick={() => chat.declineIncoming()}>Decline</button>
+      <button class="btn primary" onclick={() => void chat.acceptIncoming()}>{t2('button.accept')}</button>
+      <button class="btn" onclick={() => chat.declineIncoming()}>{t2('button.decline')}</button>
     {:else if st === 'connecting'}
-      <span>Connecting…</span>
-      <button class="btn" onclick={() => chat.hangUp()}>Cancel</button>
+      <span>{t2('p2p.connecting')}</span>
+      <button class="btn" onclick={() => chat.hangUp()}>{t2('button.cancel')}</button>
     {:else if st === 'connected'}
-      <span>Connected directly to {buf.title}.</span>
-      <button class="btn" onclick={() => picker.click()}>Send file…</button>
-      <button class="btn" onclick={() => chat.hangUp()}>Hang up</button>
+      <span>{t2('p2p.connected_to', { name: buf.title })}</span>
+      <button class="btn" onclick={() => picker.click()}>{t2('button.send_file')}</button>
+      <button class="btn" onclick={() => chat.hangUp()}>{t2('button.hang_up')}</button>
     {:else}
-      <span>{view?.reason || 'The chat ended.'}</span>
-      <button class="btn primary" onclick={() => void chat.invite()}>Connect again</button>
+      <span>{view?.reason || t2('p2p.ended')}</span>
+      <button class="btn primary" onclick={() => void chat.invite()}>{t2('button.connect_again')}</button>
     {/if}
   </div>
 
   {#if (connected && view) || (cs === 'connected' && cv)}
     <div class="verify">
-      <span>🔒 Encrypted, browser to browser</span>
+      <span>{t2('p2p.encrypted')}</span>
       <button class="link" aria-expanded={showDetails} onclick={() => (showDetails = !showDetails)}>
-        {showDetails ? 'Hide' : 'Verify…'}
+        {showDetails ? t2('p2p.hide') : t2('p2p.verify')}
       </button>
     </div>
     {#if showDetails}
       <div class="details" data-testid="verify-details">
-        {#if connected && view}<p>Safety code <code data-testid="safety-code">{view.code}</code></p>{/if}
-        {#if cs === 'connected' && cv}<p>Call safety code <code data-testid="call-code">{cv.code}</code></p>{/if}
-        <p>
-          Ask {buf.title} to read their safety code to you by a way other than this IRC network (a phone call, or in
-          person). If it matches, nobody on the way, including the server and the bouncer, changed the connection.
-          If it does not match, hang up.
-        </p>
+        {#if connected && view}<p>{t2('p2p.safety_code')} <code data-testid="safety-code">{view.code}</code></p>{/if}
+        {#if cs === 'connected' && cv}<p>{t2('p2p.call_code')} <code data-testid="call-code">{cv.code}</code></p>{/if}
+        <p>{t2('p2p.verify_note', { name: buf.title })}</p>
         {#if connected && view}
-          <p class="fp">Your certificate: <code>{view.fingerprints.local}</code></p>
-          <p class="fp">Theirs: <code>{view.fingerprints.remote}</code></p>
+          <p class="fp">{t2('p2p.your_cert')} <code>{view.fingerprints.local}</code></p>
+          <p class="fp">{t2('p2p.their_cert')} <code>{view.fingerprints.remote}</code></p>
         {/if}
       </div>
     {/if}
   {/if}
 
   {#if net.canVoice}
-    <div class="call" data-state={cs} role="status" aria-label="Voice call with {buf.title}">
+    <div class="call" data-state={cs} role="status" aria-label={t2('p2p.call_aria', { name: buf.title })}>
       {#if cs === 'incoming'}
         <span>
-          📞 <strong>{buf.title}</strong> is calling. Your microphone stays off until you answer. Answering shares your network
-          address with them.
+          📞 {#each boldAround(t2('p2p.call_incoming', { name: buf.title }), buf.title) as seg}
+            {#if seg.bold}<strong>{seg.text}</strong>{:else}{seg.text}{/if}
+          {/each}
         </span>
-        <button class="btn primary" onclick={() => void call.accept()}>Answer</button>
-        <button class="btn" onclick={() => call.decline()}>Decline</button>
+        <button class="btn primary" onclick={() => void call.accept()}>{t2('button.accept')}</button>
+        <button class="btn" onclick={() => call.decline()}>{t2('button.decline')}</button>
       {:else if cs === 'calling'}
-        <span>📞 Calling {buf.title}…</span>
-        <button class="btn" onclick={() => call.hangUp()}>Cancel</button>
+        <span>📞 {t2('p2p.calling', { name: buf.title })}</span>
+        <button class="btn" onclick={() => call.hangUp()}>{t2('button.cancel')}</button>
       {:else if cs === 'connecting'}
-        <span>📞 Connecting…</span>
-        <button class="btn" onclick={() => call.hangUp()}>Cancel</button>
+        <span>📞 {t2('p2p.connecting')}</span>
+        <button class="btn" onclick={() => call.hangUp()}>{t2('button.cancel')}</button>
       {:else if cs === 'connected' && cv}
         <span class="who" class:speaking={cv.remoteSpeaking} data-testid="remote-speaking">
-          <span class="dot" aria-hidden="true"></span>📞 In a call with {buf.title}
+          <span class="dot" aria-hidden="true"></span>📞 {t2('p2p.in_call', { name: buf.title })}
         </span>
-        <span class="who me" class:speaking={cv.speaking} data-testid="call-me-speaking"><span class="dot" aria-hidden="true"></span>You{cv.muted ? ' (muted)' : ''}</span>
-        <button class="btn" aria-pressed={cv.muted} onclick={() => call.setMuted(!cv.muted)}>{cv.muted ? 'Unmute' : 'Mute'}</button>
-        <label class="vol"><span class="visually-hidden">Volume</span>
+        <span class="who me" class:speaking={cv.speaking} data-testid="call-me-speaking"><span class="dot" aria-hidden="true"></span>{t2('p2p.you')}{cv.muted ? ' ' + t2('p2p.muted') : ''}</span>
+        <button class="btn" aria-pressed={cv.muted} onclick={() => call.setMuted(!cv.muted)}>{cv.muted ? t2('button.unmute') : t2('button.mute')}</button>
+        <label class="vol"><span class="visually-hidden">{t2('button.volume')}</span>
           <input type="range" min="0" max="1" step="0.05" value={cv.volume} oninput={(e) => call.setVolume(Number(e.currentTarget.value))} />
         </label>
-        <button class="btn" onclick={() => call.hangUp()}>Hang up</button>
+        <button class="btn" onclick={() => call.hangUp()}>{t2('button.hang_up')}</button>
       {:else}
-        <button class="btn" onclick={() => void call.invite()}>📞 {cs === 'ended' ? 'Call again' : 'Call'}</button>
+        <button class="btn" onclick={() => void call.invite()}>📞 {cs === 'ended' ? t2('p2p.call_again') : t2('p2p.call')}</button>
         {#if cs === 'ended' && cv?.reason}<span class="dim">{cv.reason}</span>{/if}
         {#if cs === 'idle' && cv?.reason}<span class="dim">{cv.reason}</span>{/if}
       {/if}
@@ -164,33 +174,33 @@
   <input bind:this={picker} type="file" multiple hidden onchange={onpick} data-testid="file-input" />
 
   {#if view && view.transfers.length}
-    <ul class="transfers" aria-label="Files">
+    <ul class="transfers" aria-label={t2('p2p.files')}>
       {#each view.transfers as t (t.id)}
         <li data-state={t.state}>
           <span class="dir" aria-hidden="true">{t.dir === 'in' ? '↓' : '↑'}</span>
           <span class="name" title={t.name}>{t.name}</span>
           <span class="size">{formatBytes(t.size)}</span>
           <span class="what">{verb[t.state]}{t.error ? `: ${t.error}` : ''}</span>
-          {#if t.state === 'active'}<progress max="100" value={percent(t)} aria-label="Progress"></progress>{/if}
+          {#if t.state === 'active'}<progress max="100" value={percent(t)} aria-label={t2('p2p.progress')}></progress>{/if}
           <span class="acts">
             {#if t.dir === 'in' && t.state === 'offered'}
-              <button class="btn primary" onclick={() => chat.acceptFile(t.id)}>Accept</button>
-              <button class="btn" onclick={() => chat.declineFile(t.id)}>Decline</button>
+              <button class="btn primary" onclick={() => chat.acceptFile(t.id)}>{t2('button.accept')}</button>
+              <button class="btn" onclick={() => chat.declineFile(t.id)}>{t2('button.decline')}</button>
             {:else if t.state === 'active' || t.state === 'waiting'}
-              <button class="btn" onclick={() => chat.cancelTransfer(t.id)}>Cancel</button>
+              <button class="btn" onclick={() => chat.cancelTransfer(t.id)}>{t2('button.cancel')}</button>
             {:else if t.dir === 'in' && t.state === 'done'}
-              <button class="btn primary" onclick={() => save(t)}>Save</button>
+              <button class="btn primary" onclick={() => save(t)}>{t2('button.save')}</button>
             {/if}
           </span>
         </li>
       {/each}
     </ul>
     {#if view.transfers.some((t) => t.state === 'done' || t.state === 'failed' || t.state === 'declined' || t.state === 'cancelled')}
-      <button class="link clear" onclick={() => chat.clearFinished()}>Clear finished</button>
+      <button class="link clear" onclick={() => chat.clearFinished()}>{t2('button.clear_finished')}</button>
     {/if}
   {/if}
 
-  {#if dragging}<div class="drop">Drop files to send them to {buf.title}</div>{/if}
+  {#if dragging}<div class="drop">{t2('p2p.drop', { name: buf.title })}</div>{/if}
 </section>
 
 <style>

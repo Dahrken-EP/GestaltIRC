@@ -395,8 +395,9 @@
     z-index: 30;
   }
   .card {
-    width: min(620px, 100%);
-    height: min(640px, 100%);
+    width: min(700px, 100%);
+    height: min(648px, 100%);
+    overflow: hidden;
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -455,6 +456,7 @@
   }
   .panel {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 16px 20px 20px;
     display: flex;

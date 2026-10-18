@@ -1,5 +1,6 @@
 <script lang="ts">
   import { plugins } from '../lib/plugins/manager.svelte'
+  import { t } from '../lib/i18n.svelte'
 
   // The window a plugin asked for. The page draws it, and says whose it is, so a plugin cannot dress one up as the
   // client's own. Several may be waiting; they are shown one at a time, oldest first.
@@ -43,21 +44,21 @@
   <div class="backdrop" role="presentation" {onkeydown}>
     <div class="card" role="alertdialog" aria-modal="true" aria-labelledby="plugin-dialog-from" aria-describedby="plugin-dialog-text" data-testid="plugin-dialog">
       <p class="from" id="plugin-dialog-from">
-        The plugin <strong>{current.plugin}</strong> {current.kind === 'alert' ? 'says' : 'asks'}:
+        {t('plugin.the_plugin')} <strong>{current.plugin}</strong> {current.kind === 'alert' ? t('plugin.says_or_asks_says') : t('plugin.says_or_asks_asks')}:
       </p>
       <p class="text" id="plugin-dialog-text">{current.text}</p>
       {#if current.kind === 'prompt'}
         <form onsubmit={(e) => (e.preventDefault(), accept())}>
-          <input bind:this={field} bind:value aria-label="Your answer" autocomplete="off" spellcheck="false" />
+          <input bind:this={field} bind:value aria-label={t('plugin.your_answer')} autocomplete="off" spellcheck="false" />
         </form>
-        <p class="dim">What you type goes to the plugin. Do not enter a password.</p>
+        <p class="dim">{t('plugin.prompt_note')}</p>
       {/if}
       <footer>
-        <button class="link" type="button" onclick={() => current && plugins.stopFromDialog(current.id)}>Stop this plugin</button>
-        {#if waiting > 0}<span class="dim">{waiting} more waiting</span>{/if}
+        <button class="link" type="button" onclick={() => current && plugins.stopFromDialog(current.id)}>{t('plugin.stop_plugin')}</button>
+        {#if waiting > 0}<span class="dim">{t('plugin.waiting_more', { n: waiting })}</span>{/if}
         <span class="grow"></span>
-        {#if current.kind !== 'alert'}<button type="button" class="btn" onclick={cancel}>Cancel</button>{/if}
-        <button type="button" class="btn primary" bind:this={ok} onclick={accept}>OK</button>
+        {#if current.kind !== 'alert'}<button type="button" class="btn" onclick={cancel}>{t('button.cancel')}</button>{/if}
+        <button type="button" class="btn primary" bind:this={ok} onclick={accept}>{t('button.ok')}</button>
       </footer>
     </div>
   </div>

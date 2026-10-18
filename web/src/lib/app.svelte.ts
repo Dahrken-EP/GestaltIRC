@@ -14,6 +14,7 @@ import { microphone } from './voice/media'
 import { audioContext } from './voice/meter'
 import { RoomMixer } from './voice/mixer'
 import { settings } from './settings.svelte'
+import { t } from './i18n.svelte'
 
 export interface SwitcherEntry {
   netId: string
@@ -83,7 +84,7 @@ class App {
       if (session) this.begin(session)
       else this.phase = 'login'
     } catch {
-      this.loginError = 'Could not reach the server.'
+      this.loginError = t('login.no_server')
       this.phase = 'login'
     }
   }
@@ -95,10 +96,10 @@ class App {
     try {
       await api.login(user.trim(), password)
       const session = await api.session()
-      if (!session) throw new Error('Login did not start a session. Are cookies blocked?')
+      if (!session) throw new Error(t('login.no_session'))
       this.begin(session)
     } catch (e) {
-      this.loginError = e instanceof Error ? e.message : 'Login failed.'
+      this.loginError = e instanceof Error ? e.message : t('login.failed')
     } finally {
       this.loginBusy = false
     }

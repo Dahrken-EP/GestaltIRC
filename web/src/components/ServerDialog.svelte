@@ -4,8 +4,36 @@
   import { app } from '../lib/app.svelte'
   import { blankForm, checkForm, formFromNetwork, parseChannels, portForTls, toRequest, type NetworkForm } from '../lib/networkform'
   import { settings } from '../lib/settings.svelte'
+  import { t } from '../lib/i18n.svelte'
 
   const editing = app.serverDialog?.edit ?? null
+  // Validation messages come from the form helper in the catalogue's language; the
+  // helper itself stays key-producing, so map its English text to catalogue keys.
+  const ERR_KEYS = [
+    'serverdlg.err_name', 'serverdlg.err_host', 'serverdlg.err_host_spaces', 'serverdlg.err_port',
+    'serverdlg.err_tls', 'serverdlg.err_nick', 'serverdlg.err_nick_spaces', 'serverdlg.err_altnicks',
+    'serverdlg.err_ident', 'serverdlg.err_sasl_user', 'serverdlg.err_sasl_pass',
+    'serverdlg.err_perform_count', 'serverdlg.err_perform_words',
+  ]
+  const REAL_ERRORS = [
+    'Give the network a short name: letters, digits, "-" or "_".',
+    'Enter the server address.',
+    'The server address cannot contain spaces.',
+    'The port must be a number from 1 to 65535.',
+    'Accepting an untrusted certificate needs TLS.',
+    'Enter the nick to use.',
+    'A nick cannot contain spaces.',
+    'Give at most five alternative nicks.',
+    'The username cannot contain spaces.',
+    'Enter the account name for SASL.',
+    'Enter the SASL password.',
+    'Give at most ten commands to run on connect.',
+    'PASS, USER, CAP, AUTHENTICATE and QUIT cannot be used in the commands to run on connect.',
+  ]
+  const localizeError = (msg: string) => {
+    const i = REAL_ERRORS.indexOf(msg)
+    return i >= 0 ? t(ERR_KEYS[i]!) : msg
+  }
 
   let form = $state<NetworkForm | null>(editing ? null : blankForm(app.user))
   let highlights = $state(editing ? settings.networkKeywords[editing]?.join(' ') ?? '' : '')
@@ -23,12 +51,12 @@
       if (editing) {
         const detail = r.networks.find((n) => n.name === editing)
         if (detail) form = formFromNetwork(detail)
-        else error = 'That server no longer exists.'
+        else error = t('serverdlg.gone')
       } else if (r.networks.length >= r.max) {
-        error = `An account can have ${r.max} servers.`
+        error = t('serverdlg.max_servers', { max: r.max })
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Could not load the server.'
+      error = e instanceof Error ? e.message : t('serverdlg.load_fail')
     }
   })
 
@@ -42,7 +70,7 @@
     if (!form || busy) return
     const problem = checkForm(form)
     if (problem) {
-      error = problem
+      error = localizeError(problem)
       return
     }
     const f = form
@@ -60,7 +88,7 @@
       if (!f.editing) app.showServer(name)
       close()
     } catch (e) {
-      error = e instanceof ApiError || e instanceof Error ? e.message : 'That did not work.'
+      error = e instanceof ApiError || e instanceof Error ? e.message : t('server.error')
     } finally {
       busy = false
     }
@@ -71,137 +99,134 @@
 <div class="backdrop">
   <div class="card" role="dialog" aria-modal="true" aria-labelledby="server-title" data-testid="server-dialog">
     <header>
-      <h2 id="server-title">{editing ? `Edit ${editing}` : 'Add a server'}</h2>
-      <button class="x" onclick={close} aria-label="Close">×</button>
+      <h2 id="server-title">{editing ? t('serverdlg.edit_title', { name: editing }) : t('serverdlg.add_title')}</h2>
+      <button class="x" onclick={close} aria-label={t('button.close')}>×</button>
     </header>
 
     {#if form}
       <form onsubmit={(e) => (e.preventDefault(), void save())}>
         <section>
-          <h3>Server</h3>
+          <h3>{t('serverdlg.sect_server')}</h3>
           {#if !form.editing}
-            <label>Name <input bind:this={nameInput} bind:value={form.name} placeholder="libera" autocomplete="off" spellcheck="false" /></label>
+            <label>{t('serverdlg.name')} <input bind:this={nameInput} bind:value={form.name} placeholder="libera" autocomplete="off" spellcheck="false" /></label>
           {/if}
           <div class="two">
-            <label class="grow">Address <input bind:this={hostInput} bind:value={form.host} placeholder="irc.libera.chat" autocomplete="off" spellcheck="false" /></label>
-            <label class="port">Port <input bind:value={form.port} inputmode="numeric" autocomplete="off" /></label>
+            <label class="grow">{t('serverdlg.address')} <input bind:this={hostInput} bind:value={form.host} placeholder="irc.libera.chat" autocomplete="off" spellcheck="false" /></label>
+            <label class="port">{t('serverdlg.port')} <input bind:value={form.port} inputmode="numeric" autocomplete="off" /></label>
           </div>
-          <label class="check"><input type="checkbox" bind:checked={form.tls} onchange={() => form && (form.port = portForTls(form.port, form.tls))} /> Use TLS (encrypted)</label>
+          <label class="check"><input type="checkbox" bind:checked={form.tls} onchange={() => form && (form.port = portForTls(form.port, form.tls))} /> {t('serverdlg.use_tls')}</label>
           {#if form.tls}
             <label class="check">
               <input type="checkbox" bind:checked={form.tlsInsecure} />
-              Accept an untrusted certificate <span class="opt">(self-signed, or from a private authority)</span>
+              {t('serverdlg.accept_untrusted')} <span class="opt">{t('serverdlg.untrusted_opt')}</span>
             </label>
             {#if form.tlsInsecure}
-              <p class="warn" data-testid="untrusted-warning">
-                Only for a server you run or trust. The first time, nothing can tell the real server from an impostor. The
-                bouncer then remembers the certificate it saw and refuses a different one.
-              </p>
+              <p class="warn" data-testid="untrusted-warning">{t('serverdlg.untrusted_warn')}</p>
               {#if form.tlsFingerprint}
-                <p class="dim" data-testid="remembered-certificate">Remembered certificate (SHA-256): <code>{form.tlsFingerprint}</code></p>
-                <label class="check"><input type="checkbox" bind:checked={form.forgetTlsPin} /> Forget it and remember the next one (after the server's certificate was replaced on purpose)</label>
+                <p class="dim" data-testid="remembered-certificate">{t('serverdlg.remembered_cert')} <code>{form.tlsFingerprint}</code></p>
+                <label class="check"><input type="checkbox" bind:checked={form.forgetTlsPin} /> {t('serverdlg.forget_pin')}</label>
               {/if}
             {/if}
           {/if}
           <label>
-            Server password <span class="opt">(only if the server asks for one)</span>
+            {t('serverdlg.server_password')} <span class="opt">{t('serverdlg.password_opt')}</span>
             <input
               type="password"
               bind:value={form.serverPassword}
-              placeholder={form.hasServerPassword && !form.clearServerPassword ? 'Saved. Leave blank to keep it.' : ''}
+              placeholder={form.hasServerPassword && !form.clearServerPassword ? t('serverdlg.saved_keep') : ''}
               autocomplete="new-password"
             />
           </label>
           {#if form.hasServerPassword}
-            <label class="check"><input type="checkbox" bind:checked={form.clearServerPassword} /> Remove the saved server password</label>
+            <label class="check"><input type="checkbox" bind:checked={form.clearServerPassword} /> {t('serverdlg.remove_saved_password')}</label>
           {/if}
         </section>
 
         <section>
-          <h3>Who you are</h3>
-          <label>Nick <input bind:value={form.nick} autocomplete="off" spellcheck="false" /></label>
+          <h3>{t('serverdlg.sect_who')}</h3>
+          <label>{t('serverdlg.nick')} <input bind:value={form.nick} autocomplete="off" spellcheck="false" /></label>
           <label>
-            Alternative nicks <span class="opt">(tried in order if the nick is taken; up to five, separated by spaces)</span>
+            {t('serverdlg.alt_nicks')} <span class="opt">{t('serverdlg.alt_nicks_opt')}</span>
             <input bind:value={form.altNicks} placeholder="matt_ matt__" autocomplete="off" spellcheck="false" />
           </label>
           <div class="two">
-            <label class="grow">Username <span class="opt">(defaults to the nick)</span> <input bind:value={form.ident} autocomplete="off" spellcheck="false" /></label>
-            <label class="grow">Real name <span class="opt">(defaults to the nick)</span> <input bind:value={form.realname} autocomplete="off" /></label>
+            <label class="grow">{t('serverdlg.username')} <span class="opt">{t('serverdlg.defaults_nick')}</span> <input bind:value={form.ident} autocomplete="off" spellcheck="false" /></label>
+            <label class="grow">{t('serverdlg.realname')} <span class="opt">{t('serverdlg.defaults_nick')}</span> <input bind:value={form.realname} autocomplete="off" /></label>
           </div>
         </section>
 
         <section>
-          <h3>Logging in</h3>
+          <h3>{t('serverdlg.sect_login')}</h3>
           {#if form.certificate}
-            <p class="dim">This server logs in with a certificate, which is managed with the command line.</p>
+            <p class="dim">{t('serverdlg.cert_note')}</p>
           {:else}
             <label>
               SASL
               <select bind:value={form.sasl}>
-                <option value="">None</option>
-                <option value="PLAIN">Account and password (PLAIN)</option>
-                <option value="SCRAM-SHA-256">Account and password (SCRAM-SHA-256)</option>
+                <option value="">{t('serverdlg.sasl_none')}</option>
+                <option value="PLAIN">{t('serverdlg.sasl_plain')}</option>
+                <option value="SCRAM-SHA-256">{t('serverdlg.sasl_scram')}</option>
               </select>
             </label>
             {#if form.sasl}
               <div class="two">
-                <label class="grow">Account <input bind:value={form.saslUser} autocomplete="off" spellcheck="false" /></label>
+                <label class="grow">{t('serverdlg.account')} <input bind:value={form.saslUser} autocomplete="off" spellcheck="false" /></label>
                 <label class="grow">
-                  Password
+                  {t('login.password')}
                   <input
                     type="password"
                     bind:value={form.saslPassword}
-                    placeholder={form.hasSaslPassword ? 'Saved. Leave blank to keep it.' : ''}
+                    placeholder={form.hasSaslPassword ? t('serverdlg.saved_keep') : ''}
                     autocomplete="new-password"
                   />
                 </label>
               </div>
             {:else}
               <label>
-                NickServ password <span class="opt">(for servers without SASL; sent as IDENTIFY after connecting)</span>
+                {t('serverdlg.nickserv_password')} <span class="opt">{t('serverdlg.nickserv_opt')}</span>
                 <input
                   type="password"
                   bind:value={form.nickservPassword}
-                  placeholder={form.hasNickservPassword && !form.clearNickservPassword ? 'Saved. Leave blank to keep it.' : ''}
+                  placeholder={form.hasNickservPassword && !form.clearNickservPassword ? t('serverdlg.saved_keep') : ''}
                   autocomplete="new-password"
                 />
               </label>
               {#if form.hasNickservPassword}
-                <label class="check"><input type="checkbox" bind:checked={form.clearNickservPassword} /> Remove the saved NickServ password</label>
+                <label class="check"><input type="checkbox" bind:checked={form.clearNickservPassword} /> {t('serverdlg.remove_nickserv')}</label>
               {/if}
             {/if}
           {/if}
         </section>
 
         <section>
-          <h3>After connecting</h3>
+          <h3>{t('serverdlg.sect_after')}</h3>
           <label>
-            Channels to join <span class="opt">(separated by spaces)</span>
+            {t('serverdlg.channels_join')} <span class="opt">{t('serverdlg.channels_opt')}</span>
             <input bind:value={form.channels} placeholder="#general #help" autocomplete="off" spellcheck="false" />
           </label>
           <label>
-            Commands to run <span class="opt">(one per line, before the channels are joined; do not put passwords here)</span>
+            {t('serverdlg.perform')} <span class="opt">{t('serverdlg.perform_opt')}</span>
             <textarea rows="3" bind:value={form.perform} placeholder="MODE matt +i&#10;msg ChanServ op #general matt" spellcheck="false"></textarea>
           </label>
         </section>
 
         <section>
-          <h3>For this server</h3>
+          <h3>{t('serverdlg.sect_this_server')}</h3>
           <label>
-            Highlight words <span class="opt">(in addition to your nick and your general words; separated by spaces)</span>
+            {t('serverdlg.highlight_words')} <span class="opt">{t('serverdlg.highlight_opt')}</span>
             <input bind:value={highlights} autocomplete="off" spellcheck="false" />
           </label>
-          <label class="check"><input type="checkbox" bind:checked={notify} /> Desktop notifications for mentions and private messages here</label>
-          <p class="dim">These are saved on your account, not in this browser. Your general notification settings are in Settings.</p>
+          <label class="check"><input type="checkbox" bind:checked={notify} /> {t('serverdlg.notify_check')}</label>
+          <p class="dim">{t('serverdlg.for_this_note')}</p>
         </section>
 
         {#if !privateAllowed}
-          <p class="dim">Servers on private networks, and ports below 1024, are not allowed here.</p>
+          <p class="dim">{t('serverdlg.private_note')}</p>
         {/if}
         {#if error}<p class="error" role="alert" data-testid="server-error">{error}</p>{/if}
         <footer>
-          <button class="btn" type="button" onclick={close}>Cancel</button>
-          <button class="btn primary" type="submit" disabled={busy}>{form.editing ? 'Save' : 'Add server'}</button>
+          <button class="btn" type="button" onclick={close}>{t('button.cancel')}</button>
+          <button class="btn primary" type="submit" disabled={busy}>{form.editing ? t('button.save') : t('serverdlg.add_server_btn')}</button>
         </footer>
       </form>
     {:else if error}

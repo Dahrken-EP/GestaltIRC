@@ -4,7 +4,7 @@
   import { layout, MEMBERS, NAV } from './lib/layout.svelte'
   import { settings } from './lib/settings.svelte'
   import { api } from './lib/api'
-import { allLangs, getLang, langLabel, setLang, type Lang } from './lib/i18n.svelte'
+import { allLangs, getLang, langLabel, setLang, t, type Lang } from './lib/i18n.svelte'
   import BufferList from './components/BufferList.svelte'
   import DirectPanel from './components/DirectPanel.svelte'
   import VoiceAudio from './components/VoiceAudio.svelte'
@@ -160,7 +160,7 @@ import NotificationPanel from './components/NotificationPanel.svelte'
     {/each}
   </div>
   {#if layout.railHidden}
-    <button class="railtab" title="Show the server bar" aria-label="Show the server bar" onclick={() => layout.setRailHidden(false)}>›</button>
+    <button class="railtab" title={t('nav.show_rail')} aria-label={t('nav.show_rail')} onclick={() => layout.setRailHidden(false)}>›</button>
   {:else}
     <NetworkRail />
   {/if}

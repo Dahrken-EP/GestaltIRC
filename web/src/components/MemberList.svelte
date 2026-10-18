@@ -2,6 +2,7 @@
   import { nickColor } from '../lib/nickcolor'
   import type { Buffer, NetworkState, Presence } from '../lib/network.svelte'
   import { settings } from '../lib/settings.svelte'
+  import { t } from '../lib/i18n.svelte'
   import BanListPanel from './BanListPanel.svelte'
 
   let { net, buf, onnick }: { net: NetworkState; buf: Buffer; onnick: (nick: string) => void } = $props()
@@ -17,10 +18,10 @@
 
   const presenceLabel = (p: Presence) => {
     switch (p) {
-      case 'away': return 'Away'
-      case 'busy': return 'Busy'
-      case 'idle': return 'Idle'
-      default: return 'Online'
+      case 'away': return t('member.away')
+      case 'busy': return t('member.busy')
+      case 'idle': return t('member.idle')
+      default: return t('member.online')
     }
   }
 
@@ -91,8 +92,8 @@
   })
 </script>
 
-<aside class="members" aria-label="Members of {buf.name}">
-  <h3>{sorted.length} {sorted.length === 1 ? 'member' : 'members'}</h3>
+<aside class="members" aria-label={t('member.members_of', { name: buf.name })}>
+  <h3>{t('member.members_count', { count: sorted.length })}</h3>
   <ul>
     {#each sorted as m (m.nick)}
       <li>
@@ -101,22 +102,22 @@
           onclick={() => onnick(m.nick)}
           oncontextmenu={(e) => open(e, m.nick)}
           aria-haspopup="menu"
-          title={m.away ? `${m.nick} (away)` : m.nick}
+          title={m.away ? t('member.away_bracket', { nick: m.nick }) : m.nick}
         >
           <span class="prefix">{m.prefix[0] ?? ''}</span>
           {#if settings.presenceIndicators && m.presence}
             <span
               class="presence"
               style:background={presenceColor(m.presence)}
-              title={m.presenceMessage ? `${m.nick} is ${presenceLabel(m.presence)}: ${m.presenceMessage}` : presenceLabel(m.presence)}
-              aria-label={m.presenceMessage ? `${presenceLabel(m.presence)}: ${m.presenceMessage}` : presenceLabel(m.presence)}
+              title={m.presenceMessage ? t('member.presence_detail', { nick: m.nick, state: presenceLabel(m.presence), note: m.presenceMessage }) : t('member.presence_short', { nick: m.nick, state: presenceLabel(m.presence) })}
+              aria-label={m.presenceMessage ? t('member.presence_detail', { nick: m.nick, state: presenceLabel(m.presence), note: m.presenceMessage }) : t('member.presence_short', { nick: m.nick, state: presenceLabel(m.presence) })}
             ></span>
           {:else if settings.presenceIndicators && m.away}
             <span
               class="presence away"
               style:background="var(--away, #eab308)"
-              title={`${m.nick} is away`}
-              aria-label="Away"
+              title={t('member.presence_short', { nick: m.nick, state: t('member.away') })}
+              aria-label={t('member.away')}
             ></span>
           {/if}
           <span class="n" style:color={nickColor(m.nick, settings.nickColors)}>{m.nick}</span>
@@ -138,7 +139,7 @@
       class="menu"
       role="menu"
       tabindex="-1"
-      aria-label="Actions for {nick}"
+      aria-label={t('member.actions', { nick })}
       data-testid="user-menu"
       bind:this={menuEl}
       style:left="{left}px"
@@ -148,22 +149,22 @@
     >
       <div class="title"><strong>{nick}</strong></div>
       {#if !isSelf(nick)}
-        <button role="menuitem" onclick={() => ((menu = null), onnick(nick))}>Message</button>
-        <button role="menuitem" onclick={() => run(`/direct ${nick}`)}>Direct chat</button>
-        <button role="menuitem" onclick={() => run(`/call ${nick}`)}>Voice call</button>
+        <button role="menuitem" onclick={() => ((menu = null), onnick(nick))}>{t('member.message')}</button>
+        <button role="menuitem" onclick={() => run(`/direct ${nick}`)}>{t('member.direct_chat')}</button>
+        <button role="menuitem" onclick={() => run(`/call ${nick}`)}>{t('member.voice_call')}</button>
       {/if}
-      <button role="menuitem" onclick={() => run(`/whois ${nick}`)}>Who is…</button>
-      <button role="menuitem" onclick={() => run(`/ctcp ${nick} VERSION`)}>Client version</button>
-      <button role="menuitem" onclick={() => copyNick(nick)}>Copy nick</button>
+      <button role="menuitem" onclick={() => run(`/whois ${nick}`)}>{t('member.whois')}</button>
+      <button role="menuitem" onclick={() => run(`/ctcp ${nick} VERSION`)}>{t('member.version')}</button>
+      <button role="menuitem" onclick={() => copyNick(nick)}>{t('member.copy_nick')}</button>
       {#if canModerate && !isSelf(nick)}
         <hr />
-        <button role="menuitem" onclick={() => run(`/mode +o ${nick}`)}>Give operator</button>
-        <button role="menuitem" onclick={() => run(`/mode -o ${nick}`)}>Take operator</button>
-        <button role="menuitem" onclick={() => run(`/mode +v ${nick}`)}>Give voice</button>
-        <button role="menuitem" onclick={() => run(`/mode -v ${nick}`)}>Take voice</button>
+        <button role="menuitem" onclick={() => run(`/mode +o ${nick}`)}>{t('member.give_op')}</button>
+        <button role="menuitem" onclick={() => run(`/mode -o ${nick}`)}>{t('member.take_op')}</button>
+        <button role="menuitem" onclick={() => run(`/mode +v ${nick}`)}>{t('member.give_voice')}</button>
+        <button role="menuitem" onclick={() => run(`/mode -v ${nick}`)}>{t('member.take_voice')}</button>
         <hr />
-        <button role="menuitem" onclick={() => run(`/kick ${nick}`)}>Kick</button>
-        <button role="menuitem" class="danger" onclick={() => run(`/ban ${nick}\n/kick ${nick}`)}>Ban and kick</button>
+        <button role="menuitem" onclick={() => run(`/kick ${nick}`)}>{t('member.kick')}</button>
+        <button role="menuitem" class="danger" onclick={() => run(`/ban ${nick}\n/kick ${nick}`)}>{t('member.ban_kick')}</button>
       {/if}
     </div>
   </div>

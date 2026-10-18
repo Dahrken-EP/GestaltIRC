@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte'
   import { app, type SwitcherEntry } from '../lib/app.svelte'
   import { fuzzyFilter } from '../lib/fuzzy'
+  import { t } from '../lib/i18n.svelte'
 
   let query = $state('')
   let picked = $state(0)
@@ -67,14 +68,14 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div class="scrim" onclick={close}>
-  <div class="box" role="dialog" tabindex="-1" aria-modal="true" aria-label="Go to a channel or conversation" onclick={(e) => e.stopPropagation()}>
+  <div class="box" role="dialog" tabindex="-1" aria-modal="true" aria-label={t('switcher.goto')} onclick={(e) => e.stopPropagation()}>
     <input
       bind:this={input}
       bind:value={query}
       {onkeydown}
       type="text"
-      placeholder="Go to a channel or conversation…"
-      aria-label="Go to"
+      placeholder={t('switcher.goto')}
+      aria-label={t('switcher.goto')}
       aria-controls="switcher-list"
       aria-activedescendant={results[picked] ? `sw-${picked}` : undefined}
       autocomplete="off"
@@ -99,7 +100,7 @@
           {#if e.mentions}<span class="badge mention">{e.mentions}</span>{:else if e.unread}<span class="badge">{e.unread}</span>{/if}
         </li>
       {:else}
-        <li class="none" role="presentation">Nothing matches “{query}”.</li>
+        <li class="none" role="presentation">{t('switcher.none', { query })}</li>
       {/each}
     </ul>
   </div>

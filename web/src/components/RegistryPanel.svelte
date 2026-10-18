@@ -1,6 +1,7 @@
 <script lang="ts">
   import { plugins } from '../lib/plugins/manager.svelte'
   import type { RegistryPlugin } from '../lib/plugins/registry'
+  import { t } from '../lib/i18n.svelte'
 
   let filter = $state('')
   let installing = $state<string | null>(null)
@@ -32,10 +33,10 @@
   }
 
   const categoryLabel: Record<string, string> = {
-    utility: 'Utility',
-    moderation: 'Moderation',
-    fun: 'Fun',
-    info: 'Information',
+    utility: t('registry.cat_utility'),
+    moderation: t('registry.cat_moderation'),
+    fun: t('registry.cat_fun'),
+    info: t('registry.cat_info'),
   }
 </script>
 
@@ -44,16 +45,16 @@
     <input
       type="search"
       bind:value={filter}
-      placeholder="Search plugins…"
-      aria-label="Search plugins"
+      placeholder={t('registry.search_ph')}
+      aria-label={t('registry.search_ph')}
     />
     {#each categories as cat}
-      <button class="cat" aria-label="{categoryLabel[cat]}">{categoryLabel[cat]}</button>
+      <button class="cat" aria-label={categoryLabel[cat]}>{categoryLabel[cat]}</button>
     {/each}
   </div>
 
   {#if entries.length === 0}
-    <p class="empty">No plugins match “{filter}”.</p>
+    <p class="empty">{t('registry.nomatch', { query: filter })}</p>
   {:else}
     <ul class="list">
       {#each entries as entry (entry.manifest.name)}
@@ -64,20 +65,20 @@
             <p class="meta">
               v{entry.manifest.version} ·
               <span class="cat">{categoryLabel[entry.category]}</span>
-              {#if entry.verified} · <span class="verified">verified</span>{/if}
-              {#if entry.installed} · <span class="installed-badge">installed</span>{/if}
+              {#if entry.verified} · <span class="verified">{t('registry.verified')}</span>{/if}
+              {#if entry.installed} · <span class="installed-badge">{t('registry.installed_badge')}</span>{/if}
             </p>
           </div>
           <div class="actions">
             {#if entry.installed}
-              <button class="btn disabled" disabled>Installed</button>
+              <button class="btn disabled" disabled>{t('registry.installed_btn')}</button>
             {:else}
               <button
                 class="btn"
                 disabled={installing !== null}
                 onclick={() => install(entry)}
               >
-                {installing === entry.manifest.name ? 'Installing…' : 'Install'}
+                {installing === entry.manifest.name ? t('registry.installing') : t('plugin.install')}
               </button>
             {/if}
           </div>
@@ -88,7 +89,7 @@
 
   {#if status}
     <div class="status" class:ok={status.ok} class:error={!status.ok}>
-      {status.ok ? '✓ Installed' : '✗ Failed'} {status.name}
+      {status.ok ? t('registry.done_ok') : t('registry.done_failed')} {status.name}
       {#if status.error}<span class="errmsg">{status.error}</span>{/if}
     </div>
   {/if}

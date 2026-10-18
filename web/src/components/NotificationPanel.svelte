@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { api } from '../lib/api'
   import { settings } from '../lib/settings.svelte'
+  import { t } from '../lib/i18n.svelte'
 
   interface Notification {
     id: number
@@ -44,10 +45,10 @@
 
   function kindLabel(n: Notification) {
     switch (n.kind) {
-      case 'pm': return 'Private message'
-      case 'status': return 'Server status'
-      case 'security': return 'Security'
-      case 'plugin': return 'Plugin'
+      case 'pm': return t('notif.kind_pm')
+      case 'status': return t('notif.kind_status')
+      case 'security': return t('notif.kind_security')
+      case 'plugin': return t('notif.kind_plugin')
       default: return n.kind
     }
   }
@@ -64,10 +65,10 @@
 
   function timeAgo(created: number): string {
     const ms = Date.now() - created
-    if (ms < 60_000) return 'just now'
-    if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`
-    if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h ago`
-    return `${Math.round(ms / 86_400_000)}d ago`
+    if (ms < 60_000) return t('notif.moments')
+    if (ms < 3_600_000) return t('notif.time_ago', { n: t('notif.min', { n: Math.round(ms / 60_000) }) })
+    if (ms < 86_400_000) return t('notif.time_ago', { n: t('notif.hour', { n: Math.round(ms / 3_600_000) }) })
+    return t('notif.time_ago', { n: t('notif.day', { n: Math.round(ms / 86_400_000) }) })
   }
 
   onMount(load)
@@ -76,7 +77,7 @@
 <div class="notification-panel" class:open={open}>
   <button
     class="bell"
-    aria-label="Notifications"
+    aria-label={t('notif.bell')}
     aria-haspopup="menu"
     aria-expanded={open}
     aria-controls="notifications-list"
@@ -85,19 +86,19 @@
   >
     <span class="bell-icon">🔔</span>
     {#if unreadCount > 0}
-      <span class="badge" aria-label="{unreadCount} unread">{unreadCount}</span>
+      <span class="badge" aria-label={t('notif.unread_badge', { n: unreadCount })}>{unreadCount}</span>
     {/if}
   </button>
 
-  <div id="notifications-list" class="drawer" class:open={open} role="menu" aria-label="Activity feed">
+  <div id="notifications-list" class="drawer" class:open={open} role="menu" aria-label={t('notif.feed')}>
     <div class="drawer-header">
-      <h3>Activity</h3>
-      <button class="btn" onclick={markRead} disabled={unreadCount === 0}>Mark all as read</button>
+      <h3>{t('notif.activity')}</h3>
+      <button class="btn" onclick={markRead} disabled={unreadCount === 0}>{t('notif.mark_all')}</button>
     </div>
     {#if loading}
-      <p class="note">Loading…</p>
+      <p class="note">{t('notif.loading')}</p>
     {:else if notifications.length === 0}
-      <p class="note">No notifications yet.</p>
+      <p class="note">{t('notif.empty')}</p>
     {:else}
       <ul class="list">
         {#each notifications as n (n.id)}

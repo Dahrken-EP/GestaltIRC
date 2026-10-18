@@ -2,6 +2,7 @@
   import type { Buffer, ChatMessage, NetworkState } from '../lib/network.svelte'
   import MessageLine from './MessageLine.svelte'
   import { filterMessages } from '../lib/search'
+  import { getLang, t } from '../lib/i18n.svelte'
   import VirtualList from './VirtualList.svelte'
 
   interface SearchResult {
@@ -67,8 +68,8 @@
     return out
   })
 
-  function dayLabel(t: number): string {
-    return new Date(t).toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+  function dayLabel(time: number): string {
+    return new Date(time).toLocaleDateString([getLang()], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
   }
 
   let list: VirtualList<Row>
@@ -76,22 +77,22 @@
 </script>
 
 <div class="wrap">
-<VirtualList bind:this={list} bind:atBottom items={rows} estimate={22} label="Messages in {buf.name || net.label}" onreachtop={() => buf.messages.length && net.loadOlder(buf)}>
+<VirtualList bind:this={list} bind:atBottom items={rows} estimate={22} label={t('pane.virtual_aria', { name: buf.name || net.label })} onreachtop={() => buf.messages.length && net.loadOlder(buf)}>
   {#snippet children(row)}
     {#if row.kind === 'older'}
       <div class="older">
         {#if buf.historyLoading}
-          <span>Loading…</span>
+          <span>{t('pane.loading')}</span>
         {:else if buf.historyExhausted}
-          <span>Start of history</span>
+          <span>{t('pane.start_of_history')}</span>
         {:else}
-          <button class="btn" onclick={() => net.loadOlder(buf)}>Load older messages</button>
+          <button class="btn" onclick={() => net.loadOlder(buf)}>{t('pane.load_older')}</button>
         {/if}
       </div>
     {:else if row.kind === 'empty'}
-      <p class="empty">Type /help for commands. Channels you have joined appear on the left.</p>
+      <p class="empty">{t('pane.empty')}</p>
     {:else if row.kind === 'nomatch'}
-      <p class="empty">Nothing here matches “{filter.trim()}”. Older messages may: use “Load older messages” above.</p>
+      <p class="empty">{t('pane.nomatch', { query: filter.trim() })}</p>
     {:else if row.kind === 'day'}
       <div class="day"><span>{dayLabel(row.time)}</span></div>
     {:else}
@@ -100,7 +101,7 @@
   {/snippet}
 </VirtualList>
 {#if !atBottom}
-  <button class="latest btn" onclick={() => list.toBottom()}>↓ Jump to latest</button>
+  <button class="latest btn" onclick={() => list.toBottom()}>{t('pane.jump_latest')}</button>
 {/if}
 </div>
 

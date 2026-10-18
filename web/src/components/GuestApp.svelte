@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { GuestSession } from '../lib/guest/session.svelte'
   import { settings } from '../lib/settings.svelte'
+  import { t } from '../lib/i18n.svelte'
   import DirectPanel from './DirectPanel.svelte'
   import InputBar from './InputBar.svelte'
   import MessagePane from './MessagePane.svelte'
@@ -31,7 +32,7 @@
   })
 
   $effect(() => {
-    document.title = session.phase === 'joined' && host ? `Chat with ${host}` : 'Join a chat'
+    document.title = session.phase === 'joined' && host ? t('guest.title_chat', { name: host }) : t('guest.join')
   })
 
   // Leaving by closing the page tells the host.
@@ -51,28 +52,27 @@
         session.join(name)
       }}
     >
-      <h1>Join a chat</h1>
-      <p>Someone sent you a link to talk with them. Enter a name they will see, then connect.</p>
+      <h1>{t('guest.join')}</h1>
+      <p>{t('guest.intro')}</p>
       <label>
-        Your name
+        {t('guest.your_name')}
         <input bind:this={input} bind:value={name} maxlength="24" autocomplete="nickname" spellcheck="false" disabled={session.phase === 'joining'} />
       </label>
       {#if session.message}<p class="error" role="alert" data-testid="guest-error">{session.message}</p>{/if}
       <button class="btn primary" disabled={session.phase === 'joining' || !name.trim()}>
-        {session.phase === 'joining' ? 'Connecting…' : 'Connect'}
+        {session.phase === 'joining' ? t('p2p.connecting') : t('button.connect')}
       </button>
       <p class="dim">
-        Your browser will connect straight to theirs, so they will be able to see your network address. This page does not
-        need an account, and nothing you say is kept.
+        {t('guest.privacy')}
       </p>
     </form>
   </main>
 {:else if session.phase === 'ended'}
   <main class="join">
     <div class="card" data-testid="guest-ended">
-      <h1>This chat has ended</h1>
+      <h1>{t('guest.ended')}</h1>
       <p>{session.message}</p>
-      <p class="dim">The link may only work once, or only while the person who sent it is here. Ask them for a new one.</p>
+      <p class="dim">{t('guest.ended_hint')}</p>
     </div>
   </main>
 {:else if net && buf && session.welcome?.kind === 'room'}
@@ -81,20 +81,20 @@
   <div class="chat" data-testid="guest-room">
     <header>
       <h1>🎙 {session.welcome.target}</h1>
-      <span class="dim">Voice chat through {host} · you are in as {session.welcome.name}, a guest</span>
+      <span class="dim">{t('guest.room_title', { host })} · {t('guest.you_are', { name: session.welcome.name })}</span>
       <span class="grow"></span>
-      <button class="btn" onclick={() => session.leave()}>Leave</button>
+      <button class="btn" onclick={() => session.leave()}>{t('guest.leave')}</button>
     </header>
     <section class="room">
       <div class="row">
         {#if calling}
-          <span data-testid="guest-room-state" data-state="connecting">Connecting to the room…</span>
+          <span data-testid="guest-room-state" data-state="connecting">{t('guest.connecting_room')}</span>
         {:else if call?.state === 'connected'}
-          <span data-testid="guest-room-state" data-state="connected" class:speaking={call.speaking}>You are in the voice chat.</span>
-          <button class="btn" aria-pressed={call.muted} onclick={() => net.callFor(host).setMuted(!call.muted)}>{call.muted ? 'Unmute' : 'Mute'}</button>
+          <span data-testid="guest-room-state" data-state="connected" class:speaking={call.speaking}>{t('guest.in_room')}</span>
+          <button class="btn" aria-pressed={call.muted} onclick={() => net.callFor(host).setMuted(!call.muted)}>{call.muted ? t('button.unmute') : t('button.mute')}</button>
         {:else}
-          <span data-testid="guest-room-state" data-state="ended">{call?.reason || 'The voice chat ended.'}</span>
-          <button class="btn primary" onclick={() => net.callNick(host)}>Connect again</button>
+          <span data-testid="guest-room-state" data-state="ended">{call?.reason || t('guest.room_ended')}</span>
+          <button class="btn primary" onclick={() => net.callNick(host)}>{t('button.connect_again')}</button>
         {/if}
       </div>
       <ul class="people" data-testid="guest-roster">
@@ -102,13 +102,13 @@
           <li class:speaking={p.speaking}>
             <span class="dot" aria-hidden="true"></span>
             <span>{p.name}</span>
-            {#if p.guest}<span class="tag">guest{p.name === session.welcome.name ? ', you' : ''}</span>{/if}
-            {#if p.host}<span class="tag">host</span>{/if}
+            {#if p.guest}<span class="tag">{t('voice.guest')}{p.name === session.welcome.name ? ', ' + t('guest.you') : ''}</span>{/if}
+            {#if p.host}<span class="tag">{t('guest.tag_host')}</span>{/if}
           </li>
         {/each}
       </ul>
       <p class="dim">
-        Your voice goes to {host}, who passes it on to everyone in the room. What you hear is the room, through them.
+        {t('guest.relays', { host })}
       </p>
     </section>
   </div>
@@ -117,9 +117,9 @@
   <div class="chat">
     <header>
       <h1>⚡ {host}</h1>
-      <span class="dim">You are in as {session.welcome?.name}, a guest</span>
+      <span class="dim">{t('guest.you_are', { name: session.welcome?.name ?? '' })}</span>
       <span class="grow"></span>
-      <button class="btn" onclick={() => session.leave()}>Leave</button>
+      <button class="btn" onclick={() => session.leave()}>{t('guest.leave')}</button>
     </header>
     <DirectPanel {net} {buf} />
     <div class="messages">

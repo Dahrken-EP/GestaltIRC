@@ -3,6 +3,7 @@
   import { parseBundle } from '../lib/plugins/manifest'
   import { plugins } from '../lib/plugins/manager.svelte'
   import { PERMISSION_TEXT, type Manifest, type Permission } from '../lib/plugins/types'
+  import { t } from '../lib/i18n.svelte'
   import RegistryPanel from './RegistryPanel.svelte'
 
   let text = $state('')
@@ -42,7 +43,7 @@
     input.value = ''
     if (!file) return
     if (file.size > 300_000) {
-      error = 'That file is too large to be a plugin.'
+      error = t('plugin.no_permission')
       return
     }
     text = await file.text()
@@ -53,13 +54,10 @@
 </script>
 
 <div class="plugins">
-  <p class="note">
-    A plugin is code that runs in your browser, in a sandbox with no access to the page or the network. It can only do what
-    you allow here. Plugins, and what they store, are kept on your bouncer account, so they follow you to other browsers.
-  </p>
+  <p class="note">{t('plugin.intro')}</p>
 
   {#if plugins.entries.length === 0}
-    <p class="note">No plugins installed.</p>
+    <p class="note">{t('plugin.none')}</p>
   {/if}
   <ul class="list">
     {#each plugins.entries as e (e.plugin.manifest.name)}
@@ -67,31 +65,31 @@
         <div class="head">
           <strong>{e.plugin.manifest.name}</strong>
           <span class="dim">{e.plugin.manifest.version}</span>
-          <span class="badge {e.status}" data-testid="plugin-status">{e.status === 'failed' ? 'stopped' : e.status}</span>
+          <span class="badge {e.status}" data-testid="plugin-status">{e.status === 'failed' ? t('plugin.status_stopped') : e.status}</span>
           <span class="grow"></span>
           <button class="btn" onclick={() => plugins.setEnabled(e.plugin.manifest.name, !e.plugin.enabled)}>
-            {e.plugin.enabled ? 'Turn off' : 'Turn on'}
+            {e.plugin.enabled ? t('plugin.disable') : t('plugin.enable')}
           </button>
-          <button class="btn" onclick={() => plugins.remove(e.plugin.manifest.name)}>Remove</button>
+          <button class="btn" onclick={() => plugins.remove(e.plugin.manifest.name)}>{t('server.remove')}</button>
         </div>
         {#if e.plugin.manifest.description}<div class="dim">{e.plugin.manifest.description}</div>{/if}
-        {#if e.error}<div class="error" role="alert">Stopped: {e.error}</div>{/if}
+        {#if e.error}<div class="error" role="alert">{t('plugin.stopped_error', { error: e.error })}</div>{/if}
         <div class="dim small">
-          Allowed: {e.plugin.granted.length ? e.plugin.granted.join(', ') : 'nothing'}
+          {t('plugin.allowed', { perms: e.plugin.granted.length ? e.plugin.granted.join(', ') : t('plugin.allowed_nothing') })}
           {#if e.plugin.manifest.permissions.length > e.plugin.granted.length}
-            · Not allowed: {e.plugin.manifest.permissions.filter((p) => !e.plugin.granted.includes(p)).join(', ')}
+            · {t('plugin.not_allowed', { perms: e.plugin.manifest.permissions.filter((p) => !e.plugin.granted.includes(p)).join(', ') })}
           {/if}
         </div>
-        {#if e.aliases.length}<div class="small">Commands: {e.aliases.map((a) => '/' + a).join(' ')}</div>{/if}
+        {#if e.aliases.length}<div class="small">{t('plugin.commands', { cmds: e.aliases.map((a) => '/' + a).join(' ') })}</div>{/if}
         <button class="link" aria-expanded={open === e.plugin.manifest.name} onclick={() => (open = open === e.plugin.manifest.name ? null : e.plugin.manifest.name)}>
-          {open === e.plugin.manifest.name ? 'Hide log' : `Log (${e.logs.length})`}
+          {open === e.plugin.manifest.name ? t('plugin.log_show') : t('plugin.log_hide', { n: e.logs.length })}
         </button>
         {#if open === e.plugin.manifest.name}
           <ol class="log" data-testid="plugin-log">
             {#each e.logs as l, i (i)}
               <li class={l.kind}><time>{when(l.time)}</time> {l.text}</li>
             {:else}
-              <li class="dim">Nothing logged.</li>
+              <li class="dim">{t('plugin.nothing_log')}</li>
             {/each}
           </ol>
         {/if}
@@ -100,43 +98,40 @@
   </ul>
 
   {#if review}
-    <div class="review" role="group" aria-label="Allow this plugin">
+    <div class="review" role="group" aria-label={t('plugin.review_aria')}>
       <strong>{review.manifest.name}</strong> <span class="dim">{review.manifest.version}</span>
-      {#if review.replaces}<div class="dim">This replaces version {review.replaces}.</div>{/if}
+      {#if review.replaces}<div class="dim">{t('plugin.replaces', { version: review.replaces })}</div>{/if}
       {#if review.manifest.description}<div>{review.manifest.description}</div>{/if}
       {#if review.manifest.permissions.length === 0}
-        <div class="dim">It asks for no permissions: it can only add commands that print nothing.</div>
+        <div class="dim">{t('plugin.no_perms')}</div>
       {:else}
-        <div class="dim">It asks to:</div>
+        <div class="dim">{t('plugin.asks_for')}</div>
         {#each review.manifest.permissions as p (p)}
-          <label class="perm"><input type="checkbox" bind:checked={allow[p]} /> {PERMISSION_TEXT[p]}</label>
+          <label class="perm"><input type="checkbox" bind:checked={allow[p]} /> {t('perm.' + p)}</label>
         {/each}
       {/if}
       <div class="row">
-        <button class="btn primary" onclick={install}>Install</button>
-        <button class="btn" onclick={() => (review = null)}>Cancel</button>
+        <button class="btn primary" onclick={install}>{t('plugin.install')}</button>
+        <button class="btn" onclick={() => (review = null)}>{t('button.cancel')}</button>
       </div>
     </div>
   {:else}
     <label>
-      Add a plugin
-      <textarea rows="5" bind:value={text} placeholder="Paste the plugin here (a JSON document), or choose a file" spellcheck="false" data-testid="plugin-text"></textarea>
+      {t('plugin.add_label')}
+      <textarea rows="5" bind:value={text} placeholder={t('plugin.paste_ph')} spellcheck="false" data-testid="plugin-text"></textarea>
     </label>
     <div class="row">
-      <button class="btn primary" disabled={!text.trim()} onclick={read}>Review…</button>
-      <label class="btn filebtn">Choose file…<input type="file" accept=".json,application/json" onchange={pick} hidden /></label>
-      <button class="btn" onclick={() => ((text = EXAMPLE_PLUGIN), (error = ''))}>Use the example</button>
+      <button class="btn primary" disabled={!text.trim()} onclick={read}>{t('plugin.review_btn')}</button>
+      <label class="btn filebtn">{t('plugin.choose_file')}<input type="file" accept=".json,application/json" onchange={pick} hidden /></label>
+      <button class="btn" onclick={() => ((text = EXAMPLE_PLUGIN), (error = ''))}>{t('plugin.example')}</button>
     </div>
   {/if}
   {#if error}<p class="error" role="alert" data-testid="plugin-error">{error}</p>{/if}
 
   <hr class="sep" />
 
-  <h3>Plugin registry</h3>
-  <p class="note">
-    Curated plugins you can install with one click. They run in the same sandbox and only receive the permissions
-    you grant. Verified plugins are maintained by the Gestalt project.
-  </p>
+  <h3>{t('plugin.registry_title')}</h3>
+  <p class="note">{t('plugin.registry_note')}</p>
   <RegistryPanel />
 </div>
 

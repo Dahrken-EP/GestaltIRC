@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '../lib/api'
   import { settings } from '../lib/settings.svelte'
+  import { t } from '../lib/i18n.svelte'
 
   interface BanEntry {
     mask: string
@@ -38,7 +39,7 @@
       newMask = ''
       await load()
     } catch (e) {
-      addError = e instanceof Error ? e.message : 'Failed to add ban'
+      addError = e instanceof Error ? e.message : t('server.error')
     }
   }
 
@@ -64,18 +65,18 @@
 </script>
 
 <div class="banlist">
-  <h3>Channel bans</h3>
+  <h3>{t('bans.title', { name: buf?.name ?? '' })}</h3>
   {#if loading}
-    <p class="note">Loading…</p>
+    <p class="note">{t('bans.loading')}</p>
   {:else if bans.length === 0}
-    <p class="note">No bans in this channel.</p>
+    <p class="note">{t('bans.empty')}</p>
   {:else}
     <ul class="list">
       {#each bans as mask (mask)}
         <li class="entry">
           <span class="mask">{mask}</span>
           <button class="btn" onclick={() => removeBan(mask)} disabled={removing === mask}>
-            {removing === mask ? 'Removing…' : 'Remove'}
+            {removing === mask ? t('bans.removing') : t('bans.remove')}
           </button>
         </li>
       {/each}
@@ -86,11 +87,11 @@
     <input
       type="text"
       bind:value={newMask}
-      placeholder="ban mask (e.g. *!*@bad.host)"
-      aria-label="Ban mask"
+      placeholder={t('bans.add_ph')}
+      aria-label={t('bans.add_ph')}
       onkeydown={(e) => e.key === 'Enter' && addBan()}
     />
-    <button class="btn" onclick={addBan} disabled={!newMask.trim()}>Add</button>
+    <button class="btn" onclick={addBan} disabled={!newMask.trim()}>{t('bans.add')}</button>
     {#if addError}<p class="error">{addError}</p>{/if}
   </div>
 </div>

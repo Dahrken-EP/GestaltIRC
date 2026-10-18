@@ -2,6 +2,7 @@
   import { classifyLink, embedSrc, fetchPreview, mediaSrc, type LinkKind, type Preview } from '../lib/media'
   import { player, type MediaKind } from '../lib/player.svelte'
   import { settings } from '../lib/settings.svelte'
+  import { t } from '../lib/i18n.svelte'
 
   let { links }: { links: string[] } = $props()
 
@@ -83,26 +84,26 @@
   {@const p = previews[href]}
   {#if kind === 'image'}
     {#if failed[href]}
-      <p class="note">Could not load that picture{why[href] ? ` (${why[href]})` : ''}. <a href={href} target="_blank" rel="noopener noreferrer nofollow">Open the link</a>
+      <p class="note">{t('media.fail', { why: why[href] ? ` (${why[href]})` : '' })} <a href={href} target="_blank" rel="noopener noreferrer nofollow">{t('media.open_link')}</a>
         {#if refused(href) && !settings.imgurDirect}
-          <br />Imgur is refusing the bouncer's address. <button class="link" onclick={() => { settings.imgurDirect = true; settings.save(); failed[href] = false }}>Load imgur pictures from my browser instead</button> (imgur will see your address).
+          <br />{t('media.imgur_refuse')} <button class="link" onclick={() => { settings.imgurDirect = true; settings.save(); failed[href] = false }}>{t('media.load_instead')}</button> {t('media.imgur_note')}
         {/if}
       </p>
     {:else}
       <a class="media" href={href} target="_blank" rel="noopener noreferrer nofollow">
-        <img src={sourceOf(info.src ?? href)} referrerpolicy="no-referrer" alt="Picture from {siteName(href)}" loading="lazy" decoding="async" onerror={() => fail(href, sourceOf(info.src ?? href))} />
+        <img src={sourceOf(info.src ?? href)} referrerpolicy="no-referrer" alt={t('media.image_of', { name: siteName(href) })} loading="lazy" decoding="async" onerror={() => fail(href, sourceOf(info.src ?? href))} />
       </a>
     {/if}
   {:else if kind === 'video'}
     {#if failed[href]}
-      <p class="note">Could not load that video{why[href] ? ` (${why[href]})` : ''}. <a href={href} target="_blank" rel="noopener noreferrer nofollow">Open the link</a></p>
+      <p class="note">{t('media.fail_video', { why: why[href] ? ` (${why[href]})` : '' })} <a href={href} target="_blank" rel="noopener noreferrer nofollow">{t('media.open_link')}</a></p>
     {:else}
       <!-- svelte-ignore a11y_media_has_caption -->
       <video class="media" src={sourceOf(info.src ?? href)} controls preload="metadata" playsinline onerror={() => fail(href, sourceOf(info.src ?? href))}></video>
     {/if}
   {:else if kind === 'audio'}
     {#if failed[href]}
-      <p class="note">Could not load that sound. <a href={href} target="_blank" rel="noopener noreferrer nofollow">Open the link</a></p>
+      <p class="note">{t('media.fail_audio')} <a href={href} target="_blank" rel="noopener noreferrer nofollow">{t('media.open_link')}</a></p>
     {:else}
       <!-- svelte-ignore a11y_media_has_caption -->
       <audio class="sound" src={mediaSrc(href)} controls preload="none" onerror={() => (failed[href] = true)}></audio>
@@ -114,8 +115,8 @@
         <div class="body">
           <span class="site">{p?.site ?? siteLabel(kind as LinkKind)}</span>
           <span class="title">{p?.title ?? href}</span>
-          <span class="desc">Playing in the player at the corner of the window.</span>
-          <button class="btn play" onclick={() => player.stop()}>■ Stop</button>
+          <span class="desc">{t('media.in_player')}</span>
+          <button class="btn play" onclick={() => player.stop()}>{t('media.stop')}</button>
         </div>
       </div>
     {:else}
@@ -134,10 +135,10 @@
                 href,
                 kind: kind as MediaKind,
                 id: info.id ?? '',
-                title: p?.title ?? 'Media player',
+                title: p?.title ?? t('media.player_title'),
                 soundcloudUrl: kind === 'soundcloud' ? href : undefined,
               })}
-            >▶ Play here</button>
+            >{t('media.play_here')}</button>
           {/if}
         </div>
       </div>

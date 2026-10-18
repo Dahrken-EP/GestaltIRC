@@ -1,5 +1,6 @@
 <script lang="ts">
   import { loadEmoji, loadRecent, rememberEmoji, searchEmoji, type Emoji } from '../lib/emoji'
+  import { t } from '../lib/i18n.svelte'
 
   let { onpick, onclose }: { onpick: (char: string) => void; onclose: () => void } = $props()
 
@@ -43,12 +44,12 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<div class="picker" role="dialog" aria-label="Emoji" tabindex="-1" {onkeydown}>
-  <input bind:this={search} bind:value={query} class="search" placeholder="Search emoji" aria-label="Search emoji" autocomplete="off" spellcheck="false" />
+<div class="picker" role="dialog" aria-label={t('emoji.title')} tabindex="-1" {onkeydown}>
+  <input bind:this={search} bind:value={query} class="search" placeholder={t('emoji.search')} aria-label={t('emoji.search')} autocomplete="off" spellcheck="false" />
 
   {#if !query.trim()}
     {#if recent.length}
-      <div class="label">Recent</div>
+      <div class="label">{t('emoji.recent')}</div>
       <div class="grid" data-testid="emoji-recent">
         {#each recent as c (c)}
           <button class="e" title={nameOf(c)} aria-label={nameOf(c)} onclick={(ev) => pick(c, ev.shiftKey)}>{c}</button>
@@ -66,10 +67,10 @@
     {#each shown as e (e.char)}
       <button class="e" title={e.name} aria-label={e.name} onclick={(ev) => pick(e.char, ev.shiftKey)}>{e.char}</button>
     {:else}
-      <p class="none">{ready ? `Nothing matches “${query}”.` : 'Loading…'}</p>
+      <p class="none">{ready ? t('emoji.none', { query }) : t('emoji.loading')}</p>
     {/each}
   </div>
-  <div class="hint">Enter picks the first. Shift keeps this open to pick several.</div>
+  <div class="hint">{t('emoji.hint')}</div>
 </div>
 
 <style>

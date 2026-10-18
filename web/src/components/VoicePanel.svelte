@@ -3,6 +3,7 @@
   import { MAX_VOICE } from '../lib/voice/presence'
   import { nickColor } from '../lib/nickcolor'
   import { settings } from '../lib/settings.svelte'
+  import { t } from '../lib/i18n.svelte'
 
   let { net, buf }: { net: NetworkState; buf: Buffer } = $props()
 
@@ -40,47 +41,47 @@
 <svelte:window onkeydown={keydown} onkeyup={keyup} onblur={stopTalking} />
 
 {#if canJoin || active || joining}
-  <section class="voice" class:on={active} aria-label="Voice chat in {buf.name}">
+  <section class="voice" class:on={active} aria-label={t('voice.aria', { name: buf.name })}>
     <div class="row">
       {#if active}
-        <span class="me" class:speaking={v?.speaking} data-testid="me-speaking" title="You">
-          <span class="dot" aria-hidden="true"></span>You{v?.listenOnly ? ' (listening only)' : v?.pushToTalk ? '' : v?.muted ? ' (muted)' : ''}
+        <span class="me" class:speaking={v?.speaking} data-testid="me-speaking" title={t('p2p.you')}>
+          <span class="dot" aria-hidden="true"></span>{t('p2p.you')}{v?.listenOnly ? ' ' + t('voice.listening') : v?.pushToTalk ? '' : v?.muted ? ' ' + t('p2p.muted') : ''}
         </span>
         {#if v?.listenOnly}
-          <span class="dim">🎧 You hear the room but cannot be heard. Leave and join again to talk.</span>
+          <span class="dim">{t('voice.listen_note')}</span>
         {:else if v?.pushToTalk}
           <button
             class="btn talk"
             class:held={v.talking}
             data-testid="talk"
             aria-pressed={v.talking}
-            title="Hold to talk, or hold Ctrl+Space"
+            title={t('voice.talk_title')}
             onpointerdown={(e) => (e.currentTarget.setPointerCapture(e.pointerId), room().setTalking(true))}
             onpointerup={() => room().setTalking(false)}
             onpointercancel={() => room().setTalking(false)}
             onkeydown={(e) => (e.key === ' ' || e.key === 'Enter') && !e.repeat && (e.preventDefault(), room().setTalking(true))}
-            onkeyup={(e) => (e.key === ' ' || e.key === 'Enter') && room().setTalking(false)}>🎙 Hold to talk</button
+            onkeyup={(e) => (e.key === ' ' || e.key === 'Enter') && room().setTalking(false)}>{t('voice.talk')}</button
           >
         {:else}
-          <button class="btn" aria-pressed={v?.muted} onclick={() => room().setMuted(!v?.muted)}>{v?.muted ? 'Unmute' : 'Mute'}</button>
+          <button class="btn" aria-pressed={v?.muted} onclick={() => room().setMuted(!v?.muted)}>{v?.muted ? t('button.unmute') : t('button.mute')}</button>
         {/if}
         {#if !v?.listenOnly}
           <label class="check small">
-            <input type="checkbox" checked={v?.pushToTalk} onchange={(e) => setPushToTalk(e.currentTarget.checked)} /> Push to talk
+            <input type="checkbox" checked={v?.pushToTalk} onchange={(e) => setPushToTalk(e.currentTarget.checked)} /> {t('voice.push_to_talk')}
           </label>
         {/if}
-        <button class="btn" onclick={() => net.leaveVoice(buf)}>Leave voice</button>
-        <button class="link" aria-expanded={showCodes} onclick={() => (showCodes = !showCodes)}>{showCodes ? 'Hide codes' : 'Safety codes'}</button>
+        <button class="btn" onclick={() => net.leaveVoice(buf)}>{t('voice.leave')}</button>
+        <button class="link" aria-expanded={showCodes} onclick={() => (showCodes = !showCodes)}>{showCodes ? t('voice.hide_codes') : t('voice.show_codes')}</button>
       {:else if joining}
-        <span>Waiting for your microphone…</span>
-        <button class="btn" onclick={() => net.leaveVoice(buf)}>Cancel</button>
+        <span>{t('voice.waiting_mic')}</span>
+        <button class="btn" onclick={() => net.leaveVoice(buf)}>{t('button.cancel')}</button>
       {:else}
-        <button class="btn" onclick={() => net.joinVoice(buf)}>🎙 Join voice</button>
-        <button class="btn" title="Hear the room without a microphone" onclick={() => net.joinVoice(buf, true)}>🎧 Listen only</button>
+        <button class="btn" onclick={() => net.joinVoice(buf)}>{t('voice.join')}</button>
+        <button class="btn" title={t('voice.listen_title')} onclick={() => net.joinVoice(buf, true)}>{t('voice.listen_only')}</button>
         {#if hint.length}
-          <span class="dim">In voice: {hint.join(', ')}</span>
+          <span class="dim">{t('voice.in_voice', { names: hint.join(', ') })}</span>
         {:else}
-          <span class="dim">Talk with whoever else joins (up to {MAX_VOICE}). Audio goes straight between browsers.</span>
+          <span class="dim">{t('voice.about', { max: MAX_VOICE })}</span>
         {/if}
       {/if}
       {#if v?.error}<span class="error" role="alert">{v.error}</span>{/if}
@@ -88,35 +89,35 @@
 
     {#if active && buf.guestLink}
       <div class="guestlink" data-testid="guest-link">
-        <span class="dim">Guests can join from any browser:</span>
-        <input readonly value={buf.guestLink} aria-label="Guest link" onfocus={(e) => e.currentTarget.select()} />
-        <button class="btn" onclick={() => void navigator.clipboard?.writeText(buf.guestLink).catch(() => {})}>Copy</button>
+        <span class="dim">{t('voice.guests_hint')}</span>
+        <input readonly value={buf.guestLink} aria-label={t('voice.guest_link')} onfocus={(e) => e.currentTarget.select()} />
+        <button class="btn" onclick={() => void navigator.clipboard?.writeText(buf.guestLink).catch(() => {})}>{t('button.copy')}</button>
       </div>
     {/if}
 
     {#if active}
       {#if v!.participants.length === 0}
-        <p class="dim alone">Nobody else is in the voice room yet.{hint.length ? '' : ' Others can join with the button in this channel.'}</p>
+        <p class="dim alone">{t('voice.alone')}{hint.length ? '' : ' ' + t('voice.alone_hint')}</p>
       {/if}
       <ul class="people">
         {#each v!.participants as p (p.nick)}
           <li class:speaking={p.speaking} data-state={p.state} data-testid="voice-person">
             <span class="dot" aria-hidden="true"></span>
             <span class="nick" style:color={nickColor(p.label, settings.nickColors)}>{p.label}</span>
-            {#if p.guest}<span class="guest" data-testid="guest-badge">guest{p.via ? `, with ${p.via}` : ''}</span>{/if}
-            <span class="dim state">{p.state === 'connected' ? (p.speaking ? 'speaking' : '') : p.state === 'failed' ? 'could not connect' : 'connecting…'}</span>
+            {#if p.guest}<span class="guest" data-testid="guest-badge">{t('voice.guest')}{p.via ? ' · ' + t('voice.through', { name: p.via }) : ''}</span>{/if}
+            <span class="dim state">{p.state === 'connected' ? (p.speaking ? t('voice.state_speaking') : '') : p.state === 'failed' ? t('voice.state_failed') : t('voice.state_connecting')}</span>
             {#if p.state === 'connected' && p.stream}
               <label class="vol">
-                <span class="visually-hidden">Volume for {p.nick}</span>
+                <span class="visually-hidden">{t('voice.volume_for', { nick: p.nick })}</span>
                 <input type="range" min="0" max="1" step="0.05" value={p.volume} oninput={(e) => room().setVolume(p.nick, Number(e.currentTarget.value))} />
               </label>
-              {#if showCodes && p.code}<code title="Compare with {p.label} out loud">{p.code}</code>{/if}
+              {#if showCodes && p.code}<code title={t('voice.compare', { name: p.label })}>{p.code}</code>{/if}
             {/if}
           </li>
         {/each}
       </ul>
       {#if showCodes}
-        <p class="dim note">Each code is shared by you and that person only. Read it to each other another way; if it matches, nobody altered the connection.</p>
+        <p class="dim note">{t('voice.safety_note')}</p>
       {/if}
     {/if}
   </section>

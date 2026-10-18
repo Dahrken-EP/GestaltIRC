@@ -1,5 +1,6 @@
 <script lang="ts">
   // A bar between two columns. Drag it, or focus it and use the arrow keys; double-click puts it back.
+  import { t } from '../lib/i18n.svelte'
   let { value, min, max, grows = 1, label, onchange, onreset }: {
     value: number
     min: number
@@ -55,7 +56,7 @@
   aria-valuemin={min}
   aria-valuemax={max}
   tabindex="0"
-  title="Drag to resize, double-click to reset"
+  title={t('pane.split_title')}
   onpointerdown={down}
   onpointermove={move}
   onpointerup={up}

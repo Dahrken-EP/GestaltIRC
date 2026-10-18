@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
+  import { t } from '../lib/i18n.svelte'
 
   let user = $state('')
   let password = $state('')
@@ -18,22 +19,22 @@
 <div class="backdrop">
   <form class="card" onsubmit={submit} aria-labelledby="login-title">
     <div class="brand"><img src="/mark.png" alt="" width="40" height="40" /><span>Gestalt</span></div>
-    <h2 id="login-title">Log in</h2>
-    <p class="hint">Use the account the bouncer's administrator created for you.</p>
+    <h2 id="login-title">{t('login.title')}</h2>
+    <p class="hint">{t('login.hint')}</p>
 
     <label>
-      User name
+      {t('login.user')}
       <input bind:this={userEl} bind:value={user} autocomplete="username" autocapitalize="off" spellcheck="false" required />
     </label>
     <label>
-      Password
+      {t('login.password')}
       <input type="password" bind:value={password} autocomplete="current-password" required />
     </label>
 
     {#if app.loginError}<p class="error" role="alert">{app.loginError}</p>{/if}
 
     <div class="actions">
-      <button class="btn primary" type="submit" disabled={app.loginBusy}>{app.loginBusy ? 'Logging in…' : 'Log in'}</button>
+      <button class="btn primary" type="submit" disabled={app.loginBusy}>{app.loginBusy ? t('login.busy') : t('login.title')}</button>
     </div>
   </form>
 </div>

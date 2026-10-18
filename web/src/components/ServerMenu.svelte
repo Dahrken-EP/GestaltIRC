@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from '../lib/app.svelte'
+  import { t } from '../lib/i18n.svelte'
 
   const menu = $derived(app.serverMenu)
   const info = $derived(app.configured.find((n) => n.name === menu?.name))
@@ -22,7 +23,7 @@
     try {
       await job()
     } catch (e) {
-      error = e instanceof Error ? e.message : 'That did not work.'
+      error = e instanceof Error ? e.message : t('server.error')
     } finally {
       busy = false
     }
@@ -38,23 +39,23 @@
 {#if menu && info}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="scrim" onclick={close}>
-    <div class="menu" role="menu" tabindex="-1" aria-label="Server {info.name}" style:left="{left}px" style:top="{top}px" onclick={(e) => e.stopPropagation()}>
+    <div class="menu" role="menu" tabindex="-1" aria-label={t('server.menu_aria', { name: info.name })} style:left="{left}px" style:top="{top}px" onclick={(e) => e.stopPropagation()}>
       <div class="title">
         <strong>{info.name}</strong>
-        <span class="dim">{info.host}{info.enabled ? '' : ' · off'}</span>
+        <span class="dim">{info.host}{info.enabled ? '' : t('server.off')}</span>
       </div>
       {#if confirming}
-        <p class="ask">Remove {info.name} and its saved history?</p>
+        <p class="ask">{t('server.remove_confirm', { name: info.name })}</p>
         <div class="row">
-          <button class="btn danger" disabled={busy} onclick={() => run(() => app.removeServer(info.name))}>Remove</button>
-          <button class="btn" onclick={() => (confirming = false)}>Keep it</button>
+          <button class="btn danger" disabled={busy} onclick={() => run(() => app.removeServer(info.name))}>{t('server.remove')}</button>
+          <button class="btn" onclick={() => (confirming = false)}>{t('server.keep')}</button>
         </div>
       {:else}
-        <button role="menuitem" onclick={() => app.openServerDialog(info.name)}>Edit server…</button>
+        <button role="menuitem" onclick={() => app.openServerDialog(info.name)}>{t('server.edit')}</button>
         <button role="menuitem" disabled={busy} onclick={() => run(() => app.setServerEnabled(info.name, !info.enabled))}>
-          {info.enabled ? 'Switch off' : 'Switch on'}
+          {info.enabled ? t('server.switch_off') : t('server.switch_on')}
         </button>
-        <button role="menuitem" class="danger" onclick={() => (confirming = true)}>Remove…</button>
+        <button role="menuitem" class="danger" onclick={() => (confirming = true)}>{t('server.remove_ellipsis')}</button>
       {/if}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
     </div>
