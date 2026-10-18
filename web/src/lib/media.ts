@@ -205,6 +205,14 @@ export function classifyLink(href: string): LinkInfo {
   return { kind: 'link' }
 }
 
+/** Twitch's player must know who embeds it: the parent has to name the page's host.
+ *  The desktop app's webview counts as localhost, so that is always allowed too. */
+function twitchParents(): string {
+  const here = typeof location !== 'undefined' && location.hostname ? location.hostname : 'localhost'
+  const list = here === 'localhost' ? ['localhost', '127.0.0.1'] : [here, 'localhost']
+  return list.map((p) => `&parent=${encodeURIComponent(p)}`).join('')
+}
+
 /** The address of the player to load once the user clicks play. Never loaded before that. */
 export function embedSrc(kind: LinkKind, id: string, href?: string): string {
   switch (kind) {
@@ -214,12 +222,13 @@ export function embedSrc(kind: LinkKind, id: string, href?: string): string {
       return `https://streamable.com/e/${id}?autoplay=1`
     case 'twitch':
       // A clip uses the clips embed, a channel page uses ?channel=, anything else
-      // (video/VOD) uses ?video=.
+      // (video/VOD) uses ?video=. Twitch requires parent=<embedding host>, or the
+      // player refuses to load ("embed is misconfigured").
       if (id && href && /clip/i.test(href)) {
-        return `https://clips.twitch.tv/embed?clip=${id}&autoplay=true`
+        return `https://clips.twitch.tv/embed?clip=${id}&autoplay=true${twitchParents()}`
       }
       const isChannel = id && href && !/(videos|vods)\//i.test(href)
-      return `https://player.twitch.tv/?${isChannel ? 'channel' : 'video'}=${id}&autoplay=true`
+      return `https://player.twitch.tv/?${isChannel ? 'channel' : 'video'}=${id}&autoplay=true${twitchParents()}`
     case 'soundcloud':
       // SoundCloud's widget needs the full address, so the caller passes it.
       return href

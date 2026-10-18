@@ -130,7 +130,7 @@
         <button class="nick small" style:color={color(replied.nick)} onclick={() => onnick(replied.nick)}>{replied.nick}</button>
         <span class="quote">{snippet(replied.text)}</span>
       {:else}
-        <span class="quote">a message that is not loaded</span>
+        <span class="quote">{t('msg.not_loaded')}</span>
       {/if}
     </div>
   {/if}
@@ -157,10 +157,14 @@
     {:else}
       <span class="who"><span class="dim">{msg.kind === 'error' ? '!' : '–'}</span></span>
       <span class="text event">
-        {#each ev as seg, i (i)}
-          {#if seg.colored !== null}<span style:color={color(seg.colored)}>{seg.colored}</span>{:else}{seg.text}{/if}
-        {/each}
-        {#if msg.kind === 'topic'} <TokenText {tokens} {onchannel} />{/if}
+        {#if ev === null}
+          <TokenText {tokens} {onchannel} />
+        {:else}
+          {#each ev as seg, i (i)}
+            {#if seg.colored !== null}<span style:color={color(seg.colored)}>{seg.colored}</span>{:else}{seg.text}{/if}
+          {/each}
+          {#if msg.kind === 'topic'} <TokenText {tokens} {onchannel} />{/if}
+        {/if}
       </span>
     {/if}
 

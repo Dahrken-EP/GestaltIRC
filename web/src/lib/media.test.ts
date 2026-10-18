@@ -165,8 +165,8 @@ describe('mediaSrc and embedSrc', () => {
   })
 
   it('builds embed addresses for the new platforms', () => {
-    expect(embedSrc('twitch', '123456789')).toBe('https://player.twitch.tv/?video=123456789&autoplay=true')
-    expect(embedSrc('twitch', 'AbCdEf12', 'https://twitch.tv/clip/AbCdEf12')).toBe('https://clips.twitch.tv/embed?clip=AbCdEf12&autoplay=true')
+    expect(embedSrc('twitch', '123456789')).toBe('https://player.twitch.tv/?video=123456789&autoplay=true&parent=localhost&parent=127.0.0.1')
+    expect(embedSrc('twitch', 'AbCdEf12', 'https://twitch.tv/clip/AbCdEf12')).toBe('https://clips.twitch.tv/embed?clip=AbCdEf12&autoplay=true&parent=localhost&parent=127.0.0.1')
     expect(embedSrc('soundcloud', 'track-name', 'https://soundcloud.com/user/track-name')).toMatch(/^https:\/\/w\.soundcloud\.com\/player\/\?url=/)
     expect(embedSrc('spotify', '4iV5W9uYEdYUVa79Axb7Rh')).toBe('https://open.spotify.com/embed/4iV5W9uYEdYUVa79Axb7Rh')
     expect(embedSrc('vimeo', '123456789')).toBe('https://player.vimeo.com/video/123456789?autoplay=true')
