@@ -693,7 +693,7 @@ const translations: Record<Lang, Record<string, string>> = {
   },
 }
 
-let currentLang = $state<Lang>('en')
+let currentLang: Lang = 'en'
 
 export function getLang(): Lang {
   if (typeof window !== 'undefined') {
