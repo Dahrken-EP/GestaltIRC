@@ -7,7 +7,12 @@
   import { notificationsSupported, requestNotifyPermission } from '../lib/notify'
   import { disablePush, enablePush, pushSubscribed, pushSupported } from '../lib/push'
   import { settings, type Density, type Theme } from '../lib/settings.svelte'
-  import { allLangs, getLang, langLabel, setLang, type Lang, t } from '../lib/i18n'
+  import { allLangs, getLang, langLabel, setLang, type Lang, t } from '../lib/i18n.svelte'
+
+  /** Escape user-controlled text before interpolating into an {@html} translation. */
+  function esc(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  }
 
   let keywordText = $state(settings.keywords.join('\n'))
   let colorNick = $state('')
@@ -100,14 +105,14 @@
   const overrides = $derived(Object.entries(settings.nickColors))
 
   type Tab = 'general' | 'appearance' | 'notifications' | 'highlights' | 'media' | 'plugins' | 'about'
-  const TABS: { id: Tab; label: string }[] = [
-    { id: 'general', label: t('settings.general') },
-    { id: 'appearance', label: t('settings.appearance') },
-    { id: 'notifications', label: t('settings.notifications') },
-    { id: 'highlights', label: t('settings.highlights') },
-    { id: 'media', label: t('settings.media') },
-    { id: 'plugins', label: t('settings.plugins') },
-    { id: 'about', label: t('settings.about') },
+  const TABS: { id: Tab }[] = [
+    { id: 'general' },
+    { id: 'appearance' },
+    { id: 'notifications' },
+    { id: 'highlights' },
+    { id: 'media' },
+    { id: 'plugins' },
+    { id: 'about' },
   ]
   let tab = $state<Tab>('general')
 
@@ -137,8 +142,8 @@
     </header>
 
     <div class="tabs" role="tablist" aria-label={t('settings.sections')} tabindex="-1" onkeydown={tabKey}>
-      {#each TABS as t (t.id)}
-        <button role="tab" id="tab-{t.id}" aria-selected={tab === t.id} aria-controls="panel-{t.id}" tabindex={tab === t.id ? 0 : -1} class:on={tab === t.id} onclick={() => (tab = t.id)}>{t.label}</button>
+      {#each TABS as tb (tb.id)}
+        <button role="tab" id="tab-{tb.id}" aria-selected={tab === tb.id} aria-controls="panel-{tb.id}" tabindex={tab === tb.id ? 0 : -1} class:on={tab === tb.id} onclick={() => (tab = tb.id)}>{t('settings.' + tb.id)}</button>
       {/each}
     </div>
 
@@ -160,10 +165,10 @@
         {:else if install.kind === 'installed'}
           <p class="note">{t('settings.installed_app')}</p>
         {:else if install.kind === 'ios'}
-          <p class="note" data-testid="install-ios">{t('settings.install_ios')}</p>
+          <p class="note" data-testid="install-ios">{@html t('settings.install_ios')}</p>
         {:else}
           <p class="note" data-testid="install-none">
-            {t('settings.install_browser')}
+            {@html t('settings.install_browser')}
           </p>
         {/if}
 
@@ -209,7 +214,7 @@
 
         <h3>{t('settings.account')}</h3>
         <div class="row">
-          <span class="grow">{t('settings.logged_in', { user: app.user })}</span>
+          <span class="grow">{@html t('settings.logged_in', { user: esc(app.user) })}</span>
           <button class="btn" onclick={() => app.logout()}>{t('button.logout')}</button>
         </div>
         <p class="note">
@@ -238,7 +243,7 @@
               onlangchange(l)
               settings.save()
             }}>
-              {#each allLangs() as l (l)}<option value={l}>{langLabel(l)}</option>{/each}
+              {#each allLangs as l (l)}<option value={l}>{langLabel(l)}</option>{/each}
             </select>
           </label>
         </div>

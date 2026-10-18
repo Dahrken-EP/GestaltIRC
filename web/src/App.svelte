@@ -4,7 +4,7 @@
   import { layout, MEMBERS, NAV } from './lib/layout.svelte'
   import { settings } from './lib/settings.svelte'
   import { api } from './lib/api'
-import { allLangs, getLang, langLabel, setLang, type Lang } from './lib/i18n'
+import { allLangs, getLang, langLabel, setLang, type Lang } from './lib/i18n.svelte'
   import BufferList from './components/BufferList.svelte'
   import DirectPanel from './components/DirectPanel.svelte'
   import VoiceAudio from './components/VoiceAudio.svelte'
