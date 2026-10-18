@@ -348,7 +348,7 @@
         <PluginsPanel />
       {:else if tab === 'about'}
         <h3>{t('settings.about_gestalt')}</h3>
-        <p class="note">{t('settings.about_desc', { version: '0.2.2' })}</p>
+        <p class="note">{t('settings.about_desc', { version: '0.2.5' })}</p>
         <h3>{t('settings.keyboard_shortcuts')}</h3>
         <ul class="shortcuts">
           <li><kbd>Ctrl</kbd> + <kbd>K</kbd> — {t('shortcut.quick_switcher')}</li>
