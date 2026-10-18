@@ -70,7 +70,7 @@ export function streamableId(u: URL): string {
   return STREAMABLE_ID.test(id) ? id : ''
 }
 
-/** The video or clip id in a Twitch link, or ''. Handles /videos/, /vods/ and /clip/. */
+/** The video, VOD, clip, or channel name in a Twitch link, or ''. Handles /videos/, /vods/, /clip/ and channel pages. */
 export function twitchId(u: URL): string {
   const host = u.hostname.toLowerCase().replace(/^www\./, '')
   if (host !== 'twitch.tv') return ''
@@ -86,8 +86,25 @@ export function twitchId(u: URL): string {
     const id = parts[1] ?? ''
     return TWITCH_ID.test(id) ? id : ''
   }
+  // twitch.tv/CHANNELNAME (channel page / live stream). Single path segment,
+  // not a known non-channel path.
+  if (parts.length === 1 && parts[0] && !twitchNonChannelPaths.has(parts[0])) {
+    const name = parts[0]
+    // Twitch usernames are alphanumeric with underscores, 4-25 characters.
+    if (/^[a-zA-Z0-9_]{4,25}$/.test(name)) {
+      return name
+    }
+  }
   return ''
 }
+
+// Twitch URL paths that are not channel pages.
+const twitchNonChannelPaths = new Set([
+  'videos', 'vods', 'clip', 'clips', 'search', 'directory', 'popout',
+  'login', 'signup', 'about', 'terms', 'privacy', 'ad', 'extensions',
+  'messenger', 'settings', 'upload', 'turbo', 'prime', 'drops',
+  'watch', 'gear', 'conquer', 'all-categories',
+])
 
 /** The track id in a SoundCloud link, or ''. Keeps the whole path when it looks like a user/track. */
 export function soundcloudId(u: URL): string {
@@ -196,10 +213,13 @@ export function embedSrc(kind: LinkKind, id: string, href?: string): string {
     case 'streamable':
       return `https://streamable.com/e/${id}?autoplay=1`
     case 'twitch':
-      // A clip uses the clips embed, anything else (video/VOD) uses the player.
-      return id && href && /clip/i.test(href)
-        ? `https://clips.twitch.tv/embed?clip=${id}&autoplay=true`
-        : `https://player.twitch.tv/?video=${id}&autoplay=true`
+      // A clip uses the clips embed, a channel page uses ?channel=, anything else
+      // (video/VOD) uses ?video=.
+      if (id && href && /clip/i.test(href)) {
+        return `https://clips.twitch.tv/embed?clip=${id}&autoplay=true`
+      }
+      const isChannel = id && href && !/(videos|vods)\//i.test(href)
+      return `https://player.twitch.tv/?${isChannel ? 'channel' : 'video'}=${id}&autoplay=true`
     case 'soundcloud':
       // SoundCloud's widget needs the full address, so the caller passes it.
       return href

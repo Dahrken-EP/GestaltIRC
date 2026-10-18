@@ -101,6 +101,25 @@ describe('new platform ids', () => {
     expect(twitchId(new URL('https://twitch.tv/clip/AbCdEf12'))).toBe('AbCdEf12')
   })
 
+  it('extracts twitch channel names for live stream links', () => {
+    expect(classifyLink('https://twitch.tv/caedrel247')).toEqual({ kind: 'twitch', id: 'caedrel247' })
+    expect(classifyLink('https://www.twitch.tv/caedrel247')).toEqual({ kind: 'twitch', id: 'caedrel247' })
+    expect(twitchId(new URL('https://twitch.tv/caedrel247'))).toBe('caedrel247')
+    expect(twitchId(new URL('https://www.twitch.tv/caedrel247'))).toBe('caedrel247')
+  })
+
+  it('is not fooled by twitch non-channel paths', () => {
+    for (const u of [
+      'https://twitch.tv/search',
+      'https://twitch.tv/directory',
+      'https://twitch.tv/about',
+      'https://twitch.tv/prime',
+      'https://twitch.tv/turbo',
+    ]) {
+      expect(classifyLink(u).kind, u).toBe('link')
+    }
+  })
+
   it('extracts soundcloud track ids', () => {
     expect(classifyLink('https://soundcloud.com/user/track-name')).toEqual({ kind: 'soundcloud', id: 'track-name' })
     expect(soundcloudId(new URL('https://soundcloud.com/user/track-name'))).toBe('track-name')
