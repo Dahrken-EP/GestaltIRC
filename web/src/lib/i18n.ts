@@ -2,17 +2,19 @@
 // The top 8 languages by population are supported: English (fallback),
 // Mandarin Chinese, Spanish, Hindi, Arabic, Bengali, Portuguese, Russian.
 
+import { writable } from 'svelte/store';
+
 export type Lang = 'en' | 'zh' | 'es' | 'hi' | 'ar' | 'bn' | 'pt' | 'ru'
 
 const LANGUAGES: Record<Lang, string> = {
   en: 'English',
-  zh: '\u4e2d\u6587',
-  es: 'Espa\u00f1ol',
-  hi: '\u0939\u093f\u0928\u094d\u0926\u0940',
-  ar: '\u0627\u0644\u0639\u0631\u0628ي\u0629',
-  bn: '\u09ac\u09be\u0982\u09b2\u093e',
-  pt: 'Portugu\u00eas',
-  ru: '\u0420\u0443\u0441\u0441\u043aий',
+  zh: '中文',
+  es: 'Español',
+  hi: 'हिन्दी',
+  ar: 'العربية',
+  bn: 'বাংলা',
+  pt: 'Português',
+  ru: 'Русский',
 }
 
 const translations: Record<Lang, Record<string, string>> = {
@@ -51,7 +53,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'settings.show_timestamps': 'Show timestamps',
     'settings.installed_app': 'Gestalt is running as an installed app.',
     'settings.install_ios': 'To install Gestalt, tap the Share button in Safari and choose <strong>Add to Home Screen</strong>.',
-    'settings.install_browser': 'To install Gestalt as an app, use your browser\'s menu (look for <strong>Install</strong> or <strong>Add to Home screen</strong>). Browsers only offer it on a page served over HTTPS.',
+    'settings.install_browser': "To install Gestalt as an app, use your browser's menu (look for <strong>Install</strong> or <strong>Add to Home screen</strong>). Browsers only offer it on a page served over HTTPS.",
     'settings.let_guests': 'Let people without Gestalt reach me through a one-time link',
     'settings.announce_voice': 'Say in a channel, with a link, when I join its voice chat',
     'settings.guests_desc': 'Joining a voice chat makes a link, and says so in the channel, so anyone can join from a browser. A direct chat or call that nobody\'s client answers sends the other person a one-time link. They enter a name and talk to you from their browser. Turn this off and every open link stops working.',
@@ -63,7 +65,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'settings.reset_colour': 'Reset colour for {nick}',
     'settings.on_this_browser': 'On this browser',
     'settings.nick_always_highlights': 'your nick always highlights',
-    'settings.server_words_desc': 'Words for one server are set in that server\'s dialog, under its name in the left bar.',
+    'settings.server_words_desc': "Words for one server are set in that server's dialog, under its name in the left bar.",
     'settings.imgur_note': 'Imgur turns away the addresses of many servers. If the bouncer\'s is one of them (a picture says imgur answered 429 or 403), this makes your browser fetch imgur pictures instead. Imgur then sees your address, and nothing else is sent.',
     'settings.imgur_note2': 'The bouncer fetches everything else for you, so those sites never see your address. A player loads from YouTube or Streamable only when you press play.',
     'settings.update_available': 'A new version ({version}) is available.',
@@ -93,16 +95,16 @@ const translations: Record<Lang, Record<string, string>> = {
     'button.cancel': 'Cancel',
     'button.ok': 'OK',
     'button.stop': 'Stop',
-    'button.play': '▶ Play here',
-    'button.stop_playing': '■ Stop',
+    'button.play': '\u25b6 Play here',
+    'button.stop_playing': '\u25a0 Stop',
     'button.edit': 'Edit',
     'button.end_link': 'End link',
-    'button.add_server': 'Add a server…',
+    'button.add_server': 'Add a server\u2026',
     'button.logout': 'Log out',
     'button.set': 'Set',
     'settings.on': 'on',
     'errors.no_notifications': 'No notifications yet.',
-    'errors.no_matches': 'Nothing here matches “{query}”.',
+    'errors.no_matches': 'Nothing here matches \u201c{query}\u201d.',
     'errors.load_older': 'Load older messages',
     'errors.start_of_history': 'Start of history',
     'media.site_youtube': 'YouTube',
@@ -124,26 +126,26 @@ const translations: Record<Lang, Record<string, string>> = {
     'plugin.category_moderation': 'Moderation',
     'plugin.category_fun': 'Fun',
     'plugin.category_info': 'Information',
-    'shortcut.quick_switcher': 'Ctrl+K — Quick switcher',
-    'shortcut.search': 'Ctrl+F — Search this conversation',
-    'shortcut.next_unread': 'Alt+A — Next unread',
-    'shortcut.scroll_history': 'Alt+↑/↓ — Scroll history',
-    'shortcut.cancel': 'Esc — Close reply / cancel',
-    'shortcut.emoji': 'Ctrl+E — Emoji picker',
+    'shortcut.quick_switcher': 'Ctrl+K \u2014 Quick switcher',
+    'shortcut.search': 'Ctrl+F \u2014 Search this conversation',
+    'shortcut.next_unread': 'Alt+A \u2014 Next unread',
+    'shortcut.scroll_history': 'Alt+\u2191/\u2193 \u2014 Scroll history',
+    'shortcut.cancel': 'Esc \u2014 Close reply / cancel',
+    'shortcut.emoji': 'Ctrl+E \u2014 Emoji picker',
   },
   zh: {
     'app.name': 'Gestalt',
-    'app.tagline': '在线 IRC 室客户端与网页制式。',
-    'settings.title': '设置',
-    'settings.language': '语言',
-    'settings.theme': '主题',
-    'settings.density': '密度',
-    'settings.high_contrast': '高向响峰模式',
-    'settings.media': '媒体',
-    'settings.inline_media': 'Nei xian kan tu pian, shi pin he yin yin',
-    'settings.previews': '为其他链接写示标题和图片',
-    'settings.embeds': '为 YouTube, Streamable, Twitch, SoundCloud, Spotify 和 Vimeo 提供玲器',
-    'settings.thread_indicators': '在信息上单片线级断片',
+    'app.tagline': '\u5728\u7ebf IRC \u5ba4\u5ba2\u6237\u7aef\u4e0e\u7f51\u9875\u5236\u5f0f\u3002',
+    'settings.title': '\u8bbe\u7f6e',
+    'settings.language': '\u8bed\u8a00',
+    'settings.theme': '\u4e3b\u9898',
+    'settings.density': '\u5bc6\u5ea6',
+    'settings.high_contrast': '\u9ad8\u5411\u54cd\u5cf0\u6a21\u5f0f',
+    'settings.media': '\u5a92\u4f53',
+    'settings.inline_media': '\u5185\u7ed3\u663e\u793a\u5668\u5185\u73b2',
+    'settings.previews': '\u4e3a\u5176\u4ed6\u94fe\u63a5\u5199\u793a\u6807\u9898\u548c\u56fe\u7247',
+    'settings.embeds': '\u4e3a YouTube, Streamable, Twitch, SoundCloud, Spotify \u548c Vimeo \u63d0\u4f9b\u73b2\u5668',
+    'settings.thread_indicators': '\u5728\u4fe1\u606f\u4e0a\u5355\u7247\u7ebf\u7ea7\u65ad\u7247',
     'settings.presence_indicators': 'Zai chengyuan lie biao dui mei ge ningke xianshi xianzhuang dian',
     'settings.imgur_direct': 'Jiqie cong imgur jia zai imgur tu pian',
     'settings.timestamps': 'Xianshi shijianbiao',
@@ -209,8 +211,8 @@ const translations: Record<Lang, Record<string, string>> = {
     'button.cancel': 'qu xiao',
     'button.ok': 'hao de',
     'button.stop': 'ting zhi',
-    'button.play': '▶ zai er bo fang',
-    'button.stop_playing': '■ ting zhi',
+    'button.play': '\u25b6 zai er bo fang',
+    'button.stop_playing': '\u25a0 ting zhi',
     'button.edit': 'bian ji',
     'button.end_link': 'jie chu lian jie',
     'button.add_server': 'tian jia fu wu qi…',
@@ -303,6 +305,12 @@ const translations: Record<Lang, Record<string, string>> = {
     'button.stop': 'Detener',
     'button.play': '▶ Reproducir aquí',
     'button.stop_playing': '■ Detener',
+    'button.edit': 'Editar',
+    'button.end_link': 'Finalizar enlace',
+    'button.add_server': 'Agregar servidor…',
+    'button.logout': 'Cerrar sesión',
+    'button.set': 'Definir',
+    'settings.on': 'activado',
     'errors.no_notifications': 'No hay notificaciones aún.',
     'errors.no_matches': 'No hay coincidencias con “{query}”.',
     'errors.load_older': 'Cargar mensajes anteriores',
@@ -505,7 +513,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'nav.show_rail': 'সার্ভার রেল দেখান',
     'nav.settings': 'সেটিংস',
     'nav.install_app': 'গেস্টল্টকে একটি অ্যাপ হিসেবে ইনস্টল করুন',
-    'buffer.status': 'स्थितি',
+    'buffer.status': 'स्थिति',
     'buffer.direct_chat': 'থ্রি Atচ্যাট',
     'buffer.voice_room': 'ভয়েস রুম',
     'buffer.joined': 'যোগ দিল',
@@ -535,7 +543,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'media.site_soundcloud': 'SoundCloud',
     'media.site_spotify': 'Spotify',
     'media.site_vimeo': 'Vimeo',
-    'media.playing': 'কোনের প্লেয়ারে চলছে।',
+    'media.playing': 'কোনার প্লেয়ারে চলছে।',
     'member.online': 'অনলাইন',
     'member.away': 'বাইরে',
     'member.busy': 'ব্যস্ত',
@@ -693,27 +701,41 @@ const translations: Record<Lang, Record<string, string>> = {
   },
 }
 
-let currentLang: Lang = 'en'
+const currentLang = writable<Lang>('en');
 
-export function getLang(): Lang {
+function detectLang(): Lang {
   if (typeof window !== 'undefined') {
     const stored = localStorage.getItem('gestalt:lang')
     if (stored && stored in translations) return stored as Lang
-    const browserLang = navigator.language.split('-')[0] as Lang
-    if (browserLang in translations) return browserLang
+    const browserLang = navigator.language.split('-')[0]
+    if (browserLang && browserLang in translations) return browserLang as Lang
   }
   return 'en'
 }
 
-export function setLang(lang: Lang): void {
-  currentLang = lang
+// Initialize the store with the detected language
+if (typeof window !== 'undefined') {
+  const initialLang = detectLang()
+  currentLang.set(initialLang)
+}
+
+export function getLang(): Lang {
+  let current: Lang = 'en'
+  currentLang.subscribe(v => current = v)()
+  return current
+}
+
+export function setLang(lang: string) {
   if (typeof window !== 'undefined') {
     localStorage.setItem('gestalt:lang', lang)
   }
+  currentLang.set(lang as Lang)
 }
 
 export function t(key: string, vars: Record<string, string> = {}): string {
-  const dict = translations[currentLang] ?? translations.en
+  let current: Lang = 'en'
+  currentLang.subscribe(v => current = v)()
+  const dict = translations[current] ?? translations.en
   let text = dict[key] ?? translations.en[key] ?? key
   for (const [k, v] of Object.entries(vars)) {
     text = text.replace(new RegExp('\\{' + k + '\\}', 'g'), v)
@@ -721,10 +743,20 @@ export function t(key: string, vars: Record<string, string> = {}): string {
   return text
 }
 
-export function langLabel(lang: Lang): string {
+export function langLabel(lang: string): string {
+  const LANGUAGES: Record<string, string> = {
+    en: 'English',
+    zh: '中文',
+    es: 'Español',
+    hi: 'हिन्दी',
+    ar: 'العربية',
+    bn: 'বাংলা',
+    pt: 'Português',
+    ru: 'Русский',
+  }
   return LANGUAGES[lang] ?? lang
 }
 
-export function allLangs(): Lang[] {
-  return Object.keys(LANGUAGES) as Lang[]
+export function allLangs() {
+  return ['en', 'zh', 'es', 'hi', 'ar', 'bn', 'pt', 'ru'] as const
 }
