@@ -339,7 +339,7 @@
         <PluginsPanel />
       {:else if tab === 'about'}
         <h3>About Gestalt</h3>
-        <p class="note">Gestalt IRC <span class="dim">0.2.0</span></p>
+        <p class="note">Gestalt IRC <span class="dim">0.2.1</span></p>
         <p class="note">
           A bouncer-based IRC client with a web frontend. Keeps you connected to IRC networks so you
           never miss a message, from any browser or the desktop app.
