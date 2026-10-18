@@ -534,6 +534,9 @@ func (n *Network) Forward(m *irc.Message) error {
 // forwardMultiline splits m into draft/multiline parts and sends each one to the
 // upstream network. Each part carries the same batch id and a concat/cont/end tag.
 func (n *Network) forwardMultiline(m *irc.Message, upstreamHasTags, echoes bool, self, selfPfx string) error {
+	if len(m.Params) == 0 {
+		return nil
+	}
 	text := m.Params[len(m.Params)-1]
 	targets := m.Params[:len(m.Params)-1]
 	parts := splitMultiLine(text)
@@ -594,6 +597,11 @@ func splitMultiLine(text string) []string {
 		// Back up until we are at a rune boundary, so we never split mid-UTF8.
 		for n > 0 && text[n]&0xC0 == 0x80 {
 			n--
+		}
+		// If the first byte is a continuation byte (invalid UTF-8), advance at
+		// least one byte so we cannot loop for ever.
+		if n == 0 {
+			n = 1
 		}
 		out = append(out, text[:n])
 		text = text[n:]
@@ -802,11 +810,15 @@ func reassembleMultiLine(parts []*irc.Message) *irc.Message {
 			text = append(text, p.Params[len(p.Params)-1])
 		}
 	}
+	var prefixParams []string
+	if len(first.Params) > 0 {
+		prefixParams = first.Params[:len(first.Params)-1]
+	}
 	out := &irc.Message{
 		Tags:    first.Tags,
 		Prefix:  first.Prefix,
 		Command: first.Command,
-		Params:  append(append([]string(nil), first.Params[:len(first.Params)-1]...), strings.Join(text, "")),
+		Params:  append(append([]string(nil), prefixParams...), strings.Join(text, "")),
 	}
 	// Drop the multiline and batch tags from the reassembled message.
 	var clean []irc.Tag
