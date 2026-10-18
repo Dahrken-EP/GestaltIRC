@@ -5,7 +5,9 @@
   import { settings } from '../lib/settings.svelte'
 
   const now = $derived(player.current as Playing | null)
-  const src = $derived(now ? embedSrc(now.kind, now.id, now.soundcloudUrl) : '')
+  // The second argument is the soundcloud page; the third is the original link,
+  // which tells a twitch channel apart from a video or clip.
+  const src = $derived(now ? embedSrc(now.kind, now.id, now.soundcloudUrl ?? now.href) : '')
 </script>
 
 <!-- Outside the buffer, so changing channel, server or scroll position does not take the video down. -->
@@ -37,7 +39,8 @@
     right: 16px;
     bottom: 76px;
     z-index: 20;
-    width: min(360px, calc(100vw - 32px));
+    /* 420x300 letters: Twitch only lets a player this big autoplay. */
+    width: min(420px, calc(100vw - 32px));
     display: flex;
     flex-direction: column;
     background: var(--bg-panel);
@@ -72,6 +75,7 @@
     display: block;
     width: 100%;
     aspect-ratio: 16 / 9;
+    min-height: 300px; /* Twitch's autoplay minimum; the video letterboxes inside */
     border: 0;
     background: #000;
   }
