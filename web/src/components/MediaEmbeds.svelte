@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { classifyLink, embedSrc, fetchPreview, mediaSrc, type Preview } from '../lib/media'
-  import { player } from '../lib/player.svelte'
+  import { classifyLink, embedSrc, fetchPreview, mediaSrc, type LinkKind, type Preview } from '../lib/media'
+  import { player, type MediaKind } from '../lib/player.svelte'
   import { settings } from '../lib/settings.svelte'
 
   let { links }: { links: string[] } = $props()
@@ -29,11 +29,14 @@
   }
   let previews = $state<Record<string, Preview | null>>({})
 
+  /** Kinds that open a player in the corner of the window when the user presses play. */
+  const playerKinds: MediaKind[] = ['youtube', 'streamable', 'twitch', 'soundcloud', 'spotify', 'vimeo']
+
   // What to show for each link: the kind from its address, and a preview where one is needed.
   const items = $derived(
     links.map((href) => ({ href, info: classifyLink(href) })).filter(({ info }) => {
       if (info.kind === 'image' || info.kind === 'video' || info.kind === 'audio') return settings.inlineMedia
-      if (info.kind === 'youtube' || info.kind === 'streamable') return settings.embeds || settings.previews
+      if (playerKinds.includes(info.kind as MediaKind)) return settings.embeds || settings.previews
       return settings.previews
     }),
   )
@@ -42,8 +45,7 @@
   // so this runs only for messages the user can see.
   $effect(() => {
     for (const { href, info } of items) {
-      // A video card gets its title from the bouncer only if previews are on; the player works without.
-      const needsPreview = info.kind === 'link' || ((info.kind === 'youtube' || info.kind === 'streamable') && settings.previews)
+      const needsPreview = info.kind === 'link' || playerKinds.includes(info.kind as MediaKind)
       if (!needsPreview || href in previews) continue
       previews[href] = null
       fetchPreview(href).then((p) => (previews[href] = p))
@@ -61,6 +63,17 @@
       return new URL(u).hostname
     } catch {
       return u
+    }
+  }
+
+  /** The site's display name for a card. */
+  const siteLabel = (kind: LinkKind) => {
+    switch (kind) {
+      case 'twitch': return 'Twitch'
+      case 'soundcloud': return 'SoundCloud'
+      case 'spotify': return 'Spotify'
+      case 'vimeo': return 'Vimeo'
+      default: return kind
     }
   }
 </script>
@@ -94,12 +107,12 @@
       <!-- svelte-ignore a11y_media_has_caption -->
       <audio class="sound" src={mediaSrc(href)} controls preload="none" onerror={() => (failed[href] = true)}></audio>
     {/if}
-  {:else if (kind === 'youtube' || kind === 'streamable') && info.id}
+  {:else if playerKinds.includes(kind as MediaKind) && info.id}
     {#if player.is(href) && settings.embeds}
-      <!-- The video plays in the corner of the window (FloatingPlayer), which stays when the channel changes. -->
+      <!-- The media plays in the corner of the window (FloatingPlayer), which stays when the channel changes. -->
       <div class="card video now">
         <div class="body">
-          <span class="site">{p?.site ?? (kind === 'youtube' ? 'YouTube' : 'Streamable')}</span>
+          <span class="site">{p?.site ?? siteLabel(kind as LinkKind)}</span>
           <span class="title">{p?.title ?? href}</span>
           <span class="desc">Playing in the player at the corner of the window.</span>
           <button class="btn play" onclick={() => player.stop()}>■ Stop</button>
@@ -111,11 +124,20 @@
           <img class="thumb" src={p.image} alt="" loading="lazy" decoding="async" />
         {/if}
         <div class="body">
-          <span class="site">{p?.site ?? (kind === 'youtube' ? 'YouTube' : 'Streamable')}</span>
+          <span class="site">{p?.site ?? siteLabel(kind as LinkKind)}</span>
           <a class="title" href={href} target="_blank" rel="noopener noreferrer nofollow">{p?.title ?? href}</a>
           {#if p?.description}<span class="desc">{p.description}</span>{/if}
           {#if settings.embeds}
-            <button class="btn play" onclick={() => player.play({ href, kind: kind as 'youtube' | 'streamable', id: info.id ?? '', title: p?.title ?? 'Video player' })}>▶ Play here</button>
+            <button
+              class="btn play"
+              onclick={() => player.play({
+                href,
+                kind: kind as MediaKind,
+                id: info.id ?? '',
+                title: p?.title ?? 'Media player',
+                soundcloudUrl: kind === 'soundcloud' ? href : undefined,
+              })}
+            >▶ Play here</button>
           {/if}
         </div>
       </div>

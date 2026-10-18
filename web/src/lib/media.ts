@@ -2,11 +2,21 @@
 // never contacts the other site: pictures and video come from /api/media, and
 // titles and thumbnails from /api/preview.
 
-export type LinkKind = 'image' | 'video' | 'audio' | 'youtube' | 'streamable' | 'link'
+export type LinkKind =
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'youtube'
+  | 'streamable'
+  | 'twitch'
+  | 'soundcloud'
+  | 'spotify'
+  | 'vimeo'
+  | 'link'
 
 export interface LinkInfo {
   kind: LinkKind
-  /** The video id for youtube and streamable. */
+  /** The video or clip id for youtube, streamable, twitch and vimeo. For soundcloud and spotify it is the track/item id. */
   id?: string
   /** For imgur and giphy links: the address of the file itself, which is not the address that was posted. */
   src?: string
@@ -14,7 +24,7 @@ export interface LinkInfo {
 
 export interface Preview {
   url: string
-  kind: 'link' | 'image' | 'video' | 'audio' | 'youtube' | 'streamable' | 'none'
+  kind: 'link' | 'image' | 'video' | 'audio' | 'youtube' | 'streamable' | 'twitch' | 'soundcloud' | 'spotify' | 'vimeo' | 'none'
   title?: string
   description?: string
   site?: string
@@ -30,6 +40,10 @@ const IMGUR_ID = /^[A-Za-z0-9]{5,8}$/
 const GIPHY_ID = /^[A-Za-z0-9]{6,32}$/
 const YT_ID = /^[A-Za-z0-9_-]{11}$/
 const STREAMABLE_ID = /^[a-z0-9]{4,12}$/
+const TWITCH_ID = /^[a-zA-Z0-9_-]{2,25}$/
+const SOUNDCLOUD_ID = /^[a-zA-Z0-9_-]+$/
+const SPOTIFY_ID = /^[A-Za-z0-9]{22}$/
+const VIMEO_ID = /^\d{6,10}$/
 
 /** The address of a proxied copy of `url`. */
 export function mediaSrc(url: string): string {
@@ -54,6 +68,62 @@ export function streamableId(u: URL): string {
   if (u.hostname.toLowerCase().replace(/^www\./, '') !== 'streamable.com') return ''
   const id = u.pathname.replace(/^\/+|\/+$/g, '').replace(/^e\//, '')
   return STREAMABLE_ID.test(id) ? id : ''
+}
+
+/** The video or clip id in a Twitch link, or ''. Handles /videos/, /vods/ and /clip/. */
+export function twitchId(u: URL): string {
+  const host = u.hostname.toLowerCase().replace(/^www\./, '')
+  if (host !== 'twitch.tv') return ''
+  const path = u.pathname.replace(/^\/+|\/+$/g, '')
+  const parts = path.split('/')
+  // twitch.tv/videos/123456789, twitch.tv/vods/123456789
+  if ((parts[0] === 'videos' || parts[0] === 'vods') && parts.length >= 2) {
+    const id = parts[1] ?? ''
+    return TWITCH_ID.test(id) ? id : ''
+  }
+  // twitch.tv/clip/AbCdEf
+  if (parts[0] === 'clip' && parts.length >= 2) {
+    const id = parts[1] ?? ''
+    return TWITCH_ID.test(id) ? id : ''
+  }
+  return ''
+}
+
+/** The track id in a SoundCloud link, or ''. Keeps the whole path when it looks like a user/track. */
+export function soundcloudId(u: URL): string {
+  const host = u.hostname.toLowerCase().replace(/^www\./, '')
+  if (host !== 'soundcloud.com') return ''
+  const path = u.pathname.replace(/^\/+|\/+$/g, '')
+  const parts = path.split('/').filter(Boolean)
+  // soundcloud.com/user/track-name  (at least two parts, not a set/playlist page alone)
+  if (parts.length >= 2 && parts[0] !== 'sets' && parts[0] !== 'stream') {
+    const id = parts[parts.length - 1] ?? ''
+    return SOUNDCLOUD_ID.test(id) ? id : ''
+  }
+  return ''
+}
+
+/** The item id in a Spotify link, or ''. Handles /track/, /album/, /playlist/. */
+export function spotifyId(u: URL): string {
+  const host = u.hostname.toLowerCase().replace(/^www\./, '')
+  if (host !== 'open.spotify.com' && host !== 'spotify.com') return ''
+  const path = u.pathname.replace(/^\/+|\/+$/g, '')
+  const parts = path.split('/')
+  // open.spotify.com/track/ID, /album/ID, /playlist/ID
+  if ((parts[0] === 'track' || parts[0] === 'album' || parts[0] === 'playlist') && parts.length >= 2) {
+    const id = ((parts[1] ?? '').split('?')[0] ?? '')
+    return SPOTIFY_ID.test(id) ? id : ''
+  }
+  return ''
+}
+
+/** The video id in a Vimeo link, or ''. */
+export function vimeoId(u: URL): string {
+  const host = u.hostname.toLowerCase().replace(/^www\./, '')
+  if (host !== 'vimeo.com') return ''
+  const path = u.pathname.replace(/^\/+|\/+$/g, '')
+  const id = path.split('/')[0] ?? ''
+  return VIMEO_ID.test(id) ? id : ''
 }
 
 /**
@@ -102,6 +172,14 @@ export function classifyLink(href: string): LinkInfo {
   if (yt) return { kind: 'youtube', id: yt }
   const st = streamableId(u)
   if (st) return { kind: 'streamable', id: st }
+  const tc = twitchId(u)
+  if (tc) return { kind: 'twitch', id: tc }
+  const sc = soundcloudId(u)
+  if (sc) return { kind: 'soundcloud', id: sc }
+  const sp = spotifyId(u)
+  if (sp) return { kind: 'spotify', id: sp }
+  const vm = vimeoId(u)
+  if (vm) return { kind: 'vimeo', id: vm }
   const hosted = hostedFile(u)
   if (hosted) return hosted
   if (IMAGE_EXT.test(u.pathname)) return { kind: 'image' }
@@ -111,10 +189,29 @@ export function classifyLink(href: string): LinkInfo {
 }
 
 /** The address of the player to load once the user clicks play. Never loaded before that. */
-export function embedSrc(kind: 'youtube' | 'streamable', id: string): string {
-  return kind === 'youtube'
-    ? `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0`
-    : `https://streamable.com/e/${id}?autoplay=1`
+export function embedSrc(kind: LinkKind, id: string, href?: string): string {
+  switch (kind) {
+    case 'youtube':
+      return `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0`
+    case 'streamable':
+      return `https://streamable.com/e/${id}?autoplay=1`
+    case 'twitch':
+      // A clip uses the clips embed, anything else (video/VOD) uses the player.
+      return id && href && /clip/i.test(href)
+        ? `https://clips.twitch.tv/embed?clip=${id}&autoplay=true`
+        : `https://player.twitch.tv/?video=${id}&autoplay=true`
+    case 'soundcloud':
+      // SoundCloud's widget needs the full address, so the caller passes it.
+      return href
+        ? `https://w.soundcloud.com/player/?url=${encodeURIComponent(href)}&auto_play=true&hide_related=false&show_comments=true&show_user=true&show_reposts=false`
+        : `https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/${id}&auto_play=true`
+    case 'spotify':
+      return `https://open.spotify.com/embed/${id}`
+    case 'vimeo':
+      return `https://player.vimeo.com/video/${id}?autoplay=true`
+    default:
+      return `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0`
+  }
 }
 
 /** Distinct web addresses from a message, in order, at most `max` of them. */

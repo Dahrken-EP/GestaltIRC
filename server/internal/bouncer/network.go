@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"gestalt/server/internal/accounts"
+	"gestalt/server/internal/dcc"
 	"gestalt/server/internal/guests"
 	"gestalt/server/internal/irc"
 	"gestalt/server/internal/netguard"
@@ -130,6 +131,22 @@ type Network struct {
 	// alert, if set, is told about messages that arrive while no client is
 	// attached, so the user can be notified another way. It must not block.
 	alert func(Alert)
+
+	// onUpstreamEvent, if set, is called for every upstream message so server-side
+	// plugins can see it as an event.
+	onUpstreamEvent func(networkName string, m *irc.Message)
+
+	// onDCC, if set, is called when a DCC offer is received so it can be forwarded
+	// to the target client with the bouncer's address substituted.
+	onDCC func(offer *dcc.Offer, fromNick, target string)
+
+	// onNotification, if set, is called when an activity-feed notification should be
+	// created for the user of this network. kind is one of "pm", "status", "security".
+	onNotification func(kind, network, buffer, title, body string)
+
+	// draft/multiline reassembly: batch id -> parts that have arrived so far.
+	multiline      map[string][]*irc.Message
+	multilineBatch int
 }
 
 // NewNetwork builds an upstream connection manager. Call Run to start it.
@@ -147,6 +164,7 @@ func NewNetwork(spec accounts.NetworkSpec, st *store.Store, historyLimit, replay
 		wanted:      map[string]string{},
 		pending:     map[string][]member{},
 		sessions:    map[*Session]struct{}{},
+		multiline:   map[string][]*irc.Message{},
 	}
 	for _, ch := range spec.Join {
 		n.wanted[strings.ToLower(ch)] = ch
@@ -451,6 +469,11 @@ func (n *Network) detachUpstream(err error) {
 	n.broadcastLocked(notice(n.nick, msg))
 }
 
+// maxMultiLineBytes is the largest text part the bouncer sends in one line
+// when splitting a long message with draft/multiline. It leaves room for tags,
+// command, target and CRLF within the 512-byte IRC line limit.
+const maxMultiLineBytes = 400
+
 // Forward sends a client's message to the network. Echoes for PRIVMSG and
 // NOTICE are synthesised when the network does not echo them.
 func (n *Network) Forward(m *irc.Message) error {
@@ -465,6 +488,7 @@ func (n *Network) Forward(m *irc.Message) error {
 		return ErrNotConnected
 	}
 	upstreamHasTags := hasCap(n.caps, "message-tags")
+	upstreamHasMulti := hasCap(n.caps, "draft/multiline")
 	echoes := hasCap(n.caps, "echo-message")
 	self := n.nick
 	selfPfx := n.selfPfx
@@ -475,6 +499,16 @@ func (n *Network) Forward(m *irc.Message) error {
 	if m.Command == "TAGMSG" && !upstreamHasTags {
 		return nil
 	}
+
+	// A long PRIVMSG or NOTICE is split into draft/multiline parts when the
+	// upstream network supports it, so a single logical message can exceed
+	// the 400-byte line limit that most IRC servers enforce.
+	if upstreamHasMulti && (m.Command == "PRIVMSG" || m.Command == "NOTICE") {
+		if text := m.Params[len(m.Params)-1]; len(text) > maxMultiLineBytes {
+			return n.forwardMultiline(m, upstreamHasTags, echoes, self, selfPfx)
+		}
+	}
+
 	out := *m
 	out.Tags = nil
 	if upstreamHasTags {
@@ -495,6 +529,76 @@ func (n *Network) Forward(m *irc.Message) error {
 		n.handleUpstream(echo)
 	}
 	return nil
+}
+
+// forwardMultiline splits m into draft/multiline parts and sends each one to the
+// upstream network. Each part carries the same batch id and a concat/cont/end tag.
+func (n *Network) forwardMultiline(m *irc.Message, upstreamHasTags, echoes bool, self, selfPfx string) error {
+	text := m.Params[len(m.Params)-1]
+	targets := m.Params[:len(m.Params)-1]
+	parts := splitMultiLine(text)
+	n.mu.Lock()
+	n.multilineBatch++
+	batchID := strconv.Itoa(n.multilineBatch)
+	n.mu.Unlock()
+
+	for i, part := range parts {
+		out := &irc.Message{
+			Tags:    nil,
+			Prefix:  m.Prefix,
+			Command: m.Command,
+			Params:  append(append([]string(nil), targets...), part),
+		}
+		if upstreamHasTags {
+			out.Tags = append(out.Tags, irc.Tag{Key: "batch", Value: batchID})
+			switch i {
+			case 0:
+				out.Tags = append(out.Tags, irc.Tag{Key: irc.MultilineConcat, Value: ""})
+			case len(parts) - 1:
+				out.Tags = append(out.Tags, irc.Tag{Key: irc.MultilineEnd, Value: ""})
+			default:
+				out.Tags = append(out.Tags, irc.Tag{Key: irc.MultilineCont, Value: ""})
+			}
+			// Carry the client-only tags (+typing, +draft/reply etc.) on the first part.
+			for _, t := range clientOnlyTags(m.Tags) {
+				out.Tags = append(out.Tags, t)
+			}
+		}
+		if err := n.client.Send(out); err != nil {
+			return err
+		}
+	}
+
+	if !echoes {
+		prefix := selfPfx
+		if prefix == "" {
+			prefix = self
+		}
+		// Echo the full message so the sender sees it at once.
+		echo := &irc.Message{Tags: clientOnlyTags(m.Tags), Prefix: prefix, Command: m.Command, Params: m.Params}
+		n.handleUpstream(echo)
+	}
+	return nil
+}
+
+// splitMultiLine cuts text into parts no longer than maxMultiLineBytes each,
+// never splitting inside a UTF-8 rune.
+func splitMultiLine(text string) []string {
+	var out []string
+	for len(text) > 0 {
+		n := maxMultiLineBytes
+		if n >= len(text) {
+			out = append(out, text)
+			break
+		}
+		// Back up until we are at a rune boundary, so we never split mid-UTF8.
+		for n > 0 && text[n]&0xC0 == 0x80 {
+			n--
+		}
+		out = append(out, text[:n])
+		text = text[n:]
+	}
+	return out
 }
 
 // Attach registers a session with the network. It sends the state a client
@@ -619,6 +723,46 @@ func (n *Network) handleUpstream(m *irc.Message) {
 		return
 	}
 
+	// draft/multiline: buffer parts by batch id. When the final part arrives,
+	// concatenate the parts into one message and process it as usual.
+	if batchID, has := m.Tag("batch"); has && irc.IsMultiline(m) {
+		n.multiline[batchID] = append(n.multiline[batchID], m)
+		if irc.MultilineStage(m) != "end" {
+			// Wait for the rest of the parts.
+			return
+		}
+		// All parts have arrived. Reassemble into one message.
+		parts := n.multiline[batchID]
+		delete(n.multiline, batchID)
+		m = reassembleMultiLine(parts)
+	}
+
+	// Tell server-side plugins about this upstream event.
+	if n.onUpstreamEvent != nil {
+		n.onUpstreamEvent(n.name, m)
+	}
+
+	// Intercept DCC CTCP offers so they can be forwarded through the bouncer.
+	if n.onDCC != nil && (m.Command == "PRIVMSG" || m.Command == "NOTICE") {
+		if len(m.Params) >= 2 {
+			text := m.Params[len(m.Params)-1]
+			if strings.HasPrefix(text, "\x01DCC ") && strings.HasSuffix(text, "\x01") {
+				inner := text[5 : len(text)-1] // strip \x01DCC  prefix and \x01 suffix
+				if offer, err := dcc.ParseOffer(inner); err == nil {
+					n.onDCC(offer, m.Nick(), m.Param(0))
+				}
+			}
+		}
+	}
+
+	// A direct message (PRIVMSG/NOTICE to our own nick) is a private message: notify the user.
+	if n.onNotification != nil && (m.Command == "PRIVMSG" || m.Command == "NOTICE") {
+		to := m.Param(0)
+		if n.isSelf(to) && len(m.Params) >= 2 {
+			n.onNotification("pm", n.name, m.Nick(), m.Nick(), m.Param(1))
+		}
+	}
+
 	n.applyStateLocked(m)
 	if m.Command == "REDACT" {
 		// REDACT target msgid [reason]: the message is gone for everyone, so it must
@@ -642,6 +786,40 @@ func (n *Network) handleUpstream(m *irc.Message) {
 		}
 	}
 	n.broadcastLocked(m)
+}
+
+// reassembleMultiLine concatenates the trailing parameters of the parts in
+// batch order, producing one message whose last parameter is the full text.
+// The first part's tags (other than multiline/batch tags) are kept.
+func reassembleMultiLine(parts []*irc.Message) *irc.Message {
+	if len(parts) == 0 {
+		return nil
+	}
+	first := parts[0]
+	var text []string
+	for _, p := range parts {
+		if len(p.Params) > 0 {
+			text = append(text, p.Params[len(p.Params)-1])
+		}
+	}
+	out := &irc.Message{
+		Tags:    first.Tags,
+		Prefix:  first.Prefix,
+		Command: first.Command,
+		Params:  append(append([]string(nil), first.Params[:len(first.Params)-1]...), strings.Join(text, "")),
+	}
+	// Drop the multiline and batch tags from the reassembled message.
+	var clean []irc.Tag
+	for _, t := range out.Tags {
+		switch t.Key {
+		case "batch", irc.MultilineConcat, irc.MultilineCont, irc.MultilineEnd:
+			// drop
+		default:
+			clean = append(clean, t)
+		}
+	}
+	out.Tags = clean
+	return out
 }
 
 // applyStateLocked tracks channels, members, topics, and our own nick.

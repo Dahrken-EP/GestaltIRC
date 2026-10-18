@@ -15,6 +15,10 @@
   --mention-bar: #e0a800;
   --danger: #c0262d;
   --ok: #1f8a4c;
+  --online: #22c55e;
+  --away: #eab308;
+  --busy: #ef4444;
+  --idle: #9ca3af;
   --warn: #a86a00;
   --nick-s: 62%;
   --nick-l: 36%;
@@ -42,6 +46,10 @@
     --danger: #ff7b80;
     --ok: #55c785;
     --warn: #e0b341;
+    --online: #34d399;
+    --away: #fbbf24;
+    --busy: #f87171;
+    --idle: #94a3b8;
     --nick-l: 68%;
     color-scheme: dark;
   }
@@ -63,8 +71,46 @@
   --danger: #ff7b80;
   --ok: #55c785;
   --warn: #e0b341;
+  --online: #34d399;
+  --away: #fbbf24;
+  --busy: #f87171;
+  --idle: #94a3b8;
   --nick-l: 68%;
   color-scheme: dark;
+}
+
+/* High contrast mode: stronger borders, solid colors, no transparency. */
+:root[data-contrast='high'] {
+  --border: #000;
+  --fg-dim: #000;
+  --bg-hover: #fff;
+  --bg-active: #ffff00;
+  --mention-bg: #ffff00;
+  --mention-bar: #000;
+  --danger: #ff0000;
+  --ok: #008000;
+  --warn: #000;
+  --accent: #000;
+  --accent-fg: #fff;
+  --bg-panel: #fff;
+  --bg-rail: #fff;
+}
+:root[data-contrast='high'] .badge {
+  background: #000;
+  color: #fff;
+}
+:root[data-contrast='high'] .btn {
+  border: 2px solid #000;
+}
+
+/* Focus rings are thicker and more visible in high contrast. */
+:root[data-contrast='high'] button:focus-visible,
+:root[data-contrast='high'] input:focus-visible,
+:root[data-contrast='high'] select:focus-visible,
+:root[data-contrast='high'] textarea:focus-visible,
+:root[data-contrast='high'] a:focus-visible {
+  outline: 3px solid #000;
+  outline-offset: 2px;
 }
 
 /* Density only changes row spacing and font size. */

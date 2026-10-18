@@ -278,7 +278,7 @@ func TestMigrationGivesStoredLinesATime(t *testing.T) {
 	rec("b", "@draft/reply=1;foo=bar :x!u@h PRIVMSG b :tagged", 1_700_000_001_000)
 	rec("c", "@time=2023-11-14T22:13:20.000Z :x!u@h PRIVMSG c :already", 1_700_000_000_000)
 	rec("d", "@x/time=5 :x!u@h PRIVMSG d :other tag", 1_700_000_002_000)
-	if _, err := s.db.Exec(migrations[len(migrations)-1]); err != nil {
+	if _, err := s.db.Exec(migrations[5]); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]string{

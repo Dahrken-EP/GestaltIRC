@@ -84,7 +84,7 @@ func TestSessions(t *testing.T) {
 	s := openTemp(t)
 	u := mkUser(t, s, "matt")
 
-	if err := s.CreateSession("h1", u.ID, time.Hour); err != nil {
+	if err := s.CreateSession("h1", u.ID, time.Hour, "csrf1"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.SessionUser("h1")
@@ -96,13 +96,13 @@ func TestSessions(t *testing.T) {
 	}
 
 	// An expired session is not accepted, and creating a new one clears it out.
-	if err := s.CreateSession("old", u.ID, -time.Minute); err != nil {
+	if err := s.CreateSession("old", u.ID, -time.Minute, "csrfold"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SessionUser("old"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("expired session accepted: %v", err)
 	}
-	if err := s.CreateSession("h2", u.ID, time.Hour); err != nil {
+	if err := s.CreateSession("h2", u.ID, time.Hour, "csrf2"); err != nil {
 		t.Fatal(err)
 	}
 	var n int
@@ -124,7 +124,7 @@ func TestSessions(t *testing.T) {
 func TestDeleteUserRemovesWebData(t *testing.T) {
 	s := openTemp(t)
 	u := mkUser(t, s, "matt")
-	s.CreateSession("h", u.ID, time.Hour)
+	s.CreateSession("h", u.ID, time.Hour, "csrfh")
 	s.SetPrefs(u.ID, `{}`)
 	s.AddPushSub(PushSub{UserID: u.ID, Endpoint: "e", P256dh: "p", Auth: "a"})
 	if err := s.DeleteUser("matt"); err != nil {

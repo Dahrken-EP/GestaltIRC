@@ -47,6 +47,9 @@ class App {
   /** Why the last login failed, or why the session ended. Shown on the login form. */
   loginError = $state('')
   loginBusy = $state(false)
+  /** Screen reader announcements for new messages and status changes. Old ones drop off. */
+  unreadAnnouncements = $state.raw<{ id: number; text: string }[]>([])
+  private announcementId = 0
 
   private conns = new Map<string, Connection>()
   private started = false
@@ -276,6 +279,7 @@ class App {
     let conn: Connection
     const net = new NetworkState(id, login, info.nick, (line) => conn.send(line), {
       onMention: (n, buf, msg) => this.notifyMention(n, buf, msg),
+      onNewMessage: (n, buf, msg) => this.announce(`${msg.nick} said in ${buf.name}: ${msg.text.slice(0, 80)}`),
       iceServers: () => api.ice().then((r) => r.iceServers),
       getMedia: microphone,
       plugins,
@@ -407,6 +411,15 @@ class App {
     return { network, buffer: params.get('buffer') ?? '' }
   }
 
+  /** Announce something to screen readers. Old announcements drop off so the live region stays small. */
+  announce(text: string): void {
+    const id = ++this.announcementId
+    this.unreadAnnouncements = [...this.unreadAnnouncements, { id, text }]
+    setTimeout(() => {
+      this.unreadAnnouncements = this.unreadAnnouncements.filter((a) => a.id !== id)
+    }, 3000)
+  }
+
   /** A click on a push notification in an already-open tab switches buffer without a reload. */
   private listenForNotificationClicks(): void {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
@@ -421,6 +434,7 @@ class App {
     const title = buf.kind === 'query' || buf.kind === 'p2p' ? msg.nick : `${msg.nick} in ${buf.name}`
     const body = msg.kind === 'action' ? `* ${msg.nick} ${msg.text}` : msg.text
     showNotification(title, body, () => this.goto(net.id, buf.key))
+    this.announce(`Mention from ${msg.nick}: ${body.slice(0, 80)}`)
   }
 }
 

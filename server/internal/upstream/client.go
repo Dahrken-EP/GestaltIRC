@@ -33,6 +33,7 @@ var DefaultCaps = []string{
 	"monitor",
 	"whox",
 	"draft/message-redaction",
+	"draft/multiline",
 }
 
 var (

@@ -9,16 +9,27 @@ import (
 // --- web sessions ---
 
 // CreateSession records a login. tokenHash is a hash of the cookie value, so a
-// copy of the database does not hold usable sessions.
-func (s *Store) CreateSession(tokenHash string, userID int64, ttl time.Duration) error {
+// copy of the database does not hold usable sessions. csrfToken is the
+// cross-site request forgery token that state-changing requests must present.
+func (s *Store) CreateSession(tokenHash string, userID int64, ttl time.Duration, csrfToken string) error {
 	now := time.Now()
 	// Expired sessions are removed here, so the table cannot grow without bound.
 	if _, err := s.db.Exec(`DELETE FROM sessions WHERE expires_ms < ?`, now.UnixMilli()); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`INSERT INTO sessions (token_hash, user_id, created_ms, expires_ms) VALUES (?, ?, ?, ?)`,
-		tokenHash, userID, now.UnixMilli(), now.Add(ttl).UnixMilli())
+	_, err := s.db.Exec(`INSERT INTO sessions (token_hash, user_id, created_ms, expires_ms, csrf_token) VALUES (?, ?, ?, ?, ?)`,
+		tokenHash, userID, now.UnixMilli(), now.Add(ttl).UnixMilli(), csrfToken)
 	return err
+}
+
+// SessionCSRF returns the CSRF token for a live session, or ErrNotFound.
+func (s *Store) SessionCSRF(tokenHash string) (string, error) {
+	var token string
+	err := s.db.QueryRow(`SELECT csrf_token FROM sessions WHERE token_hash = ? AND expires_ms > ?`, tokenHash, time.Now().UnixMilli()).Scan(&token)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return token, err
 }
 
 // SessionUser returns the user a live session belongs to.
@@ -196,6 +207,64 @@ func (s *Store) ListPushSubs(userID int64) ([]PushSub, error) {
 // subscriptions on their own, and the push service then reports 404 or 410.
 func (s *Store) DeletePushSub(userID int64, endpoint string) error {
 	_, err := s.db.Exec(`DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?`, userID, endpoint)
+	return err
+}
+
+// --- notifications ---
+
+// Notification is one activity feed entry.
+type Notification struct {
+	ID      int64
+	Kind    string // 'mention', 'pm', 'status', 'security', 'plugin'
+	Network string
+	Buffer  string
+	Title   string
+	Body    string
+	ReadMS  int64
+	Created int64
+}
+
+// AddNotification stores one activity feed entry for a user.
+func (s *Store) AddNotification(userID int64, kind, network, buffer, title, body string, created int64) error {
+	_, err := s.db.Exec(`
+INSERT INTO notifications (user_id, kind, network, buffer, title, body, read_ms, created_ms)
+VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+		userID, kind, network, buffer, title, body, created)
+	return err
+}
+
+// ListNotifications returns a user's notifications, newest first. unreadOnly limits to unread ones.
+func (s *Store) ListNotifications(userID int64, unreadOnly bool, limit int) ([]Notification, error) {
+	q := `SELECT id, kind, network, buffer, title, body, read_ms, created_ms FROM notifications WHERE user_id = ?`
+	args := []any{userID}
+	if unreadOnly {
+		q += ` AND read_ms = 0`
+	}
+	q += ` ORDER BY created_ms DESC LIMIT ?`
+	args = append(args, clampLimit(limit))
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Notification
+	for rows.Next() {
+		var n Notification
+		if err := rows.Scan(&n.ID, &n.Kind, &n.Network, &n.Buffer, &n.Title, &n.Body, &n.ReadMS, &n.Created); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// MarkNotificationsRead marks all of a user's notifications as read.
+func (s *Store) MarkNotificationsRead(userID int64) error {
+	now := time.Now().UnixMilli()
+	_, err := s.db.Exec(`UPDATE notifications SET read_ms = ? WHERE user_id = ? AND read_ms = 0`, now, userID)
 	return err
 }
 

@@ -5,6 +5,7 @@
 
 export type Theme = 'system' | 'light' | 'dark'
 export type Density = 'compact' | 'comfortable'
+export type Contrast = 'default' | 'high'
 
 interface Stored {
   theme: Theme
@@ -26,8 +27,14 @@ interface Stored {
   inlineMedia: boolean
   embeds: boolean
   previews: boolean
+  /** Show a badge on messages that have replies, and a button to jump between them. */
+  threadIndicators: boolean
+  /** Show a coloured presence dot by each nick in the member list. */
+  presenceIndicators: boolean
   /** Load imgur pictures from imgur itself, which sees this browser's address, when the bouncer's own address is refused. */
   imgurDirect: boolean
+  /** High contrast mode: stronger borders and focus rings. */
+  contrast: Contrast
   notify: boolean
 }
 
@@ -47,13 +54,16 @@ const DEFAULTS: Stored = {
   inlineMedia: true,
   embeds: true,
   previews: true,
+  threadIndicators: true,
+  presenceIndicators: true,
+  contrast: 'default',
   imgurDirect: false,
   // The desktop app has permission to notify already, so it starts with mentions notifying; a browser has to ask.
   notify: typeof window !== 'undefined' && !!(window as unknown as { gestaltDesktop?: unknown }).gestaltDesktop,
 }
 
 /** The keys saved to the bouncer. */
-const SYNCED = ['theme', 'density', 'keywords', 'networkKeywords', 'networkMuted', 'nickColors', 'showMembers', 'showBufferList', 'timestamps', 'sendTyping', 'pushToTalk', 'announceVoice', 'inlineMedia', 'embeds', 'previews', 'imgurDirect'] as const
+const SYNCED = ['theme', 'density', 'keywords', 'networkKeywords', 'networkMuted', 'nickColors', 'showMembers', 'showBufferList', 'timestamps', 'sendTyping', 'pushToTalk', 'announceVoice', 'inlineMedia', 'embeds', 'previews', 'threadIndicators', 'presenceIndicators', 'contrast', 'imgurDirect'] as const
 
 const KEY = 'irc:settings'
 const PUSH_DELAY_MS = 800
@@ -97,6 +107,12 @@ class Settings {
   embeds = $state(true)
   /** Show a title and picture for other links, which the bouncer fetches. */
   previews = $state(true)
+  /** Show reply-thread badges next to messages that have replies. */
+  threadIndicators = $state(true)
+  /** Show a coloured presence dot by each nick in the member list. */
+  presenceIndicators = $state(true)
+  /** High contrast mode: stronger borders and focus rings. */
+  contrast = $state<Contrast>('default')
   imgurDirect = $state(false)
   notify = $state(false)
 
@@ -123,6 +139,9 @@ class Settings {
     if (typeof s.inlineMedia === 'boolean') this.inlineMedia = s.inlineMedia
     if (typeof s.embeds === 'boolean') this.embeds = s.embeds
     if (typeof s.previews === 'boolean') this.previews = s.previews
+    if (typeof s.threadIndicators === 'boolean') this.threadIndicators = s.threadIndicators
+    if (typeof s.presenceIndicators === 'boolean') this.presenceIndicators = s.presenceIndicators
+    if (typeof s.contrast === 'string' && (s.contrast === 'default' || s.contrast === 'high')) this.contrast = s.contrast
     if (typeof s.imgurDirect === 'boolean') this.imgurDirect = s.imgurDirect
     if (typeof s.notify === 'boolean') this.notify = s.notify
   }

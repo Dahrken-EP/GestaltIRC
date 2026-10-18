@@ -52,7 +52,7 @@ func newEnv(t *testing.T, conf config.Config, status NetworkStatus) *env {
 	return &env{api: a, acc: acc, srv: srv}
 }
 
-func (e *env) do(t *testing.T, method, path, body string, hdr map[string]string, cookie *http.Cookie) (*http.Response, map[string]any) {
+func (e *env) do(t *testing.T, method, path, body string, hdr map[string]string, cookie *http.Cookie, csrf ...string) (*http.Response, map[string]any) {
 	t.Helper()
 	req, _ := http.NewRequest(method, e.srv.URL+path, strings.NewReader(body))
 	if body != "" {
@@ -64,6 +64,9 @@ func (e *env) do(t *testing.T, method, path, body string, hdr map[string]string,
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}
+	if len(csrf) > 0 && csrf[0] != "" {
+		req.Header.Set("X-CSRF-Token", csrf[0])
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -74,16 +77,24 @@ func (e *env) do(t *testing.T, method, path, body string, hdr map[string]string,
 	return resp, out
 }
 
-func (e *env) login(t *testing.T) *http.Cookie {
+// login returns the session cookie and the CSRF token.
+func (e *env) login(t *testing.T) (*http.Cookie, string) {
 	t.Helper()
-	resp, _ := e.do(t, "POST", "/api/login", `{"user":"matt","password":"a-long-password"}`, nil, nil)
-	for _, c := range resp.Cookies() {
-		if c.Name == CookieName {
-			return c
+	resp, body := e.do(t, "POST", "/api/login", `{"user":"matt","password":"a-long-password"}`, nil, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("login = %d %v", resp.StatusCode, body)
+	}
+	var c *http.Cookie
+	for _, x := range resp.Cookies() {
+		if x.Name == CookieName {
+			c = x
 		}
 	}
-	t.Fatalf("login set no cookie (status %d)", resp.StatusCode)
-	return nil
+	if c == nil {
+		t.Fatalf("login set no cookie (status %d)", resp.StatusCode)
+	}
+	csrf, _ := body["csrf_token"].(string)
+	return c, csrf
 }
 
 func TestLoginSetsStrictHttpOnlyCookie(t *testing.T) {
@@ -215,7 +226,7 @@ func TestSessionEndpoint(t *testing.T) {
 		t.Errorf("anonymous /api/session = %d", resp.StatusCode)
 	}
 
-	c := e.login(t)
+	c, _ := e.login(t)
 	req, _ := http.NewRequest("GET", e.srv.URL+"/api/session", nil)
 	req.AddCookie(c)
 	resp, err := http.DefaultClient.Do(req)
@@ -258,8 +269,8 @@ func TestSessionEndpoint(t *testing.T) {
 
 func TestLogoutEndsSession(t *testing.T) {
 	e := newEnv(t, config.Config{}, fakeStatus{})
-	c := e.login(t)
-	resp, _ := e.do(t, "POST", "/api/logout", `{}`, nil, c)
+	c, csrf := e.login(t)
+	resp, _ := e.do(t, "POST", "/api/logout", `{}`, nil, c, csrf)
 	if resp.StatusCode != 200 {
 		t.Fatalf("logout = %d", resp.StatusCode)
 	}
@@ -282,12 +293,12 @@ func TestPrefsRoundTripAndLimits(t *testing.T) {
 	if resp, _ := e.do(t, "GET", "/api/prefs", "", nil, nil); resp.StatusCode != 401 {
 		t.Errorf("anonymous prefs = %d", resp.StatusCode)
 	}
-	c := e.login(t)
+	c, csrf := e.login(t)
 
 	if _, body := e.do(t, "GET", "/api/prefs", "", nil, c); len(body) != 0 {
 		t.Errorf("new account prefs = %v, want {}", body)
 	}
-	if resp, _ := e.do(t, "PUT", "/api/prefs", `{"theme":"dark","keywords":["deploy"]}`, nil, c); resp.StatusCode != 200 {
+	if resp, _ := e.do(t, "PUT", "/api/prefs", `{"theme":"dark","keywords":["deploy"]}`, nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatalf("PUT = %d", resp.StatusCode)
 	}
 	_, body := e.do(t, "GET", "/api/prefs", "", nil, c)
@@ -296,17 +307,18 @@ func TestPrefsRoundTripAndLimits(t *testing.T) {
 	}
 
 	for _, bad := range []string{`[1,2]`, `"str"`, `null`, `{bad`} {
-		if resp, _ := e.do(t, "PUT", "/api/prefs", bad, nil, c); resp.StatusCode != 400 {
+		if resp, _ := e.do(t, "PUT", "/api/prefs", bad, nil, c, csrf); resp.StatusCode != 400 {
 			t.Errorf("PUT %q = %d, want 400", bad, resp.StatusCode)
 		}
 	}
 	big := `{"x":"` + strings.Repeat("a", accounts.MaxPrefsBytes) + `"}`
-	if resp, _ := e.do(t, "PUT", "/api/prefs", big, nil, c); resp.StatusCode != 413 {
+	if resp, _ := e.do(t, "PUT", "/api/prefs", big, nil, c, csrf); resp.StatusCode != 413 {
 		t.Errorf("oversized PUT = %d, want 413", resp.StatusCode)
 	}
 	req, _ := http.NewRequest("PUT", e.srv.URL+"/api/prefs", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "text/plain")
 	req.AddCookie(c)
+	req.Header.Set("X-CSRF-Token", csrf)
 	resp, _ := http.DefaultClient.Do(req)
 	if resp.StatusCode != 415 {
 		t.Errorf("text/plain PUT = %d, want 415", resp.StatusCode)
@@ -315,30 +327,30 @@ func TestPrefsRoundTripAndLimits(t *testing.T) {
 
 func TestCrossOriginWritesAreRefused(t *testing.T) {
 	e := newEnv(t, config.Config{AllowedOrigins: []string{"app.example.org"}}, fakeStatus{})
-	c := e.login(t)
+	c, csrf := e.login(t)
 	evil := map[string]string{"Origin": "https://evil.example"}
-	if resp, _ := e.do(t, "PUT", "/api/prefs", `{"a":1}`, evil, c); resp.StatusCode != 403 {
+	if resp, _ := e.do(t, "PUT", "/api/prefs", `{"a":1}`, evil, c, csrf); resp.StatusCode != 403 {
 		t.Errorf("cross-origin PUT = %d, want 403", resp.StatusCode)
 	}
 	if resp, _ := e.do(t, "POST", "/api/login", `{"user":"matt","password":"a-long-password"}`, evil, nil); resp.StatusCode != 403 {
 		t.Errorf("cross-origin login = %d, want 403", resp.StatusCode)
 	}
-	if resp, _ := e.do(t, "POST", "/api/logout", `{}`, evil, c); resp.StatusCode != 403 {
+	if resp, _ := e.do(t, "POST", "/api/logout", `{}`, evil, c, csrf); resp.StatusCode != 403 {
 		t.Errorf("cross-origin logout = %d, want 403", resp.StatusCode)
 	}
-	same := map[string]string{"Origin": e.srv.URL}
-	if resp, _ := e.do(t, "PUT", "/api/prefs", `{"a":1}`, same, c); resp.StatusCode != 200 {
+	same := map[string]string{"Origin": e.srv.URL, "X-CSRF-Token": csrf}
+	if resp, _ := e.do(t, "PUT", "/api/prefs", `{"a":1}`, same, c, csrf); resp.StatusCode != 200 {
 		t.Errorf("same-origin PUT = %d, want 200", resp.StatusCode)
 	}
-	allowed := map[string]string{"Origin": "https://app.example.org"}
-	if resp, _ := e.do(t, "PUT", "/api/prefs", `{"a":1}`, allowed, c); resp.StatusCode != 200 {
+	allowed := map[string]string{"Origin": "https://app.example.org", "X-CSRF-Token": csrf}
+	if resp, _ := e.do(t, "PUT", "/api/prefs", `{"a":1}`, allowed, c, csrf); resp.StatusCode != 200 {
 		t.Errorf("allowed-origin PUT = %d, want 200", resp.StatusCode)
 	}
 }
 
 func TestWithIdentity(t *testing.T) {
 	e := newEnv(t, config.Config{}, fakeStatus{})
-	c := e.login(t)
+	c, _ := e.login(t)
 	var got Identity
 	h := e.api.WithIdentity(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got = IdentityFrom(r.Context()) }))
 
@@ -361,10 +373,11 @@ func TestWithIdentity(t *testing.T) {
 
 func TestStoredDocumentsRoundTripAndAreLimited(t *testing.T) {
 	e := newEnv(t, config.Config{}, fakeStatus{})
-	c := e.login(t)
+	c, csrf := e.login(t)
 
 	req, _ := http.NewRequest("GET", e.srv.URL+"/api/docs/plugins", nil)
 	req.AddCookie(c)
+	req.Header.Set("X-CSRF-Token", csrf)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -375,7 +388,7 @@ func TestStoredDocumentsRoundTripAndAreLimited(t *testing.T) {
 		t.Errorf("nothing saved yet = %d %q, want 200 null", resp.StatusCode, raw)
 	}
 	doc := `{"plugins":[{"manifest":{"name":"greeter"}}],"data":{"greeter":{"n":"1"}}}`
-	if resp, out := e.do(t, "PUT", "/api/docs/plugins", doc, nil, c); resp.StatusCode != 200 {
+	if resp, out := e.do(t, "PUT", "/api/docs/plugins", doc, nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatalf("put = %d %v", resp.StatusCode, out)
 	}
 	resp, out := e.do(t, "GET", "/api/docs/plugins", "", nil, c)
@@ -384,23 +397,23 @@ func TestStoredDocumentsRoundTripAndAreLimited(t *testing.T) {
 	}
 
 	// Only the documents the client knows about, only objects, and not without a login.
-	if resp, _ := e.do(t, "PUT", "/api/docs/anything-else", `{}`, nil, c); resp.StatusCode != 404 {
+	if resp, _ := e.do(t, "PUT", "/api/docs/anything-else", `{}`, nil, c, csrf); resp.StatusCode != 404 {
 		t.Errorf("unknown document = %d, want 404", resp.StatusCode)
 	}
 	if resp, _ := e.do(t, "GET", "/api/docs/anything-else", "", nil, c); resp.StatusCode != 404 {
 		t.Errorf("unknown document read = %d, want 404", resp.StatusCode)
 	}
-	if resp, _ := e.do(t, "PUT", "/api/docs/plugins", `[1,2]`, nil, c); resp.StatusCode != 400 {
+	if resp, _ := e.do(t, "PUT", "/api/docs/plugins", `[1,2]`, nil, c, csrf); resp.StatusCode != 400 {
 		t.Errorf("an array = %d, want 400", resp.StatusCode)
 	}
 	big := `{"x":"` + strings.Repeat("a", accounts.MaxDocBytes) + `"}`
-	if resp, _ := e.do(t, "PUT", "/api/docs/plugins", big, nil, c); resp.StatusCode != 413 {
+	if resp, _ := e.do(t, "PUT", "/api/docs/plugins", big, nil, c, csrf); resp.StatusCode != 413 {
 		t.Errorf("too large = %d, want 413", resp.StatusCode)
 	}
 	if resp, _ := e.do(t, "GET", "/api/docs/plugins", "", nil, nil); resp.StatusCode != 401 {
 		t.Errorf("no session = %d, want 401", resp.StatusCode)
 	}
-	if resp, _ := e.do(t, "PUT", "/api/docs/plugins", doc, map[string]string{"Origin": "https://evil.example"}, c); resp.StatusCode != 403 {
+	if resp, _ := e.do(t, "PUT", "/api/docs/plugins", doc, map[string]string{"Origin": "https://evil.example", "X-CSRF-Token": csrf}, c, csrf); resp.StatusCode != 403 {
 		t.Errorf("cross-origin = %d, want 403", resp.StatusCode)
 	}
 }
@@ -410,8 +423,8 @@ func TestStoredDocumentsBelongToTheAccount(t *testing.T) {
 	if err := e.acc.CreateUser("eve", "another-long-password"); err != nil {
 		t.Fatal(err)
 	}
-	c := e.login(t)
-	if resp, _ := e.do(t, "PUT", "/api/docs/plugins", `{"plugins":[]}`, nil, c); resp.StatusCode != 200 {
+	c, csrf := e.login(t)
+	if resp, _ := e.do(t, "PUT", "/api/docs/plugins", `{"plugins":[]}`, nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatal("setup")
 	}
 	resp, _ := e.do(t, "POST", "/api/login", `{"user":"eve","password":"another-long-password"}`, nil, nil)

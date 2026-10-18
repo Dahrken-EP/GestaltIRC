@@ -1,9 +1,27 @@
 <script lang="ts">
   import { nickColor } from '../lib/nickcolor'
-  import type { Buffer, NetworkState } from '../lib/network.svelte'
+  import type { Buffer, NetworkState, Presence } from '../lib/network.svelte'
   import { settings } from '../lib/settings.svelte'
 
   let { net, buf, onnick }: { net: NetworkState; buf: Buffer; onnick: (nick: string) => void } = $props()
+
+  const presenceColor = (p: Presence) => {
+    switch (p) {
+      case 'away': return 'var(--away, #eab308)'
+      case 'busy': return 'var(--busy, #ef4444)'
+      case 'idle': return 'var(--idle, #9ca3af)'
+      default: return 'var(--online, #22c55e)'
+    }
+  }
+
+  const presenceLabel = (p: Presence) => {
+    switch (p) {
+      case 'away': return 'Away'
+      case 'busy': return 'Busy'
+      case 'idle': return 'Idle'
+      default: return 'Online'
+    }
+  }
 
   // The menu opened with a right-click (or the menu key, or a long press) on someone.
   let menu = $state<{ nick: string; x: number; y: number } | null>(null)
@@ -84,7 +102,23 @@
           aria-haspopup="menu"
           title={m.away ? `${m.nick} (away)` : m.nick}
         >
-          <span class="prefix">{m.prefix[0] ?? ''}</span><span class="n" style:color={nickColor(m.nick, settings.nickColors)}>{m.nick}</span>
+          <span class="prefix">{m.prefix[0] ?? ''}</span>
+          {#if settings.presenceIndicators && m.presence}
+            <span
+              class="presence"
+              style:background={presenceColor(m.presence)}
+              title={m.presenceMessage ? `${m.nick} is ${presenceLabel(m.presence)}: ${m.presenceMessage}` : presenceLabel(m.presence)}
+              aria-label={m.presenceMessage ? `${presenceLabel(m.presence)}: ${m.presenceMessage}` : presenceLabel(m.presence)}
+            ></span>
+          {:else if settings.presenceIndicators && m.away}
+            <span
+              class="presence away"
+              style:background="var(--away, #eab308)"
+              title={`${m.nick} is away`}
+              aria-label="Away"
+            ></span>
+          {/if}
+          <span class="n" style:color={nickColor(m.nick, settings.nickColors)}>{m.nick}</span>
         </button>
       </li>
     {/each}
@@ -213,6 +247,18 @@
     flex: none;
     color: var(--fg-dim);
     font-weight: 700;
+  }
+  .presence {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 4px;
+    flex: none;
+    box-shadow: 0 0 0 1px var(--bg-panel);
+  }
+  .presence.away {
+    opacity: 0.9;
   }
   .n {
     overflow: hidden;

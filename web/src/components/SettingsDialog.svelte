@@ -3,6 +3,7 @@
   import { app } from '../lib/app.svelte'
   import { install } from '../lib/install.svelte'
   import PluginsPanel from './PluginsPanel.svelte'
+  import { checkUpdate, installUpdate, type UpdateStatus } from '../lib/update'
   import { notificationsSupported, requestNotifyPermission } from '../lib/notify'
   import { disablePush, enablePush, pushSubscribed, pushSupported } from '../lib/push'
   import { settings, type Density, type Theme } from '../lib/settings.svelte'
@@ -14,6 +15,20 @@
   let pushOn = $state(false)
   let pushMsg = $state('')
   let pushBusy = $state(false)
+  let updateStatus = $state<UpdateStatus>('up-to-date')
+  let updateVersion = $state('')
+  let updateChecking = $state(false)
+
+  async function checkForUpdate() {
+    updateChecking = true
+    try {
+      const info = await checkUpdate()
+      updateStatus = info.status
+      updateVersion = info.version ?? ''
+    } finally {
+      updateChecking = false
+    }
+  }
 
   $effect(() => {
     void pushSubscribed().then((on) => (pushOn = on))
@@ -83,7 +98,7 @@
 
   const overrides = $derived(Object.entries(settings.nickColors))
 
-  type Tab = 'general' | 'appearance' | 'notifications' | 'highlights' | 'media' | 'plugins'
+  type Tab = 'general' | 'appearance' | 'notifications' | 'highlights' | 'media' | 'plugins' | 'about'
   const TABS: { id: Tab; label: string }[] = [
     { id: 'general', label: 'General' },
     { id: 'appearance', label: 'Appearance' },
@@ -91,6 +106,7 @@
     { id: 'highlights', label: 'Highlights' },
     { id: 'media', label: 'Media' },
     { id: 'plugins', label: 'Plugins' },
+    { id: 'about', label: 'About' },
   ]
   let tab = $state<Tab>('general')
 
@@ -219,6 +235,14 @@
           </label>
         </div>
 
+        <h3>Display</h3>
+        <label class="check">
+          <input type="checkbox" checked={settings.contrast === 'high'} onchange={(e) => {
+            settings.contrast = (e.currentTarget as HTMLInputElement).checked ? 'high' : 'default'
+            settings.save()
+          }} />
+          High contrast mode
+        </label>
         <h3>Nick colours</h3>
         <p class="note">Colours are automatic for each nick. Choose a colour to use instead for one.</p>
         <div class="row">
@@ -289,7 +313,15 @@
         </label>
         <label class="check">
           <input type="checkbox" bind:checked={settings.embeds} onchange={() => settings.save()} />
-          Offer YouTube and Streamable players
+          Offer players for YouTube, Streamable, Twitch, SoundCloud, Spotify and Vimeo
+        </label>
+        <label class="check">
+          <input type="checkbox" bind:checked={settings.threadIndicators} onchange={() => settings.save()} />
+          Show reply-thread badges on messages
+        </label>
+        <label class="check">
+          <input type="checkbox" bind:checked={settings.presenceIndicators} onchange={() => settings.save()} />
+          Show presence dots by each nick in the member list
         </label>
         <label class="check">
           <input type="checkbox" bind:checked={settings.imgurDirect} onchange={() => settings.save()} />
@@ -305,6 +337,38 @@
         </p>
       {:else if tab === 'plugins'}
         <PluginsPanel />
+      {:else if tab === 'about'}
+        <h3>About Gestalt</h3>
+        <p class="note">Gestalt IRC <span class="dim">0.1.7</span></p>
+        <p class="note">
+          A bouncer-based IRC client with a web frontend. Keeps you connected to IRC networks so you
+          never miss a message, from any browser or the desktop app.
+        </p>
+        <h3>Keyboard shortcuts</h3>
+        <ul class="shortcuts">
+          <li><kbd>Ctrl</kbd> + <kbd>K</kbd> — Quick switcher</li>
+          <li><kbd>Ctrl</kbd> + <kbd>F</kbd> — Search this conversation</li>
+          <li><kbd>Alt</kbd> + <kbd>A</kbd> — Next unread</li>
+          <li><kbd>Alt</kbd> + <kbd>↑</kbd>/<kbd>↓</kbd> — Scroll history</li>
+          <li><kbd>Esc</kbd> — Close reply / cancel</li>
+          <li><kbd>Ctrl</kbd> + <kbd>E</kbd> — Emoji picker</li>
+        </ul>
+        <h3>Updates</h3>
+        <div class="row">
+          <button class="btn" disabled={updateChecking} onclick={checkForUpdate}>
+            {updateChecking ? 'Checking…' : 'Check for updates'}
+          </button>
+        </div>
+        {#if updateStatus === 'update-available'}
+          <div class="row">
+            <span class="grow">A new version ({updateVersion}) is available.</span>
+            <button class="btn primary" onclick={() => void installUpdate()}>Install update</button>
+          </div>
+        {:else if updateStatus === 'error'}
+          <p class="note error">Update check failed: {updateVersion}</p>
+        {:else if updateStatus === 'up-to-date'}
+          <p class="note">You are running the latest version.</p>
+        {/if}
       {/if}
     </div>
   </div>
@@ -437,6 +501,30 @@
     margin: 0;
     color: var(--fg-dim);
     font-size: 0.9em;
+  }
+  .shortcuts {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 4px;
+  }
+  .shortcuts li {
+    display: flex;
+    gap: 8px;
+    font-size: 0.9em;
+  }
+  kbd {
+    display: inline-block;
+    min-width: 1.6em;
+    text-align: center;
+    padding: 1px 4px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg-panel);
+    color: var(--fg);
+    font-family: inherit;
+    font-size: 0.85em;
   }
   .row {
     display: flex;

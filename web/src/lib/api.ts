@@ -14,6 +14,8 @@ export interface SessionInfo {
   networks: NetworkInfo[]
   /** Saved preferences, or null if none were ever saved for this account. */
   prefs: Record<string, unknown> | null
+  /** CSRF token for state-changing requests. */
+  csrf_token?: string
 }
 
 /** A network as the editor sees it. Secrets are never sent to the browser, only whether one is set. */
@@ -80,12 +82,30 @@ export class ApiError extends Error {
   }
 }
 
+// The CSRF token from the session response. It is sent on every state-changing
+// request so the bouncer can reject cross-site request forgery.
+let csrfToken = ''
+
+/** The bouncer handed this out at login. Call after a successful session load. */
+export function setCsrfToken(token: string): void {
+  csrfToken = token
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const payload = body === undefined ? undefined : JSON.stringify(body)
+  let headers: Record<string, string> | undefined
+  if (payload !== undefined) {
+    headers = { 'Content-Type': 'application/json' }
+  }
+  // State-changing requests need the CSRF token.
+  if (method !== 'GET' && method !== 'HEAD' && csrfToken !== '') {
+    if (headers === undefined) headers = {}
+    headers['X-CSRF-Token'] = csrfToken
+  }
   const res = await fetch(path, {
     method,
     credentials: 'same-origin',
-    headers: payload === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers: headers,
     body: payload,
     // A small change made just before the page closes still gets to the bouncer. (Browsers refuse the flag
     // for bodies over 64 KB, so larger ones are sent the ordinary way.)
@@ -126,13 +146,19 @@ export const api = {
   /** The current session, or null when not logged in. */
   async session(): Promise<SessionInfo | null> {
     try {
-      return await request<SessionInfo>('GET', '/api/session')
+      const data = await request<SessionInfo & { csrf_token?: string }>('GET', '/api/session')
+      if (data.csrf_token) setCsrfToken(data.csrf_token)
+      return data
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return null
       throw e
     }
   },
-  login: (user: string, password: string) => request<{ user: string }>('POST', '/api/login', { user, password }),
+  login: async (user: string, password: string) => {
+    const data = await request<{ user: string; csrf_token?: string }>('POST', '/api/login', { user, password })
+    if (data.csrf_token) setCsrfToken(data.csrf_token)
+    return data
+  },
   logout: () => request<{ ok: boolean }>('POST', '/api/logout', {}),
   putPrefs: (prefs: Record<string, unknown>) => request<{ ok: boolean }>('PUT', '/api/prefs', prefs),
   listNetworks: () => request<NetworkList>('GET', '/api/networks'),
@@ -151,6 +177,9 @@ export const api = {
   listGuestInvites: () => request<{ invites: GuestInvite[] }>('GET', '/api/guests/invites'),
   createGuestInvite: (req: { network: string; kind: 'room' | 'direct'; target: string }) => request<GuestInvite>('POST', '/api/guests/invites', req),
   revokeGuestInvite: (id: string) => request<null>('DELETE', '/api/guests/invites/' + encodeURIComponent(id)),
+  notifications: () => request<{ id: number; kind: string; network: string; buffer: string; title: string; body: string; read: boolean; created: number }[]>('GET', '/api/notifications'),
+  notificationsUnread: () => request<{ id: number; kind: string; network: string; buffer: string; title: string; body: string; read: boolean; created: number }[]>('GET', '/api/notifications?unread=1'),
+  markNotificationsRead: () => request<{ ok: boolean }>('PUT', '/api/notifications/read', {}),
   pushKey: () => request<{ key: string }>('GET', '/api/push/key'),
   pushSubscribe: (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
     request<{ ok: boolean }>('POST', '/api/push/subscribe', sub),

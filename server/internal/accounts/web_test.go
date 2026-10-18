@@ -39,7 +39,7 @@ func TestSessionLifecycle(t *testing.T) {
 	if err := s.CreateUser("matt", "a-long-password"); err != nil {
 		t.Fatal(err)
 	}
-	token, err := s.NewSession("matt")
+	token, _, err := s.NewSession("matt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestSessionLifecycle(t *testing.T) {
 }
 
 func TestNewSessionUnknownUser(t *testing.T) {
-	if _, err := newService(t).NewSession("ghost"); err == nil {
+	if _, _, err := newService(t).NewSession("ghost"); err == nil {
 		t.Error("session created for a missing user")
 	}
 }
@@ -88,7 +88,7 @@ func TestNewSessionUnknownUser(t *testing.T) {
 func TestPasswordChangeEndsSessions(t *testing.T) {
 	s := newService(t)
 	s.CreateUser("matt", "a-long-password")
-	token, _ := s.NewSession("matt")
+	token, _, _ := s.NewSession("matt")
 	if err := s.SetPassword("matt", "another-long-password"); err != nil {
 		t.Fatal(err)
 	}

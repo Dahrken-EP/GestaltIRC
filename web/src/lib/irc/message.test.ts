@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { escapeTag, format, nickOf, parse, timeOf, unescapeTag } from './message'
+import {
+  escapeTag,
+  format,
+  isMultiline,
+  multilineStage,
+  nickOf,
+  parse,
+  timeOf,
+  unescapeTag,
+} from './message'
 
 describe('parse', () => {
   it('parses tags, prefix, command and a trailing param', () => {
@@ -69,5 +78,22 @@ describe('helpers', () => {
     expect(timeOf(parse('@time=2026-01-02T03:04:05.000Z PING')!, 5)).toBe(Date.parse('2026-01-02T03:04:05.000Z'))
     expect(timeOf(parse('PING')!, 5)).toBe(5)
     expect(timeOf(parse('@time=junk PING')!, 7)).toBe(7)
+  })
+})
+
+describe('multiline helpers', () => {
+  it('isMultiline detects concat/cont/end tags', () => {
+    expect(isMultiline(parse('@+draft/multiline-concat PING')!)).toBe(true)
+    expect(isMultiline(parse('@+draft/multiline-cont PING')!)).toBe(true)
+    expect(isMultiline(parse('@+draft/multiline-end PING')!)).toBe(true)
+    expect(isMultiline(parse('@msgid=abc PING')!)).toBe(false)
+    expect(isMultiline(parse('PING')!)).toBe(false)
+  })
+
+  it('multilineStage reports the part', () => {
+    expect(multilineStage(parse('@+draft/multiline-concat PING')!)).toBe('concat')
+    expect(multilineStage(parse('@+draft/multiline-cont PING')!)).toBe('cont')
+    expect(multilineStage(parse('@+draft/multiline-end PING')!)).toBe('end')
+    expect(multilineStage(parse('PING')!)).toBe('')
   })
 })

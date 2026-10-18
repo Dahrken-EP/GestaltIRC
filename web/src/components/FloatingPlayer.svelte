@@ -1,9 +1,10 @@
 <script lang="ts">
   import { embedSrc } from '../lib/media'
-  import { player } from '../lib/player.svelte'
+  import { player, type MediaKind, type Playing } from '../lib/player.svelte'
   import { settings } from '../lib/settings.svelte'
 
-  const now = $derived(player.current)
+  const now = $derived(player.current as Playing | null)
+  const src = $derived(now ? embedSrc(now.kind, now.id, now.soundcloudUrl) : '')
 </script>
 
 <!-- Outside the buffer, so changing channel, server or scroll position does not take the video down. -->
@@ -14,15 +15,17 @@
       <button class="x" onclick={() => player.stop()} aria-label="Close the player" title="Close the player">×</button>
     </header>
     <!-- YouTube refuses to play (error 153) for a page that sends no Referer, so the player gets this site's address and no more. -->
-    {#key now.href}
-      <iframe
-        src={embedSrc(now.kind, now.id)}
-        title={now.title}
-        allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-        allowfullscreen
-        referrerpolicy="strict-origin-when-cross-origin"
-        sandbox="allow-scripts allow-same-origin allow-presentation"
-      ></iframe>
+    {#key now?.href}
+      {#if now}
+        <iframe
+          src={src}
+          title={now.title}
+          allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+          allowfullscreen
+          referrerpolicy="strict-origin-when-cross-origin"
+          sandbox="allow-scripts allow-same-origin allow-presentation"
+        ></iframe>
+      {/if}
     {/key}
   </aside>
 {/if}

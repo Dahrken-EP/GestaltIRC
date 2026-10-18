@@ -1,13 +1,17 @@
 /**
- * The video that is playing. It lives here, not in the message that linked it, because a message is drawn only while
+ * The media that is playing. It lives here, not in the message that linked it, because a message is drawn only while
  * its buffer is on screen: playing inside it would stop the video on every change of channel. The player itself is in
  * FloatingPlayer, which is never taken down.
  */
+export type MediaKind = 'youtube' | 'streamable' | 'twitch' | 'soundcloud' | 'spotify' | 'vimeo'
+
 export interface Playing {
   href: string
-  kind: 'youtube' | 'streamable'
+  kind: MediaKind
   id: string
   title: string
+  /** SoundCloud's widget needs the full address, not just the id. */
+  soundcloudUrl?: string
 }
 
 class Player {

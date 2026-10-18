@@ -204,6 +204,25 @@ UPDATE messages SET line = CASE
 END
 WHERE NOT (substr(line, 1, 1) = '@' AND instr(line, ' ') > 0 AND ';' || substr(line, 2, instr(line, ' ') - 2) || ';' LIKE '%;time=%');
 `,
+	// 7: CSRF tokens on sessions, so state-changing requests can be checked.
+	`
+ALTER TABLE sessions ADD COLUMN csrf_token TEXT NOT NULL DEFAULT '';
+`,
+	// 8: activity feed notifications, stored per user so they survive across clients.
+	`
+CREATE TABLE notifications (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id     INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+	kind        TEXT    NOT NULL,      -- 'mention', 'pm', 'status', 'security', 'plugin'
+	network     TEXT    NOT NULL,
+	buffer      TEXT    NOT NULL DEFAULT '',
+	title       TEXT    NOT NULL,
+	body        TEXT    NOT NULL,
+	read_ms     INTEGER NOT NULL DEFAULT 0,
+	created_ms  INTEGER NOT NULL
+);
+CREATE INDEX notifications_user ON notifications (user_id, read_ms, created_ms);
+`,
 }
 
 // upgrade applies any migrations the database has not seen.

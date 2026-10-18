@@ -21,6 +21,7 @@
   import ServerDialog from './components/ServerDialog.svelte'
   import ServerMenu from './components/ServerMenu.svelte'
   import SettingsDialog from './components/SettingsDialog.svelte'
+import NotificationPanel from './components/NotificationPanel.svelte'
 
   import type { ChatMessage } from './lib/network.svelte'
 
@@ -47,12 +48,13 @@
 
   onMount(() => void app.init())
 
-  // Theme and density are attributes on <html>, so the CSS variables switch together.
+  // Theme, density and contrast are attributes on <html>, so the CSS variables switch together.
   $effect(() => {
     const root = document.documentElement
     if (settings.theme === 'system') root.removeAttribute('data-theme')
     else root.dataset.theme = settings.theme
     root.dataset.density = settings.density
+    root.dataset.contrast = settings.contrast
   })
 
   // Unread count in the tab title.
@@ -115,6 +117,17 @@
   style:--nav-w="{layout.nav}px"
   style:--members-w="{layout.members}px"
 >
+  <!-- Screen reader announcements for new messages and status changes. -->
+  <div
+    class="visually-hidden"
+    aria-live="polite"
+    aria-relevant="additions"
+    data-testid="sr-live"
+  >
+    {#each app.unreadAnnouncements as announcement (announcement.id)}
+      <span>{announcement.text}</span>
+    {/each}
+  </div>
   {#if layout.railHidden}
     <button class="railtab" title="Show the server bar" aria-label="Show the server bar" onclick={() => layout.setRailHidden(false)}>›</button>
   {:else}
@@ -178,6 +191,7 @@
 
 <VoiceAudio />
 <FloatingPlayer />
+<NotificationPanel />
 
 {#if app.showSettings}<SettingsDialog />{/if}
 {#if app.showSwitcher}<QuickSwitcher />{/if}

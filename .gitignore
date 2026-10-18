@@ -7,3 +7,4 @@ server/data/
 server/bouncer.yaml
 web/node_modules/
 web/dist/
+.aider*

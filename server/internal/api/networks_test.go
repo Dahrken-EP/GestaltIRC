@@ -39,9 +39,9 @@ func TestAddEditAndRemoveANetwork(t *testing.T) {
 	e := newEnv(t, config.Config{}, fakeStatus{})
 	changed := 0
 	e.api.NetworksChanged = func() { changed++ }
-	c := e.login(t)
+	c, csrf := e.login(t)
 
-	resp, body := e.do(t, "POST", "/api/networks", goodNetwork, nil, c)
+	resp, body := e.do(t, "POST", "/api/networks", goodNetwork, nil, c, csrf)
 	if resp.StatusCode != 200 {
 		t.Fatalf("add = %d %v", resp.StatusCode, body)
 	}
@@ -55,7 +55,7 @@ func TestAddEditAndRemoveANetwork(t *testing.T) {
 
 	// Secrets go in, are kept when left out, and are never sent back.
 	edit := `{"host":"irc.libera.chat","port":6697,"tls":true,"nick":"matt2","sasl_mech":"PLAIN","sasl_user":"matt","sasl_password":"hunter2-secret","server_password":"srv-secret"}`
-	if resp, body := e.do(t, "PUT", "/api/networks/libera", edit, nil, c); resp.StatusCode != 200 {
+	if resp, body := e.do(t, "PUT", "/api/networks/libera", edit, nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatalf("edit = %d %v", resp.StatusCode, body)
 	}
 	raw := fmt.Sprint(networksOf(t, e, c))
@@ -72,7 +72,7 @@ func TestAddEditAndRemoveANetwork(t *testing.T) {
 	}
 
 	keep := `{"host":"irc.libera.chat","port":6697,"tls":true,"nick":"matt3","sasl_mech":"PLAIN","sasl_user":"matt"}`
-	if resp, body := e.do(t, "PUT", "/api/networks/libera", keep, nil, c); resp.StatusCode != 200 {
+	if resp, body := e.do(t, "PUT", "/api/networks/libera", keep, nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatalf("edit without secrets = %d %v", resp.StatusCode, body)
 	}
 	spec, _ := e.acc.GetNetwork("matt", "libera")
@@ -80,7 +80,7 @@ func TestAddEditAndRemoveANetwork(t *testing.T) {
 		t.Errorf("secrets not kept: %+v", spec)
 	}
 	clear := `{"host":"irc.libera.chat","port":6697,"tls":true,"nick":"matt3","server_password":""}`
-	if resp, body := e.do(t, "PUT", "/api/networks/libera", clear, nil, c); resp.StatusCode != 200 {
+	if resp, body := e.do(t, "PUT", "/api/networks/libera", clear, nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatalf("clear = %d %v", resp.StatusCode, body)
 	}
 	if spec, _ := e.acc.GetNetwork("matt", "libera"); spec.ServerPassword != "" {
@@ -88,20 +88,20 @@ func TestAddEditAndRemoveANetwork(t *testing.T) {
 	}
 
 	off := `{"host":"irc.libera.chat","port":6697,"tls":true,"nick":"matt3","enabled":false}`
-	if resp, body := e.do(t, "PUT", "/api/networks/libera", off, nil, c); resp.StatusCode != 200 {
+	if resp, body := e.do(t, "PUT", "/api/networks/libera", off, nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatalf("disable = %d %v", resp.StatusCode, body)
 	}
 	if networksOf(t, e, c)[0]["enabled"] != false {
 		t.Error("the network should be switched off")
 	}
 
-	if resp, _ := e.do(t, "DELETE", "/api/networks/libera", "", nil, c); resp.StatusCode != 200 {
+	if resp, _ := e.do(t, "DELETE", "/api/networks/libera", "", nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatalf("delete = %d", resp.StatusCode)
 	}
 	if len(networksOf(t, e, c)) != 0 {
 		t.Error("the network should be gone")
 	}
-	if resp, _ := e.do(t, "DELETE", "/api/networks/libera", "", nil, c); resp.StatusCode != 404 {
+	if resp, _ := e.do(t, "DELETE", "/api/networks/libera", "", nil, c, csrf); resp.StatusCode != 404 {
 		t.Errorf("deleting twice = %d, want 404", resp.StatusCode)
 	}
 	if changed != 6 {
@@ -117,15 +117,15 @@ func TestOneAccountCannotTouchAnothersNetworks(t *testing.T) {
 	if _, err := e.acc.AddNetwork("eve", accounts.NetworkInput{Name: "secret", Host: "irc.example.org", Port: 6667, Nick: "eve"}); err != nil {
 		t.Fatal(err)
 	}
-	c := e.login(t)
+	c, csrf := e.login(t)
 	if len(networksOf(t, e, c)) != 0 {
 		t.Error("matt can see eve's network")
 	}
 	body := `{"host":"evil.example.org","port":6667,"nick":"x"}`
-	if resp, _ := e.do(t, "PUT", "/api/networks/secret", body, nil, c); resp.StatusCode != 404 {
+	if resp, _ := e.do(t, "PUT", "/api/networks/secret", body, nil, c, csrf); resp.StatusCode != 404 {
 		t.Errorf("editing someone else's network = %d, want 404", resp.StatusCode)
 	}
-	if resp, _ := e.do(t, "DELETE", "/api/networks/secret", "", nil, c); resp.StatusCode != 404 {
+	if resp, _ := e.do(t, "DELETE", "/api/networks/secret", "", nil, c, csrf); resp.StatusCode != 404 {
 		t.Errorf("deleting someone else's network = %d, want 404", resp.StatusCode)
 	}
 	if spec, err := e.acc.GetNetwork("eve", "secret"); err != nil || spec.Host != "irc.example.org" {
@@ -135,17 +135,17 @@ func TestOneAccountCannotTouchAnothersNetworks(t *testing.T) {
 
 func TestPrivateAddressesAreRefused(t *testing.T) {
 	e := newEnv(t, config.Config{}, fakeStatus{})
-	c := e.login(t)
+	c, csrf := e.login(t)
 	for _, host := range []string{"127.0.0.1", "localhost", "10.0.0.5", "192.168.1.1", "169.254.169.254", "[::1]", "::1", "foo.localhost", "db.internal", "printer.local", "::ffff:10.0.0.1"} {
 		body := fmt.Sprintf(`{"name":"x","host":%q,"port":6667,"nick":"m"}`, host)
-		if resp, out := e.do(t, "POST", "/api/networks", body, nil, c); resp.StatusCode != 400 {
+		if resp, out := e.do(t, "POST", "/api/networks", body, nil, c, csrf); resp.StatusCode != 400 {
 			t.Errorf("host %q accepted: %d %v", host, resp.StatusCode, out)
 		}
 	}
 	// Ports where other services listen.
 	for _, port := range []int{22, 25, 80, 443, 1023} {
 		body := fmt.Sprintf(`{"name":"x","host":"irc.example.org","port":%d,"nick":"m"}`, port)
-		if resp, _ := e.do(t, "POST", "/api/networks", body, nil, c); resp.StatusCode != 400 {
+		if resp, _ := e.do(t, "POST", "/api/networks", body, nil, c, csrf); resp.StatusCode != 400 {
 			t.Errorf("port %d accepted", port)
 		}
 	}
@@ -156,10 +156,10 @@ func TestPrivateAddressesAreRefused(t *testing.T) {
 
 func TestMovingANetworkToAPrivateAddressIsRefused(t *testing.T) {
 	e := newEnv(t, config.Config{}, fakeStatus{})
-	c := e.login(t)
-	e.do(t, "POST", "/api/networks", goodNetwork, nil, c)
+	c, csrf := e.login(t)
+	e.do(t, "POST", "/api/networks", goodNetwork, nil, c, csrf)
 	body := `{"host":"127.0.0.1","port":6667,"nick":"matt"}`
-	if resp, _ := e.do(t, "PUT", "/api/networks/libera", body, nil, c); resp.StatusCode != 400 {
+	if resp, _ := e.do(t, "PUT", "/api/networks/libera", body, nil, c, csrf); resp.StatusCode != 400 {
 		t.Errorf("moving to loopback = %d, want 400", resp.StatusCode)
 	}
 	if networksOf(t, e, c)[0]["host"] != "irc.libera.chat" {
@@ -173,8 +173,8 @@ func TestAnAdministratorsLocalNetworkCanBeEditedWithoutChangingItsAddress(t *tes
 	if _, err := e.acc.AddNetwork("matt", accounts.NetworkInput{Name: "home", Host: "10.0.0.2", Port: 6667, Nick: "matt"}); err != nil {
 		t.Fatal(err)
 	}
-	c := e.login(t)
-	if resp, body := e.do(t, "PUT", "/api/networks/home", `{"host":"10.0.0.2","port":6667,"nick":"renamed"}`, nil, c); resp.StatusCode != 200 {
+	c, csrf := e.login(t)
+	if resp, body := e.do(t, "PUT", "/api/networks/home", `{"host":"10.0.0.2","port":6667,"nick":"renamed"}`, nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatalf("edit = %d %v", resp.StatusCode, body)
 	}
 	spec, _ := e.acc.GetNetwork("matt", "home")
@@ -185,16 +185,16 @@ func TestAnAdministratorsLocalNetworkCanBeEditedWithoutChangingItsAddress(t *tes
 
 func TestPrivateAddressesCanBeAllowedByTheOperator(t *testing.T) {
 	e := newEnv(t, config.Config{AllowPrivateNetworks: true}, fakeStatus{})
-	c := e.login(t)
+	c, csrf := e.login(t)
 	body := `{"name":"home","host":"192.168.1.10","port":6667,"nick":"m"}`
-	if resp, out := e.do(t, "POST", "/api/networks", body, nil, c); resp.StatusCode != 200 {
+	if resp, out := e.do(t, "POST", "/api/networks", body, nil, c, csrf); resp.StatusCode != 200 {
 		t.Errorf("allowed address refused: %d %v", resp.StatusCode, out)
 	}
 }
 
 func TestBadNetworkSettingsAreRefused(t *testing.T) {
 	e := newEnv(t, config.Config{}, fakeStatus{})
-	c := e.login(t)
+	c, csrf := e.login(t)
 	for name, body := range map[string]string{
 		"no host":                 `{"name":"x","host":"","port":6667,"nick":"m"}`,
 		"no nick":                 `{"name":"x","host":"irc.example.org","port":6667,"nick":""}`,
@@ -209,29 +209,29 @@ func TestBadNetworkSettingsAreRefused(t *testing.T) {
 		"unknown mechanism":       `{"name":"x","host":"irc.example.org","port":6667,"nick":"m","sasl_mech":"CRAM"}`,
 		"not json":                `nope`,
 	} {
-		if resp, _ := e.do(t, "POST", "/api/networks", body, nil, c); resp.StatusCode != 400 {
+		if resp, _ := e.do(t, "POST", "/api/networks", body, nil, c, csrf); resp.StatusCode != 400 {
 			t.Errorf("%s: status %d, want 400", name, resp.StatusCode)
 		}
 	}
-	if resp, _ := e.do(t, "POST", "/api/networks", goodNetwork, nil, c); resp.StatusCode != 200 {
+	if resp, _ := e.do(t, "POST", "/api/networks", goodNetwork, nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatal("setup")
 	}
-	if resp, _ := e.do(t, "POST", "/api/networks", goodNetwork, nil, c); resp.StatusCode != 400 {
+	if resp, _ := e.do(t, "POST", "/api/networks", goodNetwork, nil, c, csrf); resp.StatusCode != 400 {
 		t.Errorf("a second network with the same name = %d, want 400", resp.StatusCode)
 	}
 }
 
 func TestAnAccountCannotHaveMoreThanTheLimit(t *testing.T) {
 	e := newEnv(t, config.Config{}, fakeStatus{})
-	c := e.login(t)
+	c, csrf := e.login(t)
 	for i := 0; i < MaxNetworksPerUser; i++ {
 		body := fmt.Sprintf(`{"name":"n%d","host":"irc.example.org","port":6667,"nick":"m"}`, i)
-		if resp, out := e.do(t, "POST", "/api/networks", body, nil, c); resp.StatusCode != 200 {
+		if resp, out := e.do(t, "POST", "/api/networks", body, nil, c, csrf); resp.StatusCode != 200 {
 			t.Fatalf("network %d: %d %v", i, resp.StatusCode, out)
 		}
 	}
 	body := `{"name":"one-too-many","host":"irc.example.org","port":6667,"nick":"m"}`
-	if resp, _ := e.do(t, "POST", "/api/networks", body, nil, c); resp.StatusCode != 409 {
+	if resp, _ := e.do(t, "POST", "/api/networks", body, nil, c, csrf); resp.StatusCode != 409 {
 		t.Errorf("past the limit = %d, want 409", resp.StatusCode)
 	}
 }
@@ -248,10 +248,10 @@ func TestACertificateNetworkKeepsItsLogin(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	c := e.login(t)
+	c, csrf := e.login(t)
 	// An edit that tries to turn TLS off or change the login mechanism cannot undo the certificate.
 	body := `{"host":"irc.example.org","port":6697,"tls":false,"nick":"matt","sasl_mech":"PLAIN","sasl_user":"u","sasl_password":"p"}`
-	if resp, out := e.do(t, "PUT", "/api/networks/certnet", body, nil, c); resp.StatusCode != 200 {
+	if resp, out := e.do(t, "PUT", "/api/networks/certnet", body, nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatalf("edit = %d %v", resp.StatusCode, out)
 	}
 	spec, _ := e.acc.GetNetwork("matt", "certnet")
@@ -265,22 +265,22 @@ func TestACertificateNetworkKeepsItsLogin(t *testing.T) {
 
 func TestCrossSiteRequestsCannotChangeNetworks(t *testing.T) {
 	e := newEnv(t, config.Config{}, fakeStatus{})
-	c := e.login(t)
+	c, csrf := e.login(t)
 	hdr := map[string]string{"Origin": "https://evil.example"}
-	if resp, _ := e.do(t, "POST", "/api/networks", goodNetwork, hdr, c); resp.StatusCode != 403 {
+	if resp, _ := e.do(t, "POST", "/api/networks", goodNetwork, hdr, c, csrf); resp.StatusCode != 403 {
 		t.Errorf("cross-origin add = %d, want 403", resp.StatusCode)
 	}
-	if resp, _ := e.do(t, "DELETE", "/api/networks/x", "", hdr, c); resp.StatusCode != 403 {
+	if resp, _ := e.do(t, "DELETE", "/api/networks/x", "", hdr, c, csrf); resp.StatusCode != 403 {
 		t.Errorf("cross-origin delete = %d, want 403", resp.StatusCode)
 	}
 }
 
 func TestNickServPasswordAlternativeNicksAndConnectCommands(t *testing.T) {
 	e := newEnv(t, config.Config{}, fakeStatus{})
-	c := e.login(t)
+	c, csrf := e.login(t)
 	body := `{"name":"libera","host":"irc.libera.chat","port":6697,"tls":true,"nick":"matt","alt_nicks":["matt_","matt__"],` +
 		`"perform":["MODE matt +ix","/msg ChanServ hello"],"nickserv_password":"ns-secret"}`
-	if resp, out := e.do(t, "POST", "/api/networks", body, nil, c); resp.StatusCode != 200 {
+	if resp, out := e.do(t, "POST", "/api/networks", body, nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatalf("add = %d %v", resp.StatusCode, out)
 	}
 	n := networksOf(t, e, c)[0]
@@ -295,7 +295,7 @@ func TestNickServPasswordAlternativeNicksAndConnectCommands(t *testing.T) {
 	}
 
 	// Left out of an edit, all three are kept.
-	if resp, out := e.do(t, "PUT", "/api/networks/libera", `{"host":"irc.libera.chat","port":6697,"tls":true,"nick":"matt2"}`, nil, c); resp.StatusCode != 200 {
+	if resp, out := e.do(t, "PUT", "/api/networks/libera", `{"host":"irc.libera.chat","port":6697,"tls":true,"nick":"matt2"}`, nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatalf("edit = %d %v", resp.StatusCode, out)
 	}
 	spec, _ := e.acc.GetNetwork("matt", "libera")
@@ -303,7 +303,7 @@ func TestNickServPasswordAlternativeNicksAndConnectCommands(t *testing.T) {
 		t.Errorf("kept = %+v", spec)
 	}
 	// An empty value clears.
-	if resp, _ := e.do(t, "PUT", "/api/networks/libera", `{"host":"irc.libera.chat","port":6697,"tls":true,"nick":"matt2","nickserv_password":"","alt_nicks":[],"perform":[]}`, nil, c); resp.StatusCode != 200 {
+	if resp, _ := e.do(t, "PUT", "/api/networks/libera", `{"host":"irc.libera.chat","port":6697,"tls":true,"nick":"matt2","nickserv_password":"","alt_nicks":[],"perform":[]}`, nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatal("clear")
 	}
 	spec, _ = e.acc.GetNetwork("matt", "libera")
@@ -314,7 +314,7 @@ func TestNickServPasswordAlternativeNicksAndConnectCommands(t *testing.T) {
 
 func TestBadAlternativeNicksAndConnectCommandsAreRefused(t *testing.T) {
 	e := newEnv(t, config.Config{}, fakeStatus{})
-	c := e.login(t)
+	c, csrf := e.login(t)
 	base := `"name":"x","host":"irc.example.org","port":6667,"nick":"m"`
 	for name, extra := range map[string]string{
 		"nick with space":   `"alt_nicks":["a b"]`,
@@ -329,7 +329,7 @@ func TestBadAlternativeNicksAndConnectCommandsAreRefused(t *testing.T) {
 		"too many lines":    `"perform":["a","b","c","d","e","f","g","h","i","j","k"]`,
 		"nickserv newline":  `"nickserv_password":"a\nOPER x y"`,
 	} {
-		if resp, _ := e.do(t, "POST", "/api/networks", "{"+base+","+extra+"}", nil, c); resp.StatusCode != 400 {
+		if resp, _ := e.do(t, "POST", "/api/networks", "{"+base+","+extra+"}", nil, c, csrf); resp.StatusCode != 400 {
 			t.Errorf("%s: status %d, want 400", name, resp.StatusCode)
 		}
 	}
@@ -337,14 +337,14 @@ func TestBadAlternativeNicksAndConnectCommandsAreRefused(t *testing.T) {
 
 func TestAcceptingAnUntrustedCertificate(t *testing.T) {
 	e := newEnv(t, config.Config{}, fakeStatus{})
-	c := e.login(t)
+	c, csrf := e.login(t)
 	base := `"name":"home","host":"irc.example.org","port":6697,"nick":"m"`
 
 	// It means nothing without TLS.
-	if resp, _ := e.do(t, "POST", "/api/networks", "{"+base+`,"tls":false,"tls_insecure":true}`, nil, c); resp.StatusCode != 400 {
+	if resp, _ := e.do(t, "POST", "/api/networks", "{"+base+`,"tls":false,"tls_insecure":true}`, nil, c, csrf); resp.StatusCode != 400 {
 		t.Errorf("untrusted certificates without TLS = %d, want 400", resp.StatusCode)
 	}
-	if resp, out := e.do(t, "POST", "/api/networks", "{"+base+`,"tls":true,"tls_insecure":true}`, nil, c); resp.StatusCode != 200 {
+	if resp, out := e.do(t, "POST", "/api/networks", "{"+base+`,"tls":true,"tls_insecure":true}`, nil, c, csrf); resp.StatusCode != 200 {
 		t.Fatalf("add = %d %v", resp.StatusCode, out)
 	}
 	if n := networksOf(t, e, c)[0]; n["tls_insecure"] != true || n["tls_fingerprint"] != "" {
@@ -361,7 +361,7 @@ func TestAcceptingAnUntrustedCertificate(t *testing.T) {
 	edit := func(extra string) {
 		t.Helper()
 		body := `{"host":"irc.example.org","port":6697,"tls":true,"nick":"m2"` + extra + `}`
-		if resp, out := e.do(t, "PUT", "/api/networks/home", body, nil, c); resp.StatusCode != 200 {
+		if resp, out := e.do(t, "PUT", "/api/networks/home", body, nil, c, csrf); resp.StatusCode != 200 {
 			t.Fatalf("edit = %d %v", resp.StatusCode, out)
 		}
 	}
@@ -381,12 +381,12 @@ func TestAcceptingAnUntrustedCertificate(t *testing.T) {
 	}
 	accountsPin()
 	body := `{"host":"irc2.example.org","port":6697,"tls":true,"nick":"m","tls_insecure":true}`
-	if resp, _ := e.do(t, "PUT", "/api/networks/home", body, nil, c); resp.StatusCode != 200 || pin() != "" {
+	if resp, _ := e.do(t, "PUT", "/api/networks/home", body, nil, c, csrf); resp.StatusCode != 200 || pin() != "" {
 		t.Errorf("a new address kept the remembered certificate: %q", pin())
 	}
 	body = `{"host":"irc2.example.org","port":6697,"tls":true,"nick":"m","tls_insecure":true}`
 	e.acc.UpdateNetwork("matt", accounts.NetworkInput{Name: "home", Host: "irc2.example.org", Port: 6697, TLS: true, Nick: "m", TLSInsecure: true, TLSFingerprint: "CC:DD", ViaWeb: true})
-	if resp, _ := e.do(t, "PUT", "/api/networks/home", `{"host":"irc2.example.org","port":6697,"tls":true,"nick":"m","tls_insecure":false}`, nil, c); resp.StatusCode != 200 || pin() != "" {
+	if resp, _ := e.do(t, "PUT", "/api/networks/home", `{"host":"irc2.example.org","port":6697,"tls":true,"nick":"m","tls_insecure":false}`, nil, c, csrf); resp.StatusCode != 200 || pin() != "" {
 		t.Errorf("turning the setting off kept the remembered certificate: %q", pin())
 	}
 	_ = body

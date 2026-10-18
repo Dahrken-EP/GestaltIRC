@@ -94,6 +94,28 @@ export function format(m: Partial<Message> & { command: string }): string {
   return out
 }
 
+// Multiline tag names from the IRCv3 draft/multiline specification.
+export const MultilineConcat = '+draft/multiline-concat'
+export const MultilineCont = '+draft/multiline-cont'
+export const MultilineEnd = '+draft/multiline-end'
+
+/** IsMultiline reports whether m carries any draft/multiline tag. */
+export function isMultiline(m: Message): boolean {
+  return (
+    m.tags[MultilineConcat] !== undefined ||
+    m.tags[MultilineCont] !== undefined ||
+    m.tags[MultilineEnd] !== undefined
+  )
+}
+
+/** MultilineStage reports which part of a multiline message m is, or ''. */
+export function multilineStage(m: Message): 'concat' | 'cont' | 'end' | '' {
+  if (m.tags[MultilineConcat] !== undefined) return 'concat'
+  if (m.tags[MultilineCont] !== undefined) return 'cont'
+  if (m.tags[MultilineEnd] !== undefined) return 'end'
+  return ''
+}
+
 /** The nick part of a "nick!user@host" prefix, or the whole prefix if it has no "!". */
 export function nickOf(prefix: string): string {
   const bang = prefix.indexOf('!')

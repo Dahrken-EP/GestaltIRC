@@ -78,6 +78,14 @@ type Config struct {
 	DisableGuests bool `yaml:"disable_guests"`
 	// ReplayLimit caps how many messages per buffer are replayed to a client on attach.
 	ReplayLimit int `yaml:"replay_limit"`
+
+	// PluginsDir is the directory server-side plugin manifests are loaded from.
+	// Empty disables server-side plugins.
+	PluginsDir string `yaml:"plugins_dir"`
+	// EnableServerPlugins switches server-side plugin support on. Off by default.
+	EnableServerPlugins bool `yaml:"enable_server_plugins"`
+	// PluginStoragePath is where plugin data is kept. Defaults to data_dir/plugins.
+	PluginStoragePath string `yaml:"plugin_storage_path"`
 }
 
 // Load reads and validates the config file.
@@ -137,6 +145,9 @@ func (c *Config) setDefaults() {
 	}
 	if c.ReplayLimit == 0 {
 		c.ReplayLimit = 200
+	}
+	if c.PluginStoragePath == "" {
+		c.PluginStoragePath = filepath.Join(c.DataDir, "plugins")
 	}
 	if c.CommandBurst == 0 {
 		c.CommandBurst = 30

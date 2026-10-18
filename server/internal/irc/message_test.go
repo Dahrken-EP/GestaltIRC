@@ -158,6 +158,55 @@ func TestTagHelpers(t *testing.T) {
 	}
 }
 
+func TestMultilineTags(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"concat tag", "@+draft/multiline-concat :n PRIVMSG #c :x", true},
+		{"cont tag", "@+draft/multiline-cont :n PRIVMSG #c :x", true},
+		{"end tag", "@+draft/multiline-end :n PRIVMSG #c :x", true},
+		{"no multiline", "@msgid=abc :n PRIVMSG #c :x", false},
+		{"no tags", ":n PRIVMSG #c :x", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, err := Parse(tt.line)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.line, err)
+			}
+			if got := IsMultiline(m); got != tt.want {
+				t.Errorf("IsMultiline() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMultilineStage(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want string
+	}{
+		{"concat", "@+draft/multiline-concat :n PRIVMSG #c :x", "concat"},
+		{"cont", "@+draft/multiline-cont :n PRIVMSG #c :x", "cont"},
+		{"end", "@+draft/multiline-end :n PRIVMSG #c :x", "end"},
+		{"none", ":n PRIVMSG #c :x", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, err := Parse(tt.line)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tt.line, err)
+			}
+			if got := MultilineStage(m); got != tt.want {
+				t.Errorf("MultilineStage() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestUnescapeTagValue(t *testing.T) {
 	tests := map[string]string{
 		`a\:b`:   "a;b",

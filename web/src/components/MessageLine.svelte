@@ -6,6 +6,7 @@
   import { cannotHover, isInteractive, touchSelection } from '../lib/touch.svelte'
   import type { Buffer, ChatMessage, NetworkState } from '../lib/network.svelte'
   import MediaEmbeds from './MediaEmbeds.svelte'
+  import ThreadIndicator from './ThreadIndicator.svelte'
   import TokenText from './TokenText.svelte'
 
   let {
@@ -147,6 +148,9 @@
           </span>
         {/if}
       </span>
+    {/if}
+    {#if msg.msgid && buf.replyCount(msg.msgid) > 0}
+      <ThreadIndicator {msg} {buf} />
     {/if}
   </div>
 

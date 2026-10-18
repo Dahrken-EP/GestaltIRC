@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net"
@@ -44,6 +45,11 @@ type API struct {
 	LoginByIP   *ratelimit.Limiter
 	LoginByUser *ratelimit.Limiter
 
+	// APIByIP and APIByUser rate-limit all authenticated API endpoints per client
+	// and per user, so one user or address cannot flood the bouncer.
+	APIByIP   *ratelimit.Limiter
+	APIByUser *ratelimit.Limiter
+
 	mux *http.ServeMux
 }
 
@@ -55,7 +61,10 @@ func New(acc *accounts.Service, nets NetworkStatus, conf *config.Config) *API {
 		Conf:        conf,
 		LoginByIP:   ratelimit.New(10, 10*time.Minute),
 		LoginByUser: ratelimit.New(20, 10*time.Minute),
-		mux:         http.NewServeMux(),
+		// 60 requests per minute per IP, 120 per minute per user.
+		APIByIP:   ratelimit.New(60, time.Minute),
+		APIByUser: ratelimit.New(120, time.Minute),
+		mux:       http.NewServeMux(),
 	}
 	a.mux.HandleFunc("POST /api/login", a.login)
 	a.mux.HandleFunc("POST /api/logout", a.logout)
@@ -64,6 +73,8 @@ func New(acc *accounts.Service, nets NetworkStatus, conf *config.Config) *API {
 	a.mux.HandleFunc("PUT /api/prefs", a.authed(a.putPrefs))
 	a.mux.HandleFunc("GET /api/docs/{name}", a.authed(a.getDoc))
 	a.mux.HandleFunc("PUT /api/docs/{name}", a.authed(a.putDoc))
+	a.mux.HandleFunc("GET /api/notifications", a.authed(a.listNotifications))
+	a.mux.HandleFunc("PUT /api/notifications/read", a.authed(a.markNotificationsRead))
 	a.registerNetworks()
 	return a
 }
@@ -165,6 +176,38 @@ func (a *API) authed(h func(http.ResponseWriter, *http.Request, store.User)) htt
 			writeError(w, http.StatusUnauthorized, "not logged in")
 			return
 		}
+		// State-changing requests must present the CSRF token from the session cookie.
+		switch r.Method {
+		case http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
+			csrf := r.Header.Get("X-CSRF-Token")
+			if csrf == "" {
+				writeError(w, http.StatusForbidden, "missing CSRF token")
+				return
+			}
+			c, err := r.Cookie(CookieName)
+			if err != nil {
+				writeError(w, http.StatusForbidden, "no session cookie")
+				return
+			}
+			stored, err := a.Accounts.SessionCSRF(c.Value)
+			if err != nil || !subtleEqual(csrf, stored) {
+				writeError(w, http.StatusForbidden, "bad CSRF token")
+				return
+			}
+		}
+
+		// Rate-limit authenticated API endpoints per IP and per user.
+		ip := a.ClientIP(r)
+		for _, k := range []struct {
+			l   *ratelimit.Limiter
+			key string
+		}{{a.APIByIP, "ip:" + ip}, {a.APIByUser, "user:" + u.Name}} {
+			if blocked, wait := k.l.Blocked(k.key); blocked {
+				w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+				writeError(w, http.StatusTooManyRequests, "API rate limit exceeded; try again later")
+				return
+			}
+		}
 		h(w, r, u)
 	}
 }
@@ -237,13 +280,13 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	a.LoginByIP.Reset("ip:" + ip)
 	a.LoginByUser.Reset(userKey)
 
-	token, err := a.Accounts.NewSession(u.Name)
+	token, csrfToken, err := a.Accounts.NewSession(u.Name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "login failed")
 		return
 	}
 	http.SetCookie(w, a.cookie(r, token, int(accounts.SessionTTL.Seconds())))
-	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name})
+	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "csrf_token": csrfToken})
 }
 
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {
@@ -331,6 +374,45 @@ func (a *API) putPrefs(w http.ResponseWriter, r *http.Request, u store.User) {
 	}
 	if err := a.Accounts.SetPrefs(u.ID, string(out)); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// listNotifications returns the user's activity feed entries. Query param ?unread=1 limits to unread.
+func (a *API) listNotifications(w http.ResponseWriter, r *http.Request, u store.User) {
+	unread := r.URL.Query().Get("unread") == "1"
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	notifications, err := a.Accounts.Store().ListNotifications(u.ID, unread, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load notifications")
+		return
+	}
+	out := make([]map[string]any, 0, len(notifications))
+	for _, n := range notifications {
+		out = append(out, map[string]any{
+			"id":      n.ID,
+			"kind":    n.Kind,
+			"network": n.Network,
+			"buffer":  n.Buffer,
+			"title":   n.Title,
+			"body":    n.Body,
+			"read":    n.ReadMS > 0,
+			"created": n.Created,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// markNotificationsRead marks all of the user's notifications as read.
+func (a *API) markNotificationsRead(w http.ResponseWriter, r *http.Request, u store.User) {
+	if err := a.Accounts.Store().MarkNotificationsRead(u.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not mark notifications read")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -438,4 +520,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"error": msg})
+}
+
+// subtleEqual compares two strings in constant time to avoid leaking the CSRF token.
+func subtleEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

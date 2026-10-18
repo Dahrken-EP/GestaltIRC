@@ -11,6 +11,9 @@ import (
 	"gestalt/server/internal/store"
 )
 
+// csrfTokenLen is the length of the CSRF token, in bytes.
+const csrfTokenLen = 32
+
 // SessionTTL is how long a web login lasts.
 const SessionTTL = 30 * 24 * time.Hour
 
@@ -20,22 +23,27 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// NewSession starts a web session for a user and returns its token. The token
-// is 256 random bits, so a fast hash is enough to store it safely.
-func (s *Service) NewSession(userName string) (string, error) {
+// NewSession starts a web session for a user and returns its token and a CSRF token.
+// Both are 256 random bits.
+func (s *Service) NewSession(userName string) (string, string, error) {
 	u, err := s.store.GetUser(userName)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
-		return "", err
+		return "", "", err
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
-	if err := s.store.CreateSession(hashToken(token), u.ID, SessionTTL); err != nil {
-		return "", err
+	csrfRaw := make([]byte, csrfTokenLen)
+	if _, err := rand.Read(csrfRaw); err != nil {
+		return "", "", err
 	}
-	return token, nil
+	csrfToken := base64.RawURLEncoding.EncodeToString(csrfRaw)
+	if err := s.store.CreateSession(hashToken(token), u.ID, SessionTTL, csrfToken); err != nil {
+		return "", "", err
+	}
+	return token, csrfToken, nil
 }
 
 // SessionUser returns the user for a session token. ok is false for an unknown or expired token.
@@ -56,6 +64,17 @@ func (s *Service) SessionUser(token string) (user store.User, ok bool, err error
 // EndSession logs one session out.
 func (s *Service) EndSession(token string) error {
 	return s.store.DeleteSession(hashToken(token))
+}
+
+// SessionCSRF returns the CSRF token for a session token, or an error when there
+// is no live session.
+func (s *Service) SessionCSRF(token string) (string, error) {
+	return s.store.SessionCSRF(hashToken(token))
+}
+
+// Store returns the underlying store, for callers that need direct store access.
+func (s *Service) Store() *store.Store {
+	return s.store
 }
 
 // MaxPrefsBytes caps the stored preferences, so one account cannot fill the database.
