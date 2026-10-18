@@ -7,8 +7,8 @@ import (
 
 // AppCSP is the content security policy of the web client. The same policy, without the two
 // directives a <meta> tag cannot carry, is in web/index.html, and a test keeps them in step.
-const AppCSP = "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: https://i.imgur.com; media-src 'self' https://i.imgur.com; " +
-	"frame-src 'self' https://www.youtube-nocookie.com https://streamable.com; style-src 'self' 'unsafe-inline'; " +
+const AppCSP = "default-src 'self'; connect-src 'self' ws: wss: https://api.soundcloud.com https://api.twitch.tv https://extensions.twitch.tv; img-src 'self' data: https://i.imgur.com; media-src 'self' https://i.imgur.com; " +
+	"frame-src 'self' https://www.youtube-nocookie.com https://streamable.com https://player.twitch.tv https://clips.twitch.tv https://w.soundcloud.com https://open.spotify.com https://player.vimeo.com; child-src https://player.twitch.tv; style-src 'self' 'unsafe-inline'; " +
 	"object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 
 // sandboxPage is the page that hosts plugin workers. It is framed by the client, from the same
