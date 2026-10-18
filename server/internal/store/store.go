@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -28,6 +29,8 @@ type Record struct {
 	RecvMS  int64  // local receive time, used for "what did I miss"
 	MsgID   string
 	Line    string // formatted IRC line, tags included
+	Nick    string // sender nick, for search
+	Text    string // message text, for search
 }
 
 // Store is the SQLite-backed history.
@@ -223,6 +226,14 @@ CREATE TABLE notifications (
 );
 CREATE INDEX notifications_user ON notifications (user_id, read_ms, created_ms);
 `,
+	// 9: nick and text columns on messages, so server-side search can filter
+	// without parsing raw IRC lines.
+	`
+ALTER TABLE messages ADD COLUMN nick TEXT NOT NULL DEFAULT '';
+ALTER TABLE messages ADD COLUMN text TEXT NOT NULL DEFAULT '';
+CREATE INDEX messages_nick ON messages (network_id, target, nick);
+CREATE INDEX messages_text ON messages (network_id, target, text);
+`,
 }
 
 // upgrade applies any migrations the database has not seen.
@@ -262,8 +273,8 @@ func (s *Store) Append(r Record, limit int) error {
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(
-		`INSERT INTO messages (network_id, target, time_ms, recv_ms, msgid, line) VALUES (?, ?, ?, ?, ?, ?)`,
-		r.Network, r.Target, r.TimeMS, r.RecvMS, r.MsgID, r.Line,
+		`INSERT INTO messages (network_id, target, time_ms, recv_ms, msgid, line, nick, text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.Network, r.Target, r.TimeMS, r.RecvMS, r.MsgID, r.Line, r.Nick, r.Text,
 	); err != nil {
 		return err
 	}
@@ -393,6 +404,65 @@ func (s *Store) Missed(network int64, recvMS int64, perTarget int) ([]Target, er
 			return nil, err
 		}
 		out = append(out, Target{Name: name, Lines: lines})
+	}
+	return out, nil
+}
+
+// SearchResult is one message matching a search query.
+type SearchResult struct {
+	ID      int64
+	Network int64
+	Target  string
+	TimeMS  int64
+	Nick    string
+	Text    string
+	MsgID   string
+}
+
+// Search finds messages matching the query across one network. words are ANDed:
+// every word must appear in the nick or text. target, if non-empty, restricts to
+// one buffer. from, if non-empty, restricts to one sender nick. Results are newest
+// first, capped at limit.
+func (s *Store) Search(networkID int64, target, from string, words []string, limit int) ([]SearchResult, error) {
+	var b strings.Builder
+	b.WriteString(`
+		SELECT id, target, time_ms, nick, text, msgid
+		FROM messages
+		WHERE network_id = ?
+	`)
+	args := []any{networkID}
+
+	if target != "" {
+		b.WriteString(` AND target = ?`)
+		args = append(args, target)
+	}
+	if from != "" {
+		b.WriteString(` AND nick = ?`)
+		args = append(args, from)
+	}
+	for i := range words {
+		b.WriteString(` AND (text LIKE ? OR nick LIKE ?)`)
+		args = append(args, "%"+words[i]+"%", "%"+words[i]+"%")
+	}
+	b.WriteString(` ORDER BY id DESC LIMIT ?`)
+	args = append(args, limit)
+
+	rows, err := s.db.Query(b.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SearchResult
+	for rows.Next() {
+		var r SearchResult
+		if err := rows.Scan(&r.ID, &r.Target, &r.TimeMS, &r.Nick, &r.Text, &r.MsgID); err != nil {
+			return nil, err
+		}
+		r.Network = networkID
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

@@ -4,11 +4,22 @@
   import { filterMessages } from '../lib/search'
   import VirtualList from './VirtualList.svelte'
 
-  let { net, buf, filter = '', onnick, onchannel, onreply }: {
+  interface SearchResult {
+    id: number
+    target: string
+    time: number
+    nick: string
+    text: string
+    msgid: string
+  }
+
+  let { net, buf, filter = '', searchResults = [], onnick, onchannel, onreply }: {
     net: NetworkState
     buf: Buffer
     /** Show only the messages that match this search. */
     filter?: string
+    /** Server-side search results, newest first. */
+    searchResults?: SearchResult[]
     onnick: (nick: string) => void
     onchannel: (name: string) => void
     onreply: (msg: ChatMessage) => void
@@ -26,6 +37,24 @@
   const rows = $derived.by(() => {
     const out: Row[] = []
     if (buf.onNetwork) out.push({ key: 'older', kind: 'older' })
+    // When we have server-side search results, use those instead of client-side filtering.
+    if (searchResults && searchResults.length > 0) {
+      for (const r of searchResults) {
+        const msg: ChatMessage = {
+          id: r.id,
+          key: `search-${r.id}`,
+          time: r.time,
+          kind: 'msg',
+          nick: r.nick,
+          text: r.text,
+          self: false,
+          mention: false,
+          msgid: r.msgid,
+        }
+        out.push({ key: `m${r.id}`, kind: 'msg', msg, prev: undefined })
+      }
+      return out
+    }
     const list = filterMessages(buf.messages, filter)
     if (list.length === 0 && filter.trim()) out.push({ key: 'nomatch', kind: 'nomatch' })
     else if (list.length === 0 && buf.kind === 'status') out.push({ key: 'empty', kind: 'empty' })

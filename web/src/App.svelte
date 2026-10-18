@@ -3,6 +3,8 @@
   import { app } from './lib/app.svelte'
   import { layout, MEMBERS, NAV } from './lib/layout.svelte'
   import { settings } from './lib/settings.svelte'
+  import { api } from './lib/api'
+  import { allLangs, getLang, langLabel, setLang, type Lang } from './lib/i18n'
   import BufferList from './components/BufferList.svelte'
   import DirectPanel from './components/DirectPanel.svelte'
   import VoiceAudio from './components/VoiceAudio.svelte'
@@ -33,12 +35,40 @@ import NotificationPanel from './components/NotificationPanel.svelte'
   /** The search bar is open, and what is typed in it. A search belongs to one buffer too. */
   let searching = $state(false)
   let search = $state('')
+  let lang = $state<Lang>(getLang())
+  /** Server-side search results for the current query. */
+  let searchResults = $state<{ id: number; target: string; time: number; nick: string; text: string; msgid: string }[]>([])
+  let searchTimer: ReturnType<typeof setTimeout> | undefined
   $effect(() => {
     void buf?.key
     void net?.id
     reply = null
     searching = false
     search = ''
+    searchResults = []
+  })
+  /** Debounced server-side search as the user types. */
+  let searchQuery = ''
+  $effect(() => {
+    clearTimeout(searchTimer)
+    searchResults = []
+    searchQuery = search
+    if (!search.trim() || !buf || !net) return
+    searchTimer = setTimeout(async () => {
+      const query = searchQuery
+      if (!query.trim()) return
+      try {
+        const words = query.split(/\s+/).filter((w) => w.length > 0)
+        const from = words.find((w) => w.startsWith('from:'))
+        const otherWords = words.filter((w) => !w.startsWith('from:'))
+        const fromNick = from ? from.slice(5) : ''
+        const res = await api.search(net.name, buf.name, otherWords, fromNick, 50)
+        if (query !== searchQuery) return // ignore stale responses
+        searchResults = res
+      } catch {
+        searchResults = []
+      }
+    }, 300)
   })
 
   function closeSearch() {
@@ -48,13 +78,14 @@ import NotificationPanel from './components/NotificationPanel.svelte'
 
   onMount(() => void app.init())
 
-  // Theme, density and contrast are attributes on <html>, so the CSS variables switch together.
+  // Theme, density, contrast and language are attributes on <html>.
   $effect(() => {
     const root = document.documentElement
     if (settings.theme === 'system') root.removeAttribute('data-theme')
     else root.dataset.theme = settings.theme
     root.dataset.density = settings.density
     root.dataset.contrast = settings.contrast
+    root.dataset.lang = lang
   })
 
   // Unread count in the tab title.
@@ -155,7 +186,7 @@ import NotificationPanel from './components/NotificationPanel.svelte'
       <div class="body">
         <div class="messages">
           {#key net.id + '/' + buf.key}
-            <MessagePane {net} {buf} filter={searching ? search : ''} onnick={openNick} onchannel={openChannel} onreply={(m) => (reply = m)} />
+            <MessagePane {net} {buf} filter={searching ? search : ''} {searchResults} onnick={openNick} onchannel={openChannel} onreply={(m) => (reply = m)} />
           {/key}
         </div>
         {#if buf.kind === 'channel' && settings.showMembers}
@@ -193,7 +224,7 @@ import NotificationPanel from './components/NotificationPanel.svelte'
 <FloatingPlayer />
 <NotificationPanel />
 
-{#if app.showSettings}<SettingsDialog />{/if}
+{#if app.showSettings}<SettingsDialog {lang} onlangchange={(l) => { lang = l; settings.save() }} />{/if}
 {#if app.showSwitcher}<QuickSwitcher />{/if}
 {#if app.serverDialog}<ServerDialog />{/if}
 <PluginDialog />

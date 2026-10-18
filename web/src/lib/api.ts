@@ -180,6 +180,14 @@ export const api = {
   notifications: () => request<{ id: number; kind: string; network: string; buffer: string; title: string; body: string; read: boolean; created: number }[]>('GET', '/api/notifications'),
   notificationsUnread: () => request<{ id: number; kind: string; network: string; buffer: string; title: string; body: string; read: boolean; created: number }[]>('GET', '/api/notifications?unread=1'),
   markNotificationsRead: () => request<{ ok: boolean }>('PUT', '/api/notifications/read', {}),
+  search: (network: string, target: string, words: string[], from: string, limit?: number) => {
+    const params = new URLSearchParams({ network, target, words: words.join(' '), from })
+    if (limit) params.set('limit', String(limit))
+    return request<{ id: number; target: string; time: number; nick: string; text: string; msgid: string }[]>('GET', '/api/search?' + params.toString())
+  },
+  bans: (network: string, channel: string) => request<string[]>('GET', `/api/bans/${encodeURIComponent(network)}/${encodeURIComponent(channel)}`),
+  banAdd: (network: string, channel: string, mask: string) => request<{ ok: boolean }>('POST', `/api/bans/${encodeURIComponent(network)}/${encodeURIComponent(channel)}`, { mask }),
+  banRemove: (network: string, channel: string, mask: string) => request<{ ok: boolean }>('DELETE', `/api/bans/${encodeURIComponent(network)}/${encodeURIComponent(channel)}/${encodeURIComponent(mask)}`),
   pushKey: () => request<{ key: string }>('GET', '/api/push/key'),
   pushSubscribe: (sub: { endpoint: string; keys: { p256dh: string; auth: string } }) =>
     request<{ ok: boolean }>('POST', '/api/push/subscribe', sub),

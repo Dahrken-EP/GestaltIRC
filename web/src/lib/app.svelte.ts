@@ -7,6 +7,7 @@ import { formFromNetwork, toRequest } from './networkform'
 import { Connection } from './irc/connection'
 import { NetworkState, type Buffer, type ChatMessage } from './network.svelte'
 import { pageUnfocused, showNotification } from './notify'
+import { playAlert } from './audio'
 import { plugins } from './plugins/manager.svelte'
 import { disablePush } from './push'
 import { microphone } from './voice/media'
@@ -435,6 +436,9 @@ class App {
     const body = msg.kind === 'action' ? `* ${msg.nick} ${msg.text}` : msg.text
     showNotification(title, body, () => this.goto(net.id, buf.key))
     this.announce(`Mention from ${msg.nick}: ${body.slice(0, 80)}`)
+    if (settings.audioAlerts) {
+      playAlert()
+    }
   }
 }
 

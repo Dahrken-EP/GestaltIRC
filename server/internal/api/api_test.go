@@ -24,6 +24,15 @@ func (f fakeStatus) Status(id int64) (string, bool, bool) {
 	s, ok := f[id]
 	return s.nick, s.connected, ok
 }
+func (f fakeStatus) BanList(id int64, channel string) ([]string, error) {
+	return nil, nil
+}
+func (f fakeStatus) BanAdd(id int64, channel, mask string) error {
+	return nil
+}
+func (f fakeStatus) BanRemove(id int64, channel, mask string) error {
+	return nil
+}
 
 type env struct {
 	api *API

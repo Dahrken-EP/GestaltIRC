@@ -198,6 +198,78 @@ func (b *Bouncer) Status(networkID int64) (nick string, connected bool, ok bool)
 	return n.nick, n.connected, true
 }
 
+// BanList returns the ban masks for one channel on one network.
+func (b *Bouncer) BanList(networkID int64, channel string) ([]string, error) {
+	b.mu.Lock()
+	for _, r := range b.running {
+		if r.net.id == networkID {
+			n := r.net
+			b.mu.Unlock()
+			n.mu.Lock()
+			cs := n.channels[strings.ToLower(channel)]
+			n.mu.Unlock()
+			if cs == nil {
+				return nil, errors.New("channel not found")
+			}
+			out := make([]string, 0, len(cs.bans))
+			out = append(out, cs.bans...)
+			return out, nil
+		}
+	}
+	b.mu.Unlock()
+	return nil, errors.New("network not found")
+}
+
+// BanAdd adds a ban mask to a channel on one network.
+func (b *Bouncer) BanAdd(networkID int64, channel, mask string) error {
+	b.mu.Lock()
+	for _, r := range b.running {
+		if r.net.id == networkID {
+			n := r.net
+			b.mu.Unlock()
+			n.mu.Lock()
+			cs := n.channels[strings.ToLower(channel)]
+			n.mu.Unlock()
+			if cs == nil {
+				return errors.New("channel not found")
+			}
+			cs.addBan(mask)
+			n.mu.Unlock()
+			if c := n.client; c != nil {
+				return c.Send(irc.New("MODE", channel, "+b", mask))
+			}
+			return errors.New("not connected")
+		}
+	}
+	b.mu.Unlock()
+	return errors.New("network not found")
+}
+
+// BanRemove removes a ban mask from a channel on one network.
+func (b *Bouncer) BanRemove(networkID int64, channel, mask string) error {
+	b.mu.Lock()
+	for _, r := range b.running {
+		if r.net.id == networkID {
+			n := r.net
+			b.mu.Unlock()
+			n.mu.Lock()
+			cs := n.channels[strings.ToLower(channel)]
+			n.mu.Unlock()
+			if cs == nil {
+				return errors.New("channel not found")
+			}
+			cs.removeBan(mask)
+			n.mu.Unlock()
+			if c := n.client; c != nil {
+				return c.Send(irc.New("MODE", channel, "-b", mask))
+			}
+			return errors.New("not connected")
+		}
+	}
+	b.mu.Unlock()
+	return errors.New("network not found")
+}
+
 // sendToNetwork sends a raw line from a plugin to an upstream network.
 func (b *Bouncer) sendToNetwork(network, line string) error {
 	b.mu.Lock()

@@ -29,6 +29,12 @@ type NetworkStatus interface {
 	// Status returns the current nick and whether the network is connected. ok is
 	// false when the network is not running at all.
 	Status(networkID int64) (nick string, connected bool, ok bool)
+	// BanList returns the ban masks for one channel.
+	BanList(networkID int64, channel string) ([]string, error)
+	// BanAdd adds a ban mask to a channel.
+	BanAdd(networkID int64, channel, mask string) error
+	// BanRemove removes a ban mask from a channel.
+	BanRemove(networkID int64, channel, mask string) error
 }
 
 // API holds what the handlers need.
@@ -75,6 +81,10 @@ func New(acc *accounts.Service, nets NetworkStatus, conf *config.Config) *API {
 	a.mux.HandleFunc("PUT /api/docs/{name}", a.authed(a.putDoc))
 	a.mux.HandleFunc("GET /api/notifications", a.authed(a.listNotifications))
 	a.mux.HandleFunc("PUT /api/notifications/read", a.authed(a.markNotificationsRead))
+	a.mux.HandleFunc("GET /api/search", a.authed(a.searchMessages))
+	a.mux.HandleFunc("GET /api/bans/{network}/{channel}", a.authed(a.banList))
+	a.mux.HandleFunc("POST /api/bans/{network}/{channel}", a.authed(a.banAdd))
+	a.mux.HandleFunc("DELETE /api/bans/{network}/{channel}/{mask}", a.authed(a.banRemove))
 	a.registerNetworks()
 	return a
 }
@@ -416,6 +426,117 @@ func (a *API) markNotificationsRead(w http.ResponseWriter, r *http.Request, u st
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// banList returns the ban masks for one channel.
+func (a *API) banList(w http.ResponseWriter, r *http.Request, u store.User) {
+	networkName := r.PathValue("network")
+	channel := r.PathValue("channel")
+	spec, err := a.Accounts.GetNetwork(u.Name, networkName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "network not found")
+		return
+	}
+	_, _, nOk := a.Networks.Status(spec.ID)
+	if !nOk {
+		writeError(w, http.StatusServiceUnavailable, "network not connected")
+		return
+	}
+	// The bouncer tracks bans; expose them via a method on Network.
+	bans, err := a.Networks.BanList(spec.ID, channel)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not list bans")
+		return
+	}
+	writeJSON(w, http.StatusOK, bans)
+}
+
+// banAdd adds a ban mask to a channel.
+func (a *API) banAdd(w http.ResponseWriter, r *http.Request, u store.User) {
+	networkName := r.PathValue("network")
+	channel := r.PathValue("channel")
+	var req struct {
+		Mask string `json:"mask"`
+	}
+	if !readJSON(w, r, 4096, &req) {
+		return
+	}
+	spec, err := a.Accounts.GetNetwork(u.Name, networkName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "network not found")
+		return
+	}
+	if err := a.Networks.BanAdd(spec.ID, channel, req.Mask); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// banRemove removes a ban mask from a channel.
+func (a *API) banRemove(w http.ResponseWriter, r *http.Request, u store.User) {
+	networkName := r.PathValue("network")
+	channel := r.PathValue("channel")
+	mask := r.PathValue("mask")
+	spec, err := a.Accounts.GetNetwork(u.Name, networkName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "network not found")
+		return
+	}
+	if err := a.Networks.BanRemove(spec.ID, channel, mask); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// searchMessages searches message history for one network/target.
+func (a *API) searchMessages(w http.ResponseWriter, r *http.Request, u store.User) {
+	q := r.URL.Query()
+	networkName := q.Get("network")
+	target := q.Get("target")
+	words := q.Get("words")
+	from := q.Get("from")
+	limit := 50
+	if v := q.Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+
+	// Resolve the network name to an ID for this user.
+	spec, err := a.Accounts.GetNetwork(u.Name, networkName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "network not found")
+		return
+	}
+
+	var wordList []string
+	if words != "" {
+		for _, w := range strings.Fields(words) {
+			if w != "" {
+				wordList = append(wordList, strings.ToLower(w))
+			}
+		}
+	}
+
+	results, err := a.Accounts.Store().Search(spec.ID, target, from, wordList, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "search failed")
+		return
+	}
+	out := make([]map[string]any, 0, len(results))
+	for _, r := range results {
+		out = append(out, map[string]any{
+			"id":      r.ID,
+			"target":  r.Target,
+			"time":    r.TimeMS,
+			"nick":    r.Nick,
+			"text":    r.Text,
+			"msgid":   r.MsgID,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // getDoc returns one of the account's stored documents (the installed plugins, for one), or null if none was saved.

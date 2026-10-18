@@ -3,6 +3,7 @@
   import { parseBundle } from '../lib/plugins/manifest'
   import { plugins } from '../lib/plugins/manager.svelte'
   import { PERMISSION_TEXT, type Manifest, type Permission } from '../lib/plugins/types'
+  import RegistryPanel from './RegistryPanel.svelte'
 
   let text = $state('')
   let error = $state('')
@@ -128,6 +129,15 @@
     </div>
   {/if}
   {#if error}<p class="error" role="alert" data-testid="plugin-error">{error}</p>{/if}
+
+  <hr class="sep" />
+
+  <h3>Plugin registry</h3>
+  <p class="note">
+    Curated plugins you can install with one click. They run in the same sandbox and only receive the permissions
+    you grant. Verified plugins are maintained by the Gestalt project.
+  </p>
+  <RegistryPanel />
 </div>
 
 <style>

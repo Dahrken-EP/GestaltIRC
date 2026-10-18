@@ -7,6 +7,7 @@
   import { notificationsSupported, requestNotifyPermission } from '../lib/notify'
   import { disablePush, enablePush, pushSubscribed, pushSupported } from '../lib/push'
   import { settings, type Density, type Theme } from '../lib/settings.svelte'
+  import { allLangs, getLang, langLabel, setLang, type Lang } from '../lib/i18n'
 
   let keywordText = $state(settings.keywords.join('\n'))
   let colorNick = $state('')
@@ -109,6 +110,8 @@
     { id: 'about', label: 'About' },
   ]
   let tab = $state<Tab>('general')
+
+  let { lang, onlangchange }: { lang: Lang; onlangchange: (l: Lang) => void } = $props()
 
   /** Servers that have words of their own, so the Highlights tab can say where they are. */
   const perServer = $derived(Object.entries(settings.networkKeywords).filter(([, w]) => w.length))
@@ -233,6 +236,17 @@
               {#each ['compact', 'comfortable'] as d (d)}<option value={d as Density}>{d}</option>{/each}
             </select>
           </label>
+          <label>
+            Language
+            <select bind:value={lang} onchange={(e) => {
+              const l = (e.currentTarget as HTMLSelectElement).value as Lang
+              setLang(l)
+              onlangchange(l)
+              settings.save()
+            }}>
+              {#each allLangs() as l (l)}<option value={l}>{langLabel(l)}</option>{/each}
+            </select>
+          </label>
         </div>
 
         <h3>Display</h3>
@@ -273,6 +287,10 @@
           Desktop notifications for mentions and private messages
         </label>
         {#if notifyMsg}<p class="note">{notifyMsg}</p>{/if}
+        <label class="check">
+          <input type="checkbox" bind:checked={settings.audioAlerts} onchange={() => settings.save()} />
+          Play a sound when you are mentioned
+        </label>
         <label class="check">
           <input type="checkbox" checked={pushOn} onchange={togglePush} disabled={!pushSupported() || pushBusy} />
           Background notifications, even when this tab is closed

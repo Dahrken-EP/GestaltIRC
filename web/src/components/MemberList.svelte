@@ -2,6 +2,7 @@
   import { nickColor } from '../lib/nickcolor'
   import type { Buffer, NetworkState, Presence } from '../lib/network.svelte'
   import { settings } from '../lib/settings.svelte'
+  import BanListPanel from './BanListPanel.svelte'
 
   let { net, buf, onnick }: { net: NetworkState; buf: Buffer; onnick: (nick: string) => void } = $props()
 
@@ -124,6 +125,10 @@
     {/each}
   </ul>
 </aside>
+
+{#if buf.kind === 'channel'}
+  <BanListPanel {net} {buf} />
+{/if}
 
 {#if menu}
   {@const nick = menu.nick}

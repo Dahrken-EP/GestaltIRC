@@ -35,6 +35,8 @@ interface Stored {
   imgurDirect: boolean
   /** High contrast mode: stronger borders and focus rings. */
   contrast: Contrast
+  /** Play a short sound when a mention arrives and the page is unfocused. */
+  audioAlerts: boolean
   notify: boolean
 }
 
@@ -57,13 +59,15 @@ const DEFAULTS: Stored = {
   threadIndicators: true,
   presenceIndicators: true,
   contrast: 'default',
+  /** Play a short sound when a mention arrives and the page is unfocused. */
+  audioAlerts: true,
   imgurDirect: false,
   // The desktop app has permission to notify already, so it starts with mentions notifying; a browser has to ask.
   notify: typeof window !== 'undefined' && !!(window as unknown as { gestaltDesktop?: unknown }).gestaltDesktop,
 }
 
 /** The keys saved to the bouncer. */
-const SYNCED = ['theme', 'density', 'keywords', 'networkKeywords', 'networkMuted', 'nickColors', 'showMembers', 'showBufferList', 'timestamps', 'sendTyping', 'pushToTalk', 'announceVoice', 'inlineMedia', 'embeds', 'previews', 'threadIndicators', 'presenceIndicators', 'contrast', 'imgurDirect'] as const
+const SYNCED = ['theme', 'density', 'keywords', 'networkKeywords', 'networkMuted', 'nickColors', 'showMembers', 'showBufferList', 'timestamps', 'sendTyping', 'pushToTalk', 'announceVoice', 'inlineMedia', 'embeds', 'previews', 'threadIndicators', 'presenceIndicators', 'contrast', 'audioAlerts', 'imgurDirect'] as const
 
 const KEY = 'irc:settings'
 const PUSH_DELAY_MS = 800
@@ -113,6 +117,8 @@ class Settings {
   presenceIndicators = $state(true)
   /** High contrast mode: stronger borders and focus rings. */
   contrast = $state<Contrast>('default')
+  /** Play a short sound when a mention arrives and the page is unfocused. */
+  audioAlerts = $state(true)
   imgurDirect = $state(false)
   notify = $state(false)
 
@@ -142,6 +148,7 @@ class Settings {
     if (typeof s.threadIndicators === 'boolean') this.threadIndicators = s.threadIndicators
     if (typeof s.presenceIndicators === 'boolean') this.presenceIndicators = s.presenceIndicators
     if (typeof s.contrast === 'string' && (s.contrast === 'default' || s.contrast === 'high')) this.contrast = s.contrast
+    if (typeof s.audioAlerts === 'boolean') this.audioAlerts = s.audioAlerts
     if (typeof s.imgurDirect === 'boolean') this.imgurDirect = s.imgurDirect
     if (typeof s.notify === 'boolean') this.notify = s.notify
   }

@@ -50,6 +50,8 @@ type channelState struct {
 	topic    string // empty if none
 	hasTopic bool
 	members  []member
+	// bans are channel ban masks (+b), stored as "mask!user@host" strings.
+	bans []string
 }
 
 func (cs *channelState) index(nick string) int {
@@ -59,6 +61,27 @@ func (cs *channelState) index(nick string) int {
 		}
 	}
 	return -1
+}
+
+func (cs *channelState) banIndex(mask string) int {
+	for i, b := range cs.bans {
+		if strings.EqualFold(b, mask) {
+			return i
+		}
+	}
+	return -1
+}
+
+func (cs *channelState) addBan(mask string) {
+	if cs.banIndex(mask) < 0 {
+		cs.bans = append(cs.bans, mask)
+	}
+}
+
+func (cs *channelState) removeBan(mask string) {
+	if i := cs.banIndex(mask); i >= 0 {
+		cs.bans = append(cs.bans[:i], cs.bans[i+1:]...)
+	}
 }
 
 func (cs *channelState) remove(nick string) {
@@ -974,6 +997,14 @@ func (n *Network) applyModeLocked(m *irc.Message) {
 				arg, args = args[0], args[1:]
 			}
 			if !isPrefix {
+				// Track channel bans (+b/-b) in group A.
+				if c == 'b' {
+					if add {
+						cs.addBan(arg)
+					} else {
+						cs.removeBan(arg)
+					}
+				}
 				continue
 			}
 			if i := cs.index(arg); i >= 0 {
@@ -1028,6 +1059,10 @@ func (n *Network) record(target string, m *irc.Message) {
 		}
 	}
 	msgid, _ := m.Tag("msgid")
+	text := ""
+	if len(m.Params) > 0 {
+		text = m.Params[len(m.Params)-1]
+	}
 	err := n.store.Append(store.Record{
 		Network: n.id,
 		Target:  target,
@@ -1035,6 +1070,8 @@ func (n *Network) record(target string, m *irc.Message) {
 		RecvMS:  now,
 		MsgID:   msgid,
 		Line:    m.Format(),
+		Nick:    m.Nick(),
+		Text:    text,
 	}, n.limit)
 	if err != nil {
 		log.Printf("store message in %s: %v", target, err)

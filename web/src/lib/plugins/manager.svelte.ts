@@ -8,6 +8,7 @@ import { parseBundle, parseStored } from './manifest'
 import { createSandbox } from './sandbox'
 import { deleteData, loadData, loadPlugins, loadStamp, saveData, savePlugins, saveStamp } from './store'
 import type { DialogAnswer, DialogRequest, EventName, InstalledPlugin, Permission, PluginEvent } from './types'
+import { REGISTRY_PLUGINS, registryPluginToInstalled, type RegistryPlugin } from './registry'
 
 export interface PluginLog {
   time: number
@@ -215,6 +216,24 @@ class PluginManager implements PluginBus {
     this.run(plugin)
     this.refresh()
     return { ok: true, name }
+  }
+
+  /** Installs a plugin from the registry with all its requested permissions. */
+  installFromRegistry(name: string): { ok: true; name: string } | { ok: false; error: string } {
+    const p = REGISTRY_PLUGINS.find((x) => x.manifest.name === name)
+    if (!p) return { ok: false, error: 'Not in registry' }
+    const plugin = registryPluginToInstalled(p)
+    return this.install(p.source, p.manifest.permissions)
+  }
+
+  /** Reports whether a plugin from the registry is already installed. */
+  isInstalledFromRegistry(name: string): boolean {
+    return this.list.some((x) => x.manifest.name === name)
+  }
+
+  /** Returns registry plugins, with installed status annotated. */
+  registryEntries(): (RegistryPlugin & { installed: boolean })[] {
+    return REGISTRY_PLUGINS.map((p) => ({ ...p, installed: this.isInstalledFromRegistry(p.manifest.name) }))
   }
 
   remove(name: string): void {
