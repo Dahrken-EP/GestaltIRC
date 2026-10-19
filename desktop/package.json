@@ -9,7 +9,8 @@
     "dev": "./build-sidecar.sh && tauri dev",
     "electron": "electron .",
     "build:linux": "./build-sidecar.sh && electron-builder --linux AppImage",
-    "test:electron": "xvfb-run -a node test/electron-smoke.cjs"
+    "test:electron": "xvfb-run -a node test/electron-smoke.cjs",
+    "test:policy": "node --test test/policy.test.cjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

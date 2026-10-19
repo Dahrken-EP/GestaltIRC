@@ -28,6 +28,9 @@ jobs:
         run: |
           npm --prefix desktop ci
           desktop/build-sidecar.sh
+      - name: The rules for what the window may show and whom it may trust
+        working-directory: desktop
+        run: npm run test:policy
       - name: Smoke test, in the real app
         working-directory: desktop
         run: |

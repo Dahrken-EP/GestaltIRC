@@ -2,7 +2,8 @@
 // is not part of the app, gets nothing.
 const { contextBridge, ipcRenderer } = require('electron')
 
-if (location.protocol === 'file:') {
+// Only the launcher page. (The main process refuses its commands to anything else as well.)
+if (location.protocol === 'file:' && /\/ui\/index\.html$/.test(location.pathname)) {
   // The same shape Tauri gives the launcher, so one launcher page serves both shells.
   contextBridge.exposeInMainWorld('__TAURI__', {
     core: { invoke: (name, args) => ipcRenderer.invoke('gestalt:' + name, args ?? {}) },

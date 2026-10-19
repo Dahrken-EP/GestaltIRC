@@ -1,6 +1,12 @@
 const { _electron } = require('playwright-core')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
 ;(async () => {
-  const app = await _electron.launch({ executablePath: require('electron'), args: ['.', '--no-sandbox'], cwd: process.cwd(), env: { ...process.env } })
+  // The app keeps its settings and the local bouncer's data under the user's home; the test uses a home of its own.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gestalt-smoke-'))
+  const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, 'config'), XDG_DATA_HOME: path.join(home, 'data') }
+  const app = await _electron.launch({ executablePath: require('electron'), args: ['.', '--no-sandbox'], cwd: process.cwd(), env })
   const page = await app.firstWindow()
   await page.waitForLoadState()
   await page.waitForSelector('#local:not(.hidden)')
@@ -18,6 +24,35 @@ const { _electron } = require('playwright-core')
   await page.getByRole('button', { name: /log in|sign in/i }).click()
   await page.waitForSelector('text=Add your first server', { timeout: 15000 })
   console.log('logged in: the client shows "Add your first server"')
+
+  // A page the bouncer serves cannot take the window anywhere else, nor to another local file (which would be
+  // given the launcher's commands).
+  const here = page.url()
+  for (const target of ['file:///etc/hostname', 'https://example.org/']) {
+    await page.evaluate((t) => { location.href = t }, target).catch(() => {})
+    await new Promise((r) => setTimeout(r, 500))
+    if (page.url() !== here) throw new Error(`the bouncer's page moved the window to ${page.url()}`)
+  }
+  console.log('the window stays on the bouncer: refused file:// and another site')
+
+  // The bouncer that comes with the app is watched: killed from outside, it is started again, and the page can reach it.
+  const userData = await app.evaluate(({ app }) => app.getPath('userData'))
+  const pidFile = path.join(userData, 'bouncer', 'bouncer.pid')
+  const before = Number(fs.readFileSync(pidFile, 'utf8'))
+  process.kill(before, 'SIGKILL')
+  let after = 0
+  for (let i = 0; i < 40 && !(after && after !== before); i++) {
+    await new Promise((r) => setTimeout(r, 250))
+    try { after = Number(fs.readFileSync(pidFile, 'utf8')) } catch { after = 0 }
+  }
+  if (!after || after === before) throw new Error('the bouncer was not started again after it was killed')
+  let up = false
+  for (let i = 0; i < 40 && !up; i++) {
+    up = await fetch(here).then((r) => r.ok, () => false)
+    if (!up) await new Promise((r) => setTimeout(r, 250))
+  }
+  if (!up) throw new Error('the restarted bouncer does not answer')
+  console.log(`the bouncer was killed (pid ${before}) and is running again (pid ${after})`)
   // The desktop app can notify without asking, and starts with mentions notifying.
   const notif = await page.evaluate(() => ({ bridge: window.gestaltDesktop?.desktop, permission: Notification.permission, notify: JSON.parse(localStorage.getItem('irc:settings') || '{}').notify ?? 'unset' }))
   console.log('notifications:', JSON.stringify(notif))
@@ -47,4 +82,8 @@ const { _electron } = require('playwright-core')
   console.log('after clicking the tray icon: visible =', back)
   if (!back) throw new Error('the tray icon did not bring the window back')
   await app.close()
+  // Quitting stops the bouncer and removes its pid file.
+  if (fs.existsSync(path.join(userData, 'bouncer', 'bouncer.pid'))) throw new Error('the pid file is still there after quitting')
+  console.log('quit: the bouncer is stopped')
+  fs.rmSync(home, { recursive: true, force: true })
 })().catch((e) => { console.error('FAIL', e.message); process.exit(1) })
