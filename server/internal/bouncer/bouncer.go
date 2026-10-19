@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"mime"
-	"net"
 	"net/http"
 	"path/filepath"
 	"reflect"
@@ -17,10 +16,8 @@ import (
 	"gestalt/server/internal/accounts"
 	"gestalt/server/internal/api"
 	"gestalt/server/internal/config"
-	"gestalt/server/internal/dcc"
 	"gestalt/server/internal/guests"
 	"gestalt/server/internal/irc"
-	"gestalt/server/internal/plugins"
 	"gestalt/server/internal/push"
 	"gestalt/server/internal/store"
 	"gestalt/server/internal/ws"
@@ -46,10 +43,8 @@ type Bouncer struct {
 	guests   *guests.Hub
 	iceFn    func(name string) any
 	keywords keywordCache
-	plugins  *plugins.Registry // server-side plugins, nil when none are configured
-	dcc      *dcc.Proxy        // DCC file transfer proxy
-	uploads  http.Handler      // public /uploads/{id}/{name} route, nil when uploads are off
-	gate     *connGate         // counts the client WebSockets
+	uploads  http.Handler // public /uploads/{id}/{name} route, nil when uploads are off
+	gate     *connGate    // counts the client WebSockets
 	// regTimeout is how long a client may take to log in.
 	regTimeout time.Duration
 
@@ -75,49 +70,6 @@ func New(conf *config.Config, st *store.Store, acc *accounts.Service) *Bouncer {
 		regTimeout: defaultRegisterTimeout,
 	}
 	b.api = api.New(acc, b, conf)
-
-	// Server-side plugins. The dispatcher turns IRC events into plugin events;
-	// the registry loads and runs plugins; the store keeps plugin data.
-	if conf.EnableServerPlugins && conf.PluginsDir != "" {
-		dispatcher := plugins.NewDispatcher()
-		pstore := plugins.NewStore(plugins.NewMemoryStore())
-		b.plugins = plugins.NewRegistry(dispatcher, pstore)
-
-		// Wire plugins into the network layer: plugins can send lines and notices.
-		plugins.WireNetwork(
-			func(network, line string) error { return b.sendToNetwork(network, line) },
-			func(network, target, text string) error { return b.sendNotice(network, target, text) },
-		)
-
-		// DCC file transfer proxy.
-		b.dcc = dcc.New(dcc.DefaultConfig())
-		go func() {
-			// Listen for DCC connections on a high port. The port is chosen by the OS.
-			ln, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				log.Printf("dcc: listen: %v", err)
-				return
-			}
-			port := ln.Addr().(*net.TCPAddr).Port
-			if err := b.dcc.Listen(port); err != nil {
-				log.Printf("dcc: listen on %d: %v", port, err)
-				return
-			}
-			log.Printf("dcc: proxy listening on port %d", port)
-		}()
-
-		// Load plugin manifests from the plugins directory.
-		manifests, err := plugins.LoadDir(conf.PluginsDir)
-		if err != nil && !errors.Is(err, plugins.ErrPluginDirMissing) {
-			log.Printf("plugins: load dir: %v", err)
-		}
-		for _, m := range manifests {
-			if err := b.plugins.Load(m); err != nil {
-				log.Printf("plugins: load %s: %v", m.Name, err)
-			}
-		}
-		log.Printf("plugins: server-side plugins %s", map[bool]string{true: "enabled", false: "disabled"}[b.plugins != nil])
-	}
 
 	b.guests = guests.New(guests.Options{
 		Host:    b,
@@ -259,62 +211,6 @@ func plainParam(s string) bool {
 	return !strings.ContainsFunc(s, func(r rune) bool { return r <= ' ' || r == 0x7f || r == ',' })
 }
 
-// sendToNetwork sends a raw line from a plugin to an upstream network.
-func (b *Bouncer) sendToNetwork(network, line string) error {
-	b.mu.Lock()
-	for _, r := range b.running {
-		if r.net.name == network {
-			n := r.net
-			b.mu.Unlock()
-			n.mu.Lock()
-			c := n.client
-			n.mu.Unlock()
-			if c == nil {
-				return errors.New("not connected")
-			}
-			return c.Send(irc.New("RAW", line))
-		}
-	}
-	b.mu.Unlock()
-	return errors.New("no such network: " + network)
-}
-
-// sendNotice sends a NOTICE from a plugin to a target on a network.
-func (b *Bouncer) sendNotice(network, target, text string) error {
-	b.mu.Lock()
-	for _, r := range b.running {
-		if r.net.name == network {
-			n := r.net
-			b.mu.Unlock()
-			n.mu.Lock()
-			c := n.client
-			n.mu.Unlock()
-			if c == nil {
-				return errors.New("not connected")
-			}
-			return c.Send(irc.New("NOTICE", target, text))
-		}
-	}
-	b.mu.Unlock()
-	return errors.New("no such network: " + network)
-}
-
-// dispatchPlugins delivers an upstream message to server-side plugins as an event.
-// Caller must not hold b.mu.
-func (b *Bouncer) dispatchPlugins(networkName string, m *irc.Message) {
-	if b.plugins == nil {
-		return
-	}
-	b.plugins.Dispatch(networkName, m)
-}
-
-// handleDCC is called when a DCC offer is received. It logs the offer and could
-// substitute the bouncer's address for the sender's so receivers connect through
-// the bouncer.
-func (b *Bouncer) handleDCC(offer *dcc.Offer, fromNick, target string) {
-	log.Printf("dcc: %s %s from %s to %s", offer.Type, offer.Name, fromNick, target)
-}
-
 // Run starts every enabled network and keeps the set in step with the
 // database until ctx is cancelled.
 func (b *Bouncer) Run(ctx context.Context) {
@@ -369,10 +265,6 @@ func (b *Bouncer) sync() {
 		ctx, cancel := context.WithCancel(b.ctx)
 		n := NewNetwork(spec, b.store, b.conf.HistoryLimit, b.conf.ReplayLimit)
 		n.guests = b.guests
-		n.onUpstreamEvent = func(networkName string, m *irc.Message) {
-			b.dispatchPlugins(networkName, m)
-		}
-		n.onDCC = b.handleDCC
 		// Look up the user ID once, so notifications can be stored.
 		var userID int64
 		if u, err := b.accounts.Store().GetUser(spec.UserName); err == nil {

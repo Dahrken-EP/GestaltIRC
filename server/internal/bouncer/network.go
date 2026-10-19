@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"gestalt/server/internal/accounts"
-	"gestalt/server/internal/dcc"
 	"gestalt/server/internal/guests"
 	"gestalt/server/internal/irc"
 	"gestalt/server/internal/netguard"
@@ -154,14 +153,6 @@ type Network struct {
 	// alert, if set, is told about messages that arrive while no client is
 	// attached, so the user can be notified another way. It must not block.
 	alert func(Alert)
-
-	// onUpstreamEvent, if set, is called for every upstream message so server-side
-	// plugins can see it as an event.
-	onUpstreamEvent func(networkName string, m *irc.Message)
-
-	// onDCC, if set, is called when a DCC offer is received so it can be forwarded
-	// to the target client with the bouncer's address substituted.
-	onDCC func(offer *dcc.Offer, fromNick, target string)
 
 	// onNotification, if set, is called when an activity-feed notification should be
 	// created for the user of this network. kind is one of "pm", "status", "security".
@@ -654,24 +645,6 @@ func (n *Network) handleUpstream(m *irc.Message) {
 			n.isupport = append(n.isupport, append([]string(nil), m.Params[1:len(m.Params)-1]...))
 		}
 		return
-	}
-
-	// Tell server-side plugins about this upstream event.
-	if n.onUpstreamEvent != nil {
-		n.onUpstreamEvent(n.name, m)
-	}
-
-	// Intercept DCC CTCP offers so they can be forwarded through the bouncer.
-	if n.onDCC != nil && (m.Command == "PRIVMSG" || m.Command == "NOTICE") {
-		if len(m.Params) >= 2 {
-			text := m.Params[len(m.Params)-1]
-			if strings.HasPrefix(text, "\x01DCC ") && strings.HasSuffix(text, "\x01") {
-				inner := text[5 : len(text)-1] // strip \x01DCC  prefix and \x01 suffix
-				if offer, err := dcc.ParseOffer(inner); err == nil {
-					n.onDCC(offer, m.Nick(), m.Param(0))
-				}
-			}
-		}
 	}
 
 	// A direct message (PRIVMSG/NOTICE to our own nick) is a private message: notify the user.

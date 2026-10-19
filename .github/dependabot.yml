@@ -25,3 +25,7 @@ updates:
       # Node's odd-numbered releases are short-lived. The image stays on a long-term-support line, moved by hand.
       - dependency-name: node
         update-types: ["version-update:semver-major"]
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly

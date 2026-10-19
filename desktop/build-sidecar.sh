@@ -16,4 +16,6 @@ cp -r "$root/web/dist" "$out/web"
 exe=bouncer
 if [ "${GOOS:-$(go env GOOS)}" = windows ]; then exe=bouncer.exe; fi
 echo "building the bouncer ($exe)"
-(cd "$root/server" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$out/$exe" ./cmd/bouncer)
+# The bouncer reports the app's version, so the two cannot disagree about which build this is.
+version=$(node -p "require('$here/package.json').version")
+(cd "$root/server" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X gestalt/server/internal/api.Version=$version" -o "$out/$exe" ./cmd/bouncer)

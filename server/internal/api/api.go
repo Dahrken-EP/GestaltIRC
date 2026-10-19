@@ -49,8 +49,10 @@ func statusFor(err error) int {
 const CookieName = "session"
 
 // Version is the bouncer's build, reported in the session answer so the client's
-// About page can show which build the server runs next to the client's own.
-const Version = "0.2.14"
+// About page can show which build the server runs next to the client's own. Builds set it with
+// -ldflags "-X gestalt/server/internal/api.Version=..."; the value here is what a plain `go build` reports, and a
+// test keeps it equal to the version in desktop/package.json, which the release is checked against.
+var Version = "0.2.14"
 
 // NetworkStatus tells the API whether a network is up. The bouncer implements it.
 type NetworkStatus interface {

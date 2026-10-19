@@ -139,3 +139,17 @@ func TestWarnsWhenTheTurnSecretIsInAFileOthersCanRead(t *testing.T) {
 		t.Errorf("warned about a private file: %v", c.Warnings)
 	}
 }
+
+func TestRemovedPluginKeysStillLoadWithAWarning(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "b.yaml")
+	if err := os.WriteFile(path, []byte("enable_server_plugins: true\nplugins_dir: /x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("a config that has the old keys no longer loads: %v", err)
+	}
+	if len(c.Warnings) != 1 || !strings.Contains(c.Warnings[0], "server-side plugins were removed") {
+		t.Errorf("warnings = %q", c.Warnings)
+	}
+}
