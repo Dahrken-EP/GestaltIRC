@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // Network ids used in tests. Real ids come from the networks table.
@@ -292,5 +293,52 @@ func TestMigrationGivesStoredLinesATime(t *testing.T) {
 		if err != nil || len(got) != 1 || got[0] != line {
 			t.Errorf("%s: got %q (%v), want %q", target, got, err, line)
 		}
+	}
+}
+
+// A long read must not hold up the writer. With one connection for everything, a search that was still
+// running kept every message waiting to be stored, and through the network's lock every client of that network.
+func TestAWriteIsNotHeldUpByARead(t *testing.T) {
+	s := openTemp(t)
+	appendLines(t, s, netA, "#c", 50, 100, 1000)
+
+	rows, err := s.rdb.Query(`SELECT line FROM messages`) // left open: a read still in progress
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	rows.Next()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- s.Append(Record{Network: netA, Target: "#c", TimeMS: 5000, RecvMS: 5000, Line: "late", Text: "late"}, 100)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a write waited for a read that was still going")
+	}
+	// And what was written is what the next read sees.
+	got, err := s.Latest(netA, "#c", 1)
+	if err != nil || len(got) != 1 || got[0] != "late" {
+		t.Fatalf("Latest after the write = %v, %v", got, err)
+	}
+	found, err := s.Search(netA, "#c", "", []string{"late"}, 5)
+	if err != nil || len(found) != 1 {
+		t.Fatalf("Search after the write = %v, %v", found, err)
+	}
+}
+
+func TestTheReadingConnectionsCannotWrite(t *testing.T) {
+	s := openTemp(t)
+	appendLines(t, s, netA, "#c", 3, 100, 1000)
+	if _, err := s.rdb.Exec(`DELETE FROM messages`); err == nil {
+		t.Fatal("a write through the reading connections was accepted")
+	}
+	if n, _ := s.Latest(netA, "#c", 10); len(n) != 3 {
+		t.Fatalf("the messages are gone: %v", n)
 	}
 }
