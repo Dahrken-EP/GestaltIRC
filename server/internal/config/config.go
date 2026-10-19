@@ -79,6 +79,20 @@ type Config struct {
 	// ReplayLimit caps how many messages per buffer are replayed to a client on attach.
 	ReplayLimit int `yaml:"replay_limit"`
 
+	// DisableUploads switches hosting of uploaded files off for the whole bouncer. On
+	// (allowed) by default: the web client can attach a file, the bouncer stores it, and a
+	// chat link reaches it for uploads_max_days. uploads_max_bytes and uploads_max_days set
+	// the limits, and uploads_dir where the files are kept.
+	DisableUploads bool `yaml:"disable_uploads"`
+	// UploadsMaxBytes caps one uploaded file, in bytes. Default 52428800 (50 MiB). Nothing
+	// larger is accepted, and the browser is told the figure so it can warn first.
+	UploadsMaxBytes int64 `yaml:"uploads_max_bytes"`
+	// UploadsMaxDays is how long an uploaded file is kept. Default 7. A file that is older
+	// disappears; links to it answer "gone" until then.
+	UploadsMaxDays int `yaml:"uploads_max_days"`
+	// UploadsDir is the directory uploaded files are kept in. Defaults to data_dir/uploads.
+	UploadsDir string `yaml:"uploads_dir"`
+
 	// PluginsDir is the directory server-side plugin manifests are loaded from.
 	// Empty disables server-side plugins.
 	PluginsDir string `yaml:"plugins_dir"`
@@ -155,6 +169,15 @@ func (c *Config) setDefaults() {
 	if c.CommandRate == 0 {
 		c.CommandRate = 10
 	}
+	if c.UploadsMaxBytes == 0 {
+		c.UploadsMaxBytes = 50 << 20
+	}
+	if c.UploadsMaxDays == 0 {
+		c.UploadsMaxDays = 7
+	}
+	if c.UploadsDir == "" {
+		c.UploadsDir = filepath.Join(c.DataDir, "uploads")
+	}
 }
 
 // Validate checks the settings.
@@ -195,6 +218,14 @@ func (c *Config) Validate() error {
 	}
 	if c.ReplayLimit < 1 || c.ReplayLimit > c.HistoryLimit {
 		errs = append(errs, errors.New("replay_limit must be between 1 and history_limit"))
+	}
+	if !c.DisableUploads {
+		if c.UploadsMaxBytes < 1024 {
+			errs = append(errs, errors.New("uploads_max_bytes must be at least 1024 for uploads to be of use"))
+		}
+		if c.UploadsMaxDays < 1 || c.UploadsMaxDays > 365 {
+			errs = append(errs, errors.New("uploads_max_days must be between 1 and 365"))
+		}
 	}
 	return errors.Join(errs...)
 }

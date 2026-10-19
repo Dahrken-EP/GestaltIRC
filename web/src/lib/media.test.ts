@@ -28,6 +28,48 @@ describe('classifyLink', () => {
     }
   })
 
+  // Files the bouncer hosts itself: put up by the attach button, shown from the
+  // bouncer's own address with no proxy.
+  describe('files on this bouncer', () => {
+    const id = 'deadbeef0123456789abcdef01234567'
+    beforeEach(() => {
+      ;(globalThis as Record<string, unknown>).location = new URL('https://bounce.test/')
+    })
+    afterEach(() => {
+      delete (globalThis as Record<string, unknown>).location
+    })
+
+    it('sorts its own uploaded pictures, songs and clips by the file name', () => {
+      expect(classifyLink(`https://bounce.test/uploads/${id}/pic.png`)).toEqual({
+        kind: 'image',
+        src: `https://bounce.test/uploads/${id}/pic.png`,
+      })
+      expect(classifyLink(`https://bounce.test/uploads/${id}/a%20song.ogg`)).toEqual({
+        kind: 'audio',
+        src: `https://bounce.test/uploads/${id}/a%20song.ogg`,
+      })
+      expect(classifyLink(`/uploads/${id}/a%20clip.webm`)).toEqual({
+        kind: 'video',
+        src: `https://bounce.test/uploads/${id}/a%20clip.webm`,
+      })
+    })
+
+    it('leaves other addresses to the ordinary proxying, whatever they call themselves', () => {
+      const lookalike = classifyLink(`https://evil.test/uploads/${id}/pic.png`)
+      expect(lookalike.kind).toBe('image')
+      expect((lookalike as { src?: string }).src).toBeUndefined()
+    })
+
+    it('does not mistake an odd number for an upload id', () => {
+      expect(classifyLink(`https://bounce.test/uploads/shortid/pic.png`)).toEqual({ kind: 'image' })
+    })
+
+    it('treats an uploaded file with other endings as a plain link', () => {
+      expect(classifyLink(`https://bounce.test/uploads/${id}/notes.pdf`).kind).toBe('link')
+      expect(classifyLink(`https://bounce.test/uploads/${id}/README`).kind).toBe('link')
+    })
+  })
+
   it('turns a giphy page or embed into its gif', () => {
     const gif = { kind: 'image', src: 'https://media.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy.gif' }
     expect(classifyLink('https://giphy.com/gifs/cat-funny-xT9IgzoKnwFNmISR8I')).toEqual(gif)

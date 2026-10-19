@@ -60,6 +60,19 @@ describe('api', () => {
     expect(f.mock.calls[0]![1].method).toBe('PUT')
     expect(JSON.parse(f.mock.calls[0]![1].body)).toEqual({ theme: 'dark' })
   })
+
+  // A refreshed page never logs in again, so the session answer is where the CSRF
+  // token comes from. Without it, adding a network is refused there ("missing
+  // CSRF token").
+  it('keeps the CSRF token from the session answer for later state-changing calls', async () => {
+    vi.stubGlobal('fetch', reply(200, { user: 'matt', networks: [], prefs: null, csrf_token: 'T-T' }))
+    await api.session()
+
+    const f = reply(200, { ok: true })
+    vi.stubGlobal('fetch', f)
+    await api.putPrefs({ theme: 'dark' })
+    expect(f.mock.calls[0]![1].headers['X-CSRF-Token']).toBe('T-T')
+  })
 })
 
 describe('websocketUrl', () => {

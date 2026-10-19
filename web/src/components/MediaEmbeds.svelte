@@ -10,8 +10,15 @@
   /** Why a picture or video would not load, when the bouncer could say (for example that the other site refused it). */
   let why = $state<Record<string, string>>({})
 
-  /** The address to load a picture or video from: the bouncer's copy, or imgur itself when the user chose that. */
+  /** The address to load a picture or video from: the bouncer's copy, or imgur itself when the user
+   *  chose that. A file the bouncer hosts under /uploads/ is already on this site, so it travels as it is. */
   function sourceOf(src: string): string {
+    try {
+      const u = new URL(src, location.href)
+      if (u.origin === location.origin && u.pathname.startsWith('/uploads/')) return src
+    } catch {
+      /* not a URL: fall through */
+    }
     return settings.imgurDirect && src.startsWith('https://i.imgur.com/') ? src : mediaSrc(src)
   }
 
@@ -43,15 +50,27 @@
   )
 
   // Fetch previews for the links that need one. The list renders only rows on screen,
-  // so this runs only for messages the user can see.
+  // so this runs only for messages the user can see. Files the bouncer hosts itself need
+  // no preview: asked through the proxy, the bouncer would be fetching its own address.
   $effect(() => {
     for (const { href, info } of items) {
-      const needsPreview = info.kind === 'link' || playerKinds.includes(info.kind as MediaKind)
+      const needsPreview =
+        (info.kind === 'link' || playerKinds.includes(info.kind as MediaKind)) && !isOwnUpload(href)
       if (!needsPreview || href in previews) continue
       previews[href] = null
       fetchPreview(href).then((p) => (previews[href] = p))
     }
   })
+
+  /** Whether the link is a file on this bouncer's own /uploads/ storage. */
+  function isOwnUpload(href: string): boolean {
+    try {
+      const u = new URL(href, location.href)
+      return u.origin === location.origin && u.pathname.startsWith('/uploads/')
+    } catch {
+      return false
+    }
+  }
 
   /** A link with no file extension can turn out to be a picture. */
   const resolvedKind = (href: string, kind: string) => {
@@ -106,7 +125,7 @@
       <p class="note">{t('media.fail_audio')} <a href={href} target="_blank" rel="noopener noreferrer nofollow">{t('media.open_link')}</a></p>
     {:else}
       <!-- svelte-ignore a11y_media_has_caption -->
-      <audio class="sound" src={mediaSrc(href)} controls preload="none" onerror={() => (failed[href] = true)}></audio>
+      <audio class="sound" src={sourceOf(href)} controls preload="none" onerror={() => (failed[href] = true)}></audio>
     {/if}
   {:else if playerKinds.includes(kind as MediaKind) && info.id}
     {#if player.is(href) && settings.embeds}

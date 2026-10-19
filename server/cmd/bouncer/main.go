@@ -31,6 +31,7 @@ import (
 	"gestalt/server/internal/push"
 	"gestalt/server/internal/secret"
 	"gestalt/server/internal/store"
+	"gestalt/server/internal/uploads"
 )
 
 const usage = `usage: bouncer [-config FILE] COMMAND [ARGS]
@@ -205,6 +206,17 @@ func serve(cfg *config.Config) error {
 	b.SetICE(func(name string) any { return iceSvc.Servers(name) })
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if !cfg.DisableUploads {
+		up, err := uploads.New(b.API(), st, cfg.UploadsDir, cfg.UploadsMaxBytes, cfg.UploadsMaxDays)
+		if err != nil {
+			log.Printf("uploads: %v — the bouncer runs without hosting files", err)
+		} else {
+			up.Register()
+			b.SetUploads(up.Public())
+			go up.ExpireLoop(ctx, 30*time.Minute)
+		}
+	}
 
 	go b.Run(ctx)
 

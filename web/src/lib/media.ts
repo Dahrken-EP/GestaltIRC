@@ -36,6 +36,7 @@ export interface Preview {
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif)$/i
 const VIDEO_EXT = /\.(mp4|webm)$/i
 const AUDIO_EXT = /\.(mp3|ogg|oga|opus|wav|flac|m4a)$/i
+const UPLOAD_ID = /^[0-9a-f]{32}$/
 const IMGUR_ID = /^[A-Za-z0-9]{5,8}$/
 const GIPHY_ID = /^[A-Za-z0-9]{6,32}$/
 const YT_ID = /^[A-Za-z0-9_-]{11}$/
@@ -176,8 +177,29 @@ export function hostedFile(u: URL): { kind: 'image' | 'video'; src: string } | n
   return null
 }
 
+/**
+ * A file the bouncer is hosting itself, put up by the client's attach button:
+ * /uploads/<id>/<name>. Shown straight from its own address, since page and file share
+ * an origin: there is nothing to proxy and no third party to keep out. A guessable
+ * pattern at some other address never counts as ours, so a hostile look-alike link still
+ * travels through the normal proxying.
+ */
+export function selfHostedFile(u: URL): { kind: 'image' | 'video' | 'audio'; src: string } | null {
+  if (typeof location !== 'undefined' && u.origin !== location.origin) return null
+  const parts = u.pathname.split('/').filter(Boolean)
+  if (parts.length !== 3 || parts[0] !== 'uploads' || !UPLOAD_ID.test(parts[1] ?? '')) return null
+  const name = parts[2] ?? ''
+  if (IMAGE_EXT.test(name)) return { kind: 'image', src: u.href }
+  if (VIDEO_EXT.test(name)) return { kind: 'video', src: u.href }
+  if (AUDIO_EXT.test(name)) return { kind: 'audio', src: u.href }
+  return null
+}
+
 /** Sorts a link into what can be shown inline. Anything unrecognised is a plain link. */
 export function classifyLink(href: string): LinkInfo {
+  // A stored link may be relative when the bouncer rewrote an old message; uploads are
+  // what that is for.
+  if (href.startsWith('/uploads/') && typeof location !== 'undefined') href = location.origin + href
   let u: URL
   try {
     u = new URL(href)
@@ -197,6 +219,8 @@ export function classifyLink(href: string): LinkInfo {
   if (sp) return { kind: 'spotify', id: sp }
   const vm = vimeoId(u)
   if (vm) return { kind: 'vimeo', id: vm }
+  const mine = selfHostedFile(u)
+  if (mine) return mine
   const hosted = hostedFile(u)
   if (hosted) return hosted
   if (IMAGE_EXT.test(u.pathname)) return { kind: 'image' }

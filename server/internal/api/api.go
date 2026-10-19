@@ -350,7 +350,16 @@ func (a *API) session(w http.ResponseWriter, r *http.Request) {
 	if prefs != "" {
 		rawPrefs = json.RawMessage(prefs)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "networks": nets, "prefs": rawPrefs})
+	// The CSRF token belongs to the session, so a page that did not log in in this
+	// visit can still send state-changing requests. Without it, the browser gets by
+	// until it must add a network or flip a server's switch, and is refused there.
+	var csrf string
+	if c, err := r.Cookie(CookieName); err == nil {
+		if tok, err := a.Accounts.SessionCSRF(c.Value); err == nil {
+			csrf = tok
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "networks": nets, "prefs": rawPrefs, "csrf_token": csrf})
 }
 
 func (a *API) getPrefs(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -528,12 +537,12 @@ func (a *API) searchMessages(w http.ResponseWriter, r *http.Request, u store.Use
 	out := make([]map[string]any, 0, len(results))
 	for _, r := range results {
 		out = append(out, map[string]any{
-			"id":      r.ID,
-			"target":  r.Target,
-			"time":    r.TimeMS,
-			"nick":    r.Nick,
-			"text":    r.Text,
-			"msgid":   r.MsgID,
+			"id":     r.ID,
+			"target": r.Target,
+			"time":   r.TimeMS,
+			"nick":   r.Nick,
+			"text":   r.Text,
+			"msgid":  r.MsgID,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

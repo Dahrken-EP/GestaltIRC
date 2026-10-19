@@ -18,4 +18,6 @@ export default defineConfig({
     },
   },
   test: { environment: 'node', include: ['src/**/*.test.ts'] },
+  // A component test needs the browser build of Svelte, not the server one.
+  resolve: process.env.VITEST ? { conditions: ['browser'] } : undefined,
 })

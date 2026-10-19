@@ -142,6 +142,27 @@ export interface GuestSettings {
   enabled: boolean
 }
 
+/** What the bouncer allows for a file sent up through the attach button. */
+export interface UploadInfo {
+  /** False when the bouncer's operator has switched uploads off. */
+  enabled: boolean
+  /** The most one file may weigh, in bytes. */
+  max_bytes: number
+  /** How many days a file is kept before it is deleted. */
+  max_days: number
+}
+
+/** The answer to a successful upload. */
+export interface UploadResult {
+  id: string
+  name: string
+  mime: string
+  size: number
+  /** The path the file is served at, relative to the bouncer's origin. */
+  url: string
+  expires_at: number
+}
+
 export const api = {
   /** The current session, or null when not logged in. */
   async session(): Promise<SessionInfo | null> {
@@ -173,6 +194,25 @@ export const api = {
   putDoc: (name: string, doc: Record<string, unknown>) => request<{ ok: boolean }>('PUT', '/api/docs/' + encodeURIComponent(name), doc),
   ice: () => request<{ iceServers: RTCIceServer[]; ttl: number }>('GET', '/api/ice'),
   getGuests: () => request<GuestSettings>('GET', '/api/guests'),
+  /** The limits for attached files, when the bouncer hosts them at all. */
+  uploadInfo: () => request<UploadInfo>('GET', '/api/uploads/info'),
+  /** Uploads one file. The name and kind travel in headers, the bytes in the body. */
+  uploadFile: async (file: File, signal?: AbortSignal): Promise<UploadResult> => {
+    const res = await fetch('/api/uploads', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: {
+        'X-File-Name': encodeURIComponent(file.name),
+        'X-CSRF-Token': csrfToken,
+      },
+      body: file,
+      signal,
+    })
+    const data = (await res.json().catch(() => null)) as (UploadResult & { error?: string }) | null
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? `request failed (${res.status})`)
+    if (!data || !data.url) throw new ApiError(res.status, 'the bouncer did not answer plainly')
+    return data
+  },
   putGuests: (enabled: boolean) => request<GuestSettings>('PUT', '/api/guests', { enabled }),
   listGuestInvites: () => request<{ invites: GuestInvite[] }>('GET', '/api/guests/invites'),
   createGuestInvite: (req: { network: string; kind: 'room' | 'direct'; target: string }) => request<GuestInvite>('POST', '/api/guests/invites', req),

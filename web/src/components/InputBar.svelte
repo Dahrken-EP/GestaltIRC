@@ -2,8 +2,11 @@
   import { applyCompletion, findCompletions, type Completion } from '../lib/complete'
   import { emojiIfLoaded, expandShortcodes, loadEmoji, matchShortcodes, shortcodeQueryAt } from '../lib/emoji'
   import type { Buffer, ChatMessage, NetworkState } from '../lib/network.svelte'
+  import { api, ApiError } from '../lib/api'
   import { t } from '../lib/i18n.svelte'
+  import { SvelteMap } from 'svelte/reactivity'
   import EmojiPicker from './EmojiPicker.svelte'
+  import { ensureUploadInfo, uploadLimits, uploadsEnabled } from '../lib/uploads.svelte'
 
   let { net, buf, reply, oncancelreply }: {
     net: NetworkState
@@ -20,8 +23,10 @@
   ]
 
   // What the user has typed, kept per buffer: every channel and DM has its own
-  // draft, and switching never carries one buffer's text into another.
-  let drafts = $state(new Map<string, string>())
+  // draft, and switching never carries one buffer's text into another. It is a
+  // SvelteMap, not a Map in $state: editing a Map in place does not reach what
+  // reads it, and the box would keep showing typed text that nothing sent ever.
+  const drafts = new SvelteMap<string, string>()
   const boxKey = $derived(`${net.id}:${buf.key}`)
   const text = $derived(drafts.get(boxKey) ?? '')
   /** The write side of `text`, always counted to the buffer shown now. */
@@ -100,8 +105,12 @@
     oncancelreply()
   }
 
-  // Tell the channel we are typing, unless this is a command or the box was emptied.
+  // Tell the channel we are typing, unless this is a command or the box was emptied. The
+  // browser has already put the typed text in the textarea; nothing keeps the per-buffer
+  // draft in step except this: without it, the state's read back stays empty and pressing
+  // Enter would send nothing.
   function oninput() {
+    if (el) setDraft(el.value)
     updateCaret()
     if (text.includes(':') && !codes) void loadEmoji().then((d) => (codes = d.byCode))
     // A closing colon turns :name: into the emoji.
@@ -204,6 +213,9 @@
     }
   }
 
+  const disconnected = $derived(buf.kind === 'p2p' ? buf.p2p?.state !== 'connected' : net.status !== 'connected')
+  // The bouncer answers once whether it hosts files; the button only exists then.
+  const uploadsHere = $derived(uploadsEnabled())
   const placeholder = $derived(
     buf.kind === 'status'
       ? t('input.type_command')
@@ -221,6 +233,48 @@
     if (who.length === 2) return t('input.typing_two', { a: who[0] ?? '', b: who[1] ?? '' })
     return t('input.typing_many')
   })
+
+  // Attached files. Only shown when the bouncer hosts uploads at all; the limits come
+  // from the bouncer's own configuration, asked for once and kept.
+  $effect(() => {
+    void ensureUploadInfo()
+  })
+  let fileInput = $state<HTMLInputElement>()
+  /** What is going up right now, or the last file that could not go up. */
+  let note = $state<{ kind: 'busy' | 'error'; text: string } | null>(null)
+
+  function fmtBytes(n: number): string {
+    if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(n % (1 << 20) ? 1 : 0)} MB`
+    if (n >= 1024) return `${Math.round(n / 1024)} KB`
+    return `${n} B`
+  }
+
+  async function attach(files: FileList | null) {
+    if (!files || files.length === 0) return
+    const limits = uploadLimits()
+    for (const file of Array.from(files)) {
+      if (limits && file.size > limits.max_bytes) {
+        note = { kind: 'error', text: t('upload.too_big', { name: file.name, size: fmtBytes(limits.max_bytes) }) }
+        continue
+      }
+      note = { kind: 'busy', text: t('upload.working', { name: file.name }) }
+      try {
+        const res = await api.uploadFile(file)
+        // The link goes in the message like any pasted address, so the user can still
+        // add words around it before sending.
+        insert(new URL(res.url, location.href).toString() + ' ')
+        note = null
+      } catch (err) {
+        const status = err instanceof ApiError ? err.status : 0
+        note =
+          status === 413
+            ? { kind: 'error', text: t('upload.too_big', { name: file.name, size: fmtBytes(limits?.max_bytes ?? 0) }) }
+            : { kind: 'error', text: err instanceof Error ? err.message : t('upload.failed', { name: file.name }) }
+      }
+    }
+    // Same file can be picked again after this.
+    if (fileInput) fileInput.value = ''
+  }
 </script>
 
 <form class="input" onsubmit={(e) => { e.preventDefault(); send() }}>
@@ -262,11 +316,18 @@
     spellcheck="true"
     autocomplete="off"
     autocapitalize="off"
-    disabled={buf.kind === 'p2p' ? buf.p2p?.state !== 'connected' : net.status !== 'connected'}
+    disabled={disconnected}
   ></textarea>
+  {#if uploadsHere}
+    <button type="button" class="emoji" title={t('input.attach')} aria-label={t('input.attach')} onclick={() => fileInput?.click()} disabled={disconnected}>📎</button>
+    <input class="filer" type="file" bind:this={fileInput} multiple hidden onchange={(e) => attach(e.currentTarget.files)} />
+  {/if}
   <button type="button" class="emoji" title={t('input.emoji_title')} aria-label={t('emoji.title')} aria-expanded={picking} onclick={() => (picking = !picking)}>😊</button>
+  <button type="submit" class="send" title={t('input.send')} aria-label={t('input.send')} disabled={disconnected || !text.trim()}>➤</button>
   </div>
-  <div class="typing" aria-live="polite">{typingText}</div>
+  <div class="typing" aria-live="polite">
+    {#if note}<span class:err={note.kind === 'error'}>{note.text}</span>{:else}{typingText}{/if}
+  </div>
 </form>
 
 <style>
@@ -289,6 +350,25 @@
   }
   .emoji:hover {
     background: var(--bg-hover);
+  }
+  .emoji:disabled {
+    opacity: 0.4;
+  }
+  .send {
+    flex: none;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 1.05em;
+    color: var(--accent);
+  }
+  .send:hover:not(:disabled) {
+    background: var(--bg-hover);
+  }
+  .send:disabled {
+    opacity: 0.35;
+  }
+  .err {
+    color: var(--danger, #d05050);
   }
   textarea {
     flex: 1;

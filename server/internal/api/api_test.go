@@ -427,6 +427,28 @@ func TestStoredDocumentsRoundTripAndAreLimited(t *testing.T) {
 	}
 }
 
+// A browser that already holds a session cookie does not log in again: it reads
+// /api/session. That answer must carry the session's CSRF token, or every
+// state-changing request after a page refresh is refused ("missing CSRF token").
+func TestSessionHandsOutTheCSRFToken(t *testing.T) {
+	e := newEnv(t, config.Config{}, fakeStatus{})
+	c, _ := e.login(t)
+
+	resp, body := e.do(t, "GET", "/api/session", "", nil, c)
+	if resp.StatusCode != 200 {
+		t.Fatalf("session = %d %v", resp.StatusCode, body)
+	}
+	csrf, _ := body["csrf_token"].(string)
+	if csrf == "" {
+		t.Fatalf("session response has no csrf_token: %v", body)
+	}
+
+	// And it is the token the state-changing request needs.
+	if resp, out := e.do(t, "PUT", "/api/prefs", `{"pane":"wide"}`, nil, c, csrf); resp.StatusCode != 200 {
+		t.Errorf("PUT /api/prefs with the session's token = %d %v", resp.StatusCode, out)
+	}
+}
+
 func TestStoredDocumentsBelongToTheAccount(t *testing.T) {
 	e := newEnv(t, config.Config{}, fakeStatus{})
 	if err := e.acc.CreateUser("eve", "another-long-password"); err != nil {

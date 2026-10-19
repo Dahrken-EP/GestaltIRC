@@ -57,6 +57,23 @@ or `--cert-file` and `--key-file` for a certificate you already have.
 `history_limit` (messages kept per buffer), `replay_limit` (replayed to a client on attach), `command_burst` and
 `command_rate` (how fast a client may send), `turn_ttl`, `sts_duration`, `allow_private_networks` and `disable_guests` (see [GUESTS.md](GUESTS.md)).
 
+## Hosted attachments
+
+The web client's paper-clip button puts a file up on the bouncer itself and links it in the chat message. The
+bouncer serves the file at `/uploads/…` and deletes it when its days run out. These settings hold the rules:
+
+| setting | default | what it does |
+| --- | --- | --- |
+| `disable_uploads` | `false` | switches the whole feature off: no paper clip, no storage, nothing served |
+| `uploads_max_bytes` | `52428800` (50 MiB) | the most one file may weigh; larger ones are refused before any storage starts |
+| `uploads_max_days` | `7` | how long a file is kept; after that it disappears and its links answer "gone" |
+| `uploads_dir` | `data_dir/uploads` | where the files are kept (one file per random id, name remembered in the database) |
+
+The files never leave the bouncer: an uploaded link resolves to the bouncer's own address, and the database
+remembers the id, the name and the expiry. Anything the browser should not render on its own (HTML, SVG, and
+everything not a picture, a sound, a video, a PDF or text) downloads instead of running, so a stored page can
+never run on the bouncer's address with a reader's session around.
+
 ## Using other IRC clients
 
 The bouncer is not only for the web client. It offers these capabilities to any client, and adapts each message to

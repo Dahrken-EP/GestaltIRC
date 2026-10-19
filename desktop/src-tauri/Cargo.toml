@@ -1,6 +1,6 @@
 [package]
 name = "gestalt-desktop"
-version = "0.2.11"
+version = "0.2.12"
 description = "Gestalt IRC, on the desktop"
 edition = "2021"
 
@@ -15,6 +15,13 @@ rand = "0.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "2.0"
+# The experimental native media stack: WebRTC in Rust instead of the webview's,
+# with audio through cpal and Opus so voice and calls do not depend on WebKit.
+webrtc = "0.13"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
+cpal = "0.16"
+opus = "0.3"
+base64 = "0.22"
 
 [profile.release]
 opt-level = "s"

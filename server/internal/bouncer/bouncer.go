@@ -48,6 +48,7 @@ type Bouncer struct {
 	keywords keywordCache
 	plugins  *plugins.Registry // server-side plugins, nil when none are configured
 	dcc      *dcc.Proxy        // DCC file transfer proxy
+	uploads  http.Handler      // public /uploads/{id}/{name} route, nil when uploads are off
 
 	mu      sync.Mutex
 	ctx     context.Context
@@ -151,6 +152,9 @@ func guestsKey(userID int64) string { return fmt.Sprintf("guests:%d", userID) }
 
 // SetICE tells the bouncer how to make the ICE server list a guest is given.
 func (b *Bouncer) SetICE(f func(name string) any) { b.iceFn = f }
+
+// SetUploads wires in the public handler for hosted files. Call it before Run.
+func (b *Bouncer) SetUploads(h http.Handler) { b.uploads = h }
 
 // Network, Deliver and Attached let the guest hub reach a user's networks. They implement guests.Host.
 func (b *Bouncer) Network(userName, name string) (int64, string, bool) {
@@ -458,6 +462,11 @@ func (b *Bouncer) routes() http.Handler {
 	})
 	mux.Handle("/ws", b.api.WithIdentity(wsHandler))
 	mux.Handle("/api/", b.api.Handler())
+	if b.uploads != nil {
+		// Files the client put up, removed on their expiry date. Public, so someone reading
+		// an uploaded link from another IRC client can open it; the id is the credential.
+		mux.Handle("GET /uploads/{id}/{name}", b.uploads)
+	}
 	if b.conf.WebDir != "" {
 		files := http.FileServer(http.Dir(b.conf.WebDir))
 		// A guest's link is the web client, which looks at its address to see it is a guest. The page says

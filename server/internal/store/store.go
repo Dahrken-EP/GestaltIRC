@@ -234,6 +234,20 @@ ALTER TABLE messages ADD COLUMN text TEXT NOT NULL DEFAULT '';
 CREATE INDEX messages_nick ON messages (network_id, target, nick);
 CREATE INDEX messages_text ON messages (network_id, target, text);
 `,
+	// 10: files the web client asked the bouncer to host for a few days. The bytes are on
+	// disk under uploads_dir; the name, kind and expiry live here.
+	`
+CREATE TABLE uploads (
+	id         TEXT    PRIMARY KEY,
+	user_id    INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+	name       TEXT    NOT NULL,
+	mime       TEXT    NOT NULL,
+	size       INTEGER NOT NULL,
+	created_ms INTEGER NOT NULL,
+	expires_ms INTEGER NOT NULL
+);
+CREATE INDEX uploads_expire ON uploads (expires_ms);
+`,
 }
 
 // upgrade applies any migrations the database has not seen.
