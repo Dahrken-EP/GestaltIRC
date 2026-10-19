@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -602,5 +603,22 @@ func TestASlowButSteadyBodyIsNotCutOff(t *testing.T) {
 	}
 	if n := <-done; n != 10 {
 		t.Fatalf("read %d bytes, want 10", n)
+	}
+}
+
+// The version a plain build reports is the one the release is made at.
+func TestVersionMatchesTheApps(t *testing.T) {
+	raw, err := os.ReadFile("../../../desktop/package.json")
+	if err != nil {
+		t.Skip("not inside the full repository")
+	}
+	var pkg struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(raw, &pkg); err != nil {
+		t.Fatal(err)
+	}
+	if Version != pkg.Version {
+		t.Errorf("api.Version = %q but desktop/package.json says %q: change both when the version changes", Version, pkg.Version)
 	}
 }

@@ -21,24 +21,29 @@
 # (or add networks later from Settings in the web client).
 
 # syntax=docker/dockerfile:1
+# The base images are pinned by digest, so a build is the same build tomorrow and a changed upstream tag cannot
+# slip in unseen. Dependabot proposes new digests weekly.
 
-FROM node:22-alpine AS web
+FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.27-alpine AS server
+FROM golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS server
 WORKDIR /src/server
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server/ ./
 # The SQLite driver is pure Go, so the binary needs no C library and the final image needs no operating system.
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/bouncer ./cmd/bouncer \
+# VERSION, when given, is the build the About page shows; without it the version in the source is kept.
+ARG VERSION=""
+RUN X=""; [ -z "$VERSION" ] || X="-X gestalt/server/internal/api.Version=$VERSION"; \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w $X" -o /out/bouncer ./cmd/bouncer \
  && mkdir /out/data
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 LABEL org.opencontainers.image.title="Gestalt" \
       org.opencontainers.image.description="A self-hosted IRC bouncer with a compact web client" \
       org.opencontainers.image.source="https://github.com/Dahrken-EP/GestaltIRC"
