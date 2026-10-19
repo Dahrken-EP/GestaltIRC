@@ -147,8 +147,10 @@
             <span class="grow">{t('settings.install_app')}</span>
             <button class="btn" data-testid="install-app" onclick={() => void install.install()}>{t('button.install')}</button>
           </div>
+          <p class="note" data-testid="install-links-note">{t('settings.install_links_note')}</p>
         {:else if install.kind === 'installed'}
           <p class="note">{t('settings.installed_app')}</p>
+          <p class="note" data-testid="install-links-note">{t('settings.install_links_note')}</p>
         {:else if install.kind === 'ios'}
           <p class="note" data-testid="install-ios">{@html t('settings.install_ios')}</p>
         {:else}
