@@ -17,5 +17,7 @@ exe=bouncer
 if [ "${GOOS:-$(go env GOOS)}" = windows ]; then exe=bouncer.exe; fi
 echo "building the bouncer ($exe)"
 # The bouncer reports the app's version, so the two cannot disagree about which build this is.
-version=$(node -p "require('$here/package.json').version")
+# (Read with sed, not node: on Windows this runs in Git Bash, whose /d/a/... paths node cannot open.)
+version=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$here/package.json" | head -1)
+[ -n "$version" ] || { echo "no version found in desktop/package.json" >&2; exit 1; }
 (cd "$root/server" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X gestalt/server/internal/api.Version=$version" -o "$out/$exe" ./cmd/bouncer)
