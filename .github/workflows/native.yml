@@ -60,3 +60,9 @@ jobs:
         env:
           CI: "1"
           PLAYWRIGHT_MODULE: ${{ github.workspace }}/web/node_modules/playwright
+      - name: A direct chat with a file each way, between the app and a browser
+        run: test/native/run.sh transfer
+        env:
+          CI: "1"
+          MB: "10"
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/web/node_modules/playwright

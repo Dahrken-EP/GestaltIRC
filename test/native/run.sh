@@ -4,7 +4,8 @@
 #
 #   npm --prefix web run build
 #   (cd desktop/src-tauri && cargo build)
-#   test/native/run.sh
+#   test/native/run.sh            # voice: both directions of audio, mute, leave, rejoin
+#   test/native/run.sh transfer   # a direct chat with a file each way (MB=20 megabytes by default)
 #
 # Needs Go, Node, Python 3, xvfb-run, Playwright (set PLAYWRIGHT_MODULE to its path if it is not global) and a
 # Chromium (CHROMIUM_PATH, or one Playwright installed). No sound server is needed: GESTALT_MEDIA_FAKE_AUDIO gives
@@ -17,6 +18,8 @@ work=$(mktemp -d)
 bouncer_port=${BOUNCER_PORT:-18280}
 irc_port=${IRC_PORT:-16780}
 password='a-long-password-1'
+scenario=${1:-voice}
+case "$scenario" in voice|transfer) ;; *) echo "usage: $0 [voice|transfer]" >&2; exit 2;; esac
 app="$root/desktop/src-tauri/target/debug/gestalt-desktop"
 pids=()
 
@@ -75,31 +78,58 @@ home="$work/home"
 mkdir -p "$home/config/net.gestalt.desktop"
 printf '{"mode":"remote","url":"http://127.0.0.1:%s/","port":0,"user":"","close_to_tray":false}' "$bouncer_port" > "$home/config/net.gestalt.desktop/settings.json"
 
-# Chromium joins first and waits; the app signs in as matt, joins, mutes, leaves and joins again.
-BASE_URL="http://127.0.0.1:$bouncer_port" TEST_PASSWORD="$password" node "$here/interop.cjs" > "$work/browser.log" 2>&1 &
-browser=$!
-sleep 8
-env -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR \
-  HOME="$home" XDG_CONFIG_HOME="$home/config" XDG_DATA_HOME="$home/data" XDG_CACHE_HOME="$home/cache" \
-  GESTALT_MEDIA_FAKE_AUDIO=1 GESTALT_MEDIA_LIVE="matt:$password" WEBKIT_DISABLE_COMPOSITING_MODE=1 \
-  timeout 80 xvfb-run -a "$app" > "$work/app.log" 2>&1 &
-appid=$!
-pids+=($appid)
+if [ "$scenario" = voice ]; then
+  # Chromium joins first and waits; the app signs in as matt, joins, mutes, leaves and joins again.
+  BASE_URL="http://127.0.0.1:$bouncer_port" TEST_PASSWORD="$password" node "$here/interop.cjs" > "$work/browser.log" 2>&1 &
+  browser=$!
+  sleep 8
+  env -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR \
+    HOME="$home" XDG_CONFIG_HOME="$home/config" XDG_DATA_HOME="$home/data" XDG_CACHE_HOME="$home/cache" \
+    GESTALT_MEDIA_FAKE_AUDIO=1 GESTALT_MEDIA_LIVE="matt:$password" WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+    timeout 80 xvfb-run -a "$app" > "$work/app.log" 2>&1 &
+  appid=$!
+  pids+=($appid)
+else
+  # The app is given a script to run in its window (a debug build feature); it signs in as matt, asks jane for a direct
+  # chat, sends a file and takes one back. Chromium is jane.
+  mb=${MB:-20}
+  sed -e "s/__MB__/$mb/" -e "s/__PASS__/$password/" "$here/transfer-desktop.js" > "$work/transfer-desktop.js"
+  MB=$mb BASE_URL="http://127.0.0.1:$bouncer_port" TEST_PASSWORD="$password" node "$here/transfer.cjs" > "$work/browser.log" 2>&1 &
+  browser=$!
+  sleep 6
+  env -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR \
+    HOME="$home" XDG_CONFIG_HOME="$home/config" XDG_DATA_HOME="$home/data" XDG_CACHE_HOME="$home/cache" \
+    GESTALT_MEDIA_FAKE_AUDIO=1 GESTALT_EVAL_JS="$work/transfer-desktop.js" GESTALT_EVAL_SECS="${EVAL_SECS:-600}" WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+    timeout "${EVAL_SECS:-600}" xvfb-run -a "$app" > "$work/app.log" 2>&1 &
+  appid=$!
+  pids+=($appid)
+fi
 
 status=0
 wait "$browser" || status=$?
+if [ "$scenario" = transfer ]; then
+  # Give the app a moment to put its last findings on the log, then read them.
+  sleep 4
+fi
 kill "$appid" 2>/dev/null || true
 cat "$work/browser.log"
 
-# From the app's side: the other implementation's audio really arrived and was decoded.
-if grep -q "the first packet arrived" "$work/app.log"; then
-  echo "ok  : the desktop app decoded the browser's audio (the first packet arrived)"
+if [ "$scenario" = voice ]; then
+  # From the app's side: the other implementation's audio really arrived and was decoded.
+  if grep -q "the first packet arrived" "$work/app.log"; then
+    echo "ok  : the desktop app decoded the browser's audio (the first packet arrived)"
+  else
+    echo "FAIL: the desktop app never decoded a packet from the browser"
+    status=1
+  fi
 else
-  echo "FAIL: the desktop app never decoded a packet from the browser"
-  status=1
+  last=$(grep '^PROBE' "$work/app.log" | tail -1 || true)
+  echo "desktop app saw: ${last#PROBE }"
+  if echo "$last" | grep -q '\\"error\\"'; then echo "FAIL: the desktop app reported an error"; status=1; fi
+  if ! echo "$last" | grep -q 'received'; then echo "FAIL: the desktop app did not finish the exchange"; status=1; fi
 fi
 if [ "$status" -ne 0 ]; then
-  echo "--- app log"; grep -E "^media:" "$work/app.log" | grep -v "driver got" | tail -25
+  echo "--- app log"; grep -E "^(media:|PROBE)" "$work/app.log" | grep -v "driver got" | tail -25
   echo "--- bouncer log"; tail -15 "$work/bouncer.log"
 fi
 exit "$status"

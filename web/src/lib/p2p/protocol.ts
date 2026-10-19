@@ -7,8 +7,12 @@
 export const MAX_CHAT_CHARS = 4000
 /** Largest file accepted. A received file is held in memory until it is saved. */
 export const MAX_FILE_BYTES = 512 * 1024 * 1024
-/** Size of each piece of a file on the wire. */
-export const CHUNK_BYTES = 64 * 1024
+/**
+ * Size of each piece of a file on the wire: 16 KiB, the size every WebRTC implementation is safe with. It must stay
+ * under 65535 bytes: the desktop app's Rust WebRTC stack reads each message into a buffer of that size and, finding
+ * one a byte too big, drops the whole channel, which made every file from a browser to the app fail at 64 KiB.
+ */
+export const CHUNK_BYTES = 16 * 1024
 /** Longest control message read at all, in characters. */
 const MAX_CONTROL_CHARS = 20_000
 /** Longest file name kept. */
