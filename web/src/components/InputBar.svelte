@@ -19,7 +19,16 @@
     'version', 'motd', 'stats', 'links', 'raw', 'clear',
   ]
 
-  let text = $state('')
+  // What the user has typed, kept per buffer: every channel and DM has its own
+  // draft, and switching never carries one buffer's text into another.
+  let drafts = $state(new Map<string, string>())
+  const boxKey = $derived(`${net.id}:${buf.key}`)
+  const text = $derived(drafts.get(boxKey) ?? '')
+  /** The write side of `text`, always counted to the buffer shown now. */
+  const setDraft = (v: string) => {
+    if (v) drafts.set(boxKey, v)
+    else drafts.delete(boxKey)
+  }
   let picking = $state(false)
   let el: HTMLTextAreaElement
   // :shortcode: completion. The emoji list is fetched the first time a colon is typed.
@@ -44,10 +53,12 @@
     if (el) grow()
   })
 
-  // Focus the input when the user switches buffer.
+  // Focus the input when the user switches buffer, and keep the caret sane:
+  // the kept draft may be shorter than the caret remembered from the last buffer.
   $effect(() => {
     void buf.key
     el?.focus()
+    if (caret > text.length) caret = text.length
   })
 
   const suggestions = $derived.by(() => {
@@ -68,7 +79,7 @@
     const s = suggestions
     if (!s) return
     const char = s.matches[i]!.char
-    text = text.slice(0, s.at.start) + char + text.slice(caret)
+    setDraft(text.slice(0, s.at.start) + char + text.slice(caret))
     const to = s.at.start + char.length
     caret = to
     queueMicrotask(() => {
@@ -84,7 +95,7 @@
     if (history[history.length - 1] !== value) history.push(value)
     if (history.length > 100) history.shift()
     histIdx = -1
-    text = ''
+    setDraft('')
     net.submit(value, reply?.msgid)
     oncancelreply()
   }
@@ -98,7 +109,7 @@
       const head = expandShortcodes(codes, text.slice(0, caret))
       if (head !== text.slice(0, caret)) {
         const rest = text.slice(caret)
-        text = head + rest
+        setDraft(head + rest)
         const to = head.length
         caret = to
         queueMicrotask(() => el.setSelectionRange(to, to))
@@ -123,7 +134,7 @@
       cycle = { original: text, c, i: 0, applied: '' }
     }
     const out = applyCompletion(cycle.original, cycle.c, cycle.c.matches[cycle.i]!)
-    text = out.text
+    setDraft(out.text)
     cycle.applied = out.text
     queueMicrotask(() => el.setSelectionRange(out.caret, out.caret))
   }
@@ -132,7 +143,7 @@
   function insert(char: string) {
     const at = el?.selectionStart ?? text.length
     const end = el?.selectionEnd ?? at
-    text = text.slice(0, at) + char + text.slice(end)
+    setDraft(text.slice(0, at) + char + text.slice(end))
     const caret = at + char.length
     queueMicrotask(() => {
       el?.focus()
@@ -180,15 +191,15 @@
         histIdx = history.length
       }
       histIdx = Math.max(0, histIdx - 1)
-      text = history[histIdx]!
+      setDraft(history[histIdx]!)
     } else if (e.key === 'ArrowDown' && histIdx !== -1 && !text.includes('\n')) {
       e.preventDefault()
       histIdx++
       if (histIdx >= history.length) {
         histIdx = -1
-        text = draft
+        setDraft(draft)
       } else {
-        text = history[histIdx]!
+        setDraft(history[histIdx]!)
       }
     }
   }
@@ -238,7 +249,7 @@
   <textarea
     id="msg-input"
     bind:this={el}
-    bind:value={text}
+    value={text}
     {onkeydown}
     {oninput}
     onkeyup={updateCaret}
