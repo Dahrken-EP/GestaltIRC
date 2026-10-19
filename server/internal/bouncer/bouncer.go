@@ -320,6 +320,25 @@ func (b *Bouncer) network(id int64) *Network {
 	return nil
 }
 
+// cacheRules tells browsers how long the web client's files stay good. The build gives the files under /assets/ names
+// made from their contents, so one never changes and may be kept for a year. Everything else (the page that names
+// those files, the service worker, the manifest, the icons) must be asked about every time: the file server sends a
+// Last-Modified and nothing more, which lets a browser decide for itself how long to go on using its copy, and one
+// does (a tenth of the file's age is the usual choice). A desktop app that is left running, or started again days
+// later, then shows the page of the version it first loaded, long after the server has been updated. "no-cache" is
+// the right word here: keep the copy, but check with the server before using it, which is a short 304 when nothing
+// changed.
+func cacheRules(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func init() {
 	// The web app manifest is not in Go's built-in table, and a browser will not install the page without
 	// the right type. A machine with a system mime.types may already know it; this makes sure of it.
@@ -354,7 +373,7 @@ func (b *Bouncer) routes() http.Handler {
 		mux.Handle("GET /uploads/{id}/{name}", b.uploads)
 	}
 	if b.conf.WebDir != "" {
-		files := http.FileServer(http.Dir(b.conf.WebDir))
+		files := cacheRules(http.FileServer(http.Dir(b.conf.WebDir)))
 		// A guest's link is the web client, which looks at its address to see it is a guest. The page says
 		// nothing about who made the link, and is not kept, so a link that is revoked is not shown from a cache.
 		mux.HandleFunc("GET /guest/{token}", func(w http.ResponseWriter, r *http.Request) {

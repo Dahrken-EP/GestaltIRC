@@ -2,6 +2,7 @@
 // which buffer is on screen. Each network is one WebSocket, logged in with the
 // session cookie, so no password is kept in the page after the login form.
 
+import { reloadIfStale } from './staleness'
 import { api, websocketUrl, type GuestInvite, type GuestSettings, type NetworkInfo, type SessionInfo } from './api'
 import { formFromNetwork, toRequest } from './networkform'
 import { Connection } from './irc/connection'
@@ -122,6 +123,8 @@ class App {
   }
 
   private begin(session: SessionInfo): void {
+    // A page left over from before the server was updated is replaced by a fresh one before it starts anything.
+    if (session.version && reloadIfStale(__APP_VERSION__, session.version)) return
     this.user = session.user
     this.bouncerVersion = session.version ?? ''
     settings.connectRemote(session.prefs, (prefs) => {

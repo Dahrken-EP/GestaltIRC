@@ -142,6 +142,7 @@ struct App {
     /// The one address the window may show besides the launcher.
     allowed: Mutex<Option<Url>>,
     /// Origins already given the voice bridge (see `grant_media`).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     media_granted: Mutex<std::collections::HashSet<String>>,
 }
 
@@ -404,6 +405,38 @@ fn allow_media(win: &WebviewWindow) {
 #[cfg(not(target_os = "linux"))]
 fn allow_media(_win: &WebviewWindow) {}
 
+/// Throws away what the web view has cached of pages (not cookies or settings), so that a page of the web client left
+/// over from before the server was updated is not shown again: the bouncer's page is fetched afresh each time the app
+/// starts. (The bouncer now says which of its files must be checked before use; this is for copies cached before that.)
+#[cfg(target_os = "linux")]
+fn forget_cached_pages(win: &WebviewWindow) {
+    let _ = win.with_webview(|w| {
+        use webkit2gtk::{gio::Cancellable, glib::TimeSpan, WebViewExt, WebsiteDataManagerExtManual, WebsiteDataTypes};
+        if let Some(manager) = WebViewExt::website_data_manager(&w.inner()) {
+            manager.clear(
+                WebsiteDataTypes::DISK_CACHE | WebsiteDataTypes::MEMORY_CACHE,
+                TimeSpan::from_seconds(0),
+                None::<&Cancellable>,
+                |done| {
+                    if let Err(e) = done {
+                        eprintln!("could not clear the cached pages: {e}");
+                    }
+                },
+            );
+        }
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn forget_cached_pages(_win: &WebviewWindow) {}
+
+/// Loads the current page again from the server.
+fn reload(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.eval("location.reload()");
+    }
+}
+
 /// The hosts of the players the web client embeds once a person presses "Play here" (the same list as `frame-src` in the
 /// bouncer's content security policy, internal/api/headers.go). The window's navigation rule sees an embed loading in
 /// its frame as a navigation, like any other, and without these it refuses it: the frame stays a blank square.
@@ -483,6 +516,7 @@ fn main() {
                 .build()?;
             *app.state::<App>().launcher.lock().unwrap() = win.url().ok();
             allow_media(&win);
+            forget_cached_pages(&win);
 
             // The native media stack gets the window it reports state on, and lives as
             // long as the app does (managed state is dropped at exit, which closes its
@@ -611,6 +645,7 @@ fn main() {
                 .item(
                     &SubmenuBuilder::new(app, "Gestalt")
                         .item(&MenuItem::with_id(app, "show", "Show Gestalt", true, None::<&str>)?)
+                        .item(&MenuItem::with_id(app, "reload", "Reload page", true, None::<&str>)?)
                         .item(&MenuItem::with_id(app, "change", "Change server…", true, None::<&str>)?)
                         .item(&MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?)
                         .build()?,
@@ -619,6 +654,7 @@ fn main() {
             app.set_menu(menu)?;
             app.on_menu_event(|app, event| match event.id().as_ref() {
                 "show" => show_window(app),
+                "reload" => reload(app),
                 "change" => {
                     show_window(app);
                     if let Some(w) = app.get_webview_window("main") {
@@ -632,6 +668,7 @@ fn main() {
             // The tray icon: a click shows or hides the window, and its menu is the way out of a hidden one.
             let tray_menu = MenuBuilder::new(app)
                 .item(&MenuItem::with_id(app, "show", "Show Gestalt", true, None::<&str>)?)
+                .item(&MenuItem::with_id(app, "reload", "Reload page", true, None::<&str>)?)
                 .item(&MenuItem::with_id(app, "change", "Change server…", true, None::<&str>)?)
                 .separator()
                 .item(&MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?)
@@ -643,6 +680,7 @@ fn main() {
             let has_tray = tray
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => show_window(app),
+                    "reload" => reload(app),
                     "change" => {
                         show_window(app);
                         if let Some(w) = app.get_webview_window("main") {
