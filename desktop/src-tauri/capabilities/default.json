@@ -1,17 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window: the launcher is part of the app, and a bouncer's page, which the user named, is trusted as far as the voice bridge goes — the app only ever navigates the window to the built-in launcher or the address the user chose, so a page loaded at all is allowed to speak.",
+  "description": "The launcher page, which is part of the app, may talk to it. A bouncer's page, which is not, gets nothing from here: the voice bridge is granted to its exact address at run time (grant_media in main.rs).",
   "windows": ["main"],
   "local": true,
-  "remote": {
-    "urls": ["http://127.0.0.1:18080", "http://*:*", "https://*:*"]
-  },
   "permissions": [
     "core:default",
-    "allow-get-state", "allow-connect-remote", "allow-start-local", "allow-report",
-    "allow-native-media", "allow-pc-create", "allow-pc-local", "allow-pc-remote",
-    "allow-pc-track", "allow-pc-uplink", "allow-pc-channel", "allow-pc-send",
-    "allow-pc-volume", "allow-pc-close", "allow-mic-start", "allow-mic-mute", "allow-mic-stop"
+    "allow-get-state", "allow-connect-remote", "allow-start-local", "allow-report"
   ]
 }
