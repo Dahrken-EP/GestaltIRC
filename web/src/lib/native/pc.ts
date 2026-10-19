@@ -67,9 +67,20 @@ export class NativePC {
   constructor(private br: Bridge, config: RTCConfiguration) {
     this.id = nextId()
     events(br).on(this.id, (e) => this.onEvent(e))
-    this.br
-      .invoke('pc_create', { id: this.id, ice: (config.iceServers ?? []) as unknown })
-      .catch(() => this.break())
+    this.run('pc_create', { id: this.id, ice: (config.iceServers ?? []) as unknown }).catch(() => this.break())
+  }
+
+  /**
+   * Every command of this connection goes through here, one at a time and in the order the page gave them.
+   * The Rust side runs commands concurrently, and the order matters: a connection must exist before it is
+   * used, and a data channel must exist before the offer that is meant to carry it. (Commands used to run on
+   * the app's main thread, one after another, and the page leaned on that without saying so.)
+   */
+  private tail: Promise<unknown> = Promise.resolve()
+  private run<T = unknown>(cmd: string, args: Record<string, unknown>): Promise<T> {
+    const p = this.tail.then(() => this.br.invoke<T>(cmd, args))
+    this.tail = p.catch(() => undefined)
+    return p
   }
 
   get connectionState(): RTCPeerConnectionState {
@@ -104,7 +115,7 @@ export class NativePC {
    */
   async setLocalDescription(desc: { type: 'offer' | 'answer'; sdp: string }): Promise<void> {
     await this.tellIntent()
-    const sdp = await this.br.invoke<string>('pc_local', { id: this.id, kind: desc.type })
+    const sdp = await this.run<string>('pc_local', { id: this.id, kind: desc.type })
     this.local = { type: desc.type, sdp }
     this.gatherState = 'complete'
     const listeners = this.gatherListeners.splice(0)
@@ -119,13 +130,13 @@ export class NativePC {
    */
   async setRemoteDescription(desc: { type: 'offer' | 'answer'; sdp: string }): Promise<void> {
     await this.tellIntent()
-    await this.br.invoke('pc_remote', { id: this.id, kind: desc.type, sdp: desc.sdp })
+    await this.run('pc_remote', { id: this.id, kind: desc.type, sdp: desc.sdp })
   }
 
   /** Declares the page's audio wish at most once, at whichever description step comes first. */
   private async tellIntent(): Promise<void> {
-    if (this.wantMic) await this.br.invoke('pc_track', { id: this.id, kind: 'mic' })
-    else if (this.wantRecv) await this.br.invoke('pc_track', { id: this.id, kind: 'recv' })
+    if (this.wantMic) await this.run('pc_track', { id: this.id, kind: 'mic' })
+    else if (this.wantRecv) await this.run('pc_track', { id: this.id, kind: 'recv' })
     this.wantMic = false
     this.wantRecv = false
   }
@@ -158,14 +169,14 @@ export class NativePC {
 
   /** How loud this person plays, 0 to 1, applied while they are mixed for the speakers. */
   setVolume(v: number): void {
-    void this.br.invoke('pc_volume', { id: this.id, v }).catch(() => {})
+    void this.run('pc_volume', { id: this.id, v }).catch(() => {})
   }
 
   /** Opens one channel. Its 'open' arrives with the connection's own. */
   createDataChannel(label: string, _init?: RTCDataChannelInit): RTCDataChannel {
-    const ch = new BridgeChannel(this.br, this.id, label)
+    const ch = new BridgeChannel(this.br, this.id, label, (cmd, args) => this.run(cmd, args))
     this.channels.set(label, ch)
-    void this.br.invoke('pc_channel', { id: this.id, label }).catch(() => this.break())
+    void this.run('pc_channel', { id: this.id, label }).catch(() => this.break())
     return ch as unknown as RTCDataChannel
   }
 
@@ -176,7 +187,7 @@ export class NativePC {
     const listeners = [...this.changeListeners]
     for (const ch of this.channels.values()) ch.markClosed()
     events(this.br).off(this.id)
-    void this.br.invoke('pc_close', { id: this.id }).catch(() => {})
+    void this.run('pc_close', { id: this.id }).catch(() => {})
     this.closed = true
     this.connState = 'closed'
     for (const fn of listeners) fn()
@@ -207,7 +218,7 @@ export class NativePC {
           mine.markOpen()
         } else {
           // A channel the other side opened: open it here and hand it over.
-          const next = new BridgeChannel(this.br, this.id, label)
+          const next = new BridgeChannel(this.br, this.id, label, (cmd, args) => this.run(cmd, args))
           next.markOpen()
           this.channels.set(label, next)
           this.ondatachannel?.({ channel: next as unknown as RTCDataChannel })
@@ -285,7 +296,13 @@ export class BridgeChannel {
   private openFired = false
   private closeFired = false
 
-  constructor(private br: Bridge, private pc: number, label: string) {
+  /** `run` sends a command in the connection's order; without one (a test) the bridge is called directly. */
+  constructor(
+    private br: Bridge,
+    private pc: number,
+    label: string,
+    private run: (cmd: string, args: Record<string, unknown>) => Promise<unknown> = (cmd, args) => this.br.invoke(cmd, args),
+  ) {
     this.label = label
   }
 
@@ -309,8 +326,8 @@ export class BridgeChannel {
       n = u8.byteLength
     }
     this.buf += n
-    void this.br
-      .invoke('pc_send', args)
+    // In order: chunks of a file must reach the channel in the order they were handed over.
+    void this.run('pc_send', args)
       .catch(() => this.onerror?.())
       .finally(() => {
         this.buf = Math.max(0, this.buf - n)
