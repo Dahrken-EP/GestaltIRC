@@ -88,16 +88,20 @@ type API struct {
 
 // New builds the API with its default rate limits.
 func New(acc *accounts.Service, nets NetworkStatus, conf *config.Config) *API {
+	// A Config built by hand, not loaded, has no defaults filled in.
+	perUser := conf.APIRate
+	if perUser < 1 {
+		perUser = 600
+	}
 	a := &API{
 		Accounts:    acc,
 		Networks:    nets,
 		Conf:        conf,
 		LoginByIP:   ratelimit.New(10, 10*time.Minute),
 		LoginByUser: ratelimit.New(20, 10*time.Minute),
-		// 60 requests per minute per IP, 120 per minute per user.
-		APIByIP:   ratelimit.New(60, time.Minute),
-		APIByUser: ratelimit.New(120, time.Minute),
-		mux:       http.NewServeMux(),
+		APIByIP:     ratelimit.New(2*perUser, time.Minute),
+		APIByUser:   ratelimit.New(perUser, time.Minute),
+		mux:         http.NewServeMux(),
 	}
 	a.mux.HandleFunc("POST /api/login", a.login)
 	a.mux.HandleFunc("POST /api/logout", a.logout)
@@ -233,17 +237,23 @@ func (a *API) authed(h func(http.ResponseWriter, *http.Request, store.User)) htt
 			}
 		}
 
-		// Rate-limit authenticated API endpoints per IP and per user.
+		// Rate-limit authenticated API endpoints per IP and per user. The limiter counts what it is told of, so
+		// every request that gets this far is recorded; one that is turned away is not, or a client that keeps
+		// retrying would never get out of the penalty.
 		ip := a.ClientIP(r)
-		for _, k := range []struct {
+		keys := []struct {
 			l   *ratelimit.Limiter
 			key string
-		}{{a.APIByIP, "ip:" + ip}, {a.APIByUser, "user:" + u.Name}} {
+		}{{a.APIByIP, "ip:" + ip}, {a.APIByUser, "user:" + u.Name}}
+		for _, k := range keys {
 			if blocked, wait := k.l.Blocked(k.key); blocked {
 				w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
 				writeError(w, http.StatusTooManyRequests, "API rate limit exceeded; try again later")
 				return
 			}
+		}
+		for _, k := range keys {
+			k.l.Fail(k.key)
 		}
 		h(w, r, u)
 	}
