@@ -91,6 +91,9 @@ type Config struct {
 	// UploadsMaxBytes caps one uploaded file, in bytes. Default 52428800 (50 MiB). Nothing
 	// larger is accepted, and the browser is told the figure so it can warn first.
 	UploadsMaxBytes int64 `yaml:"uploads_max_bytes"`
+	// UploadsUserQuota caps the files one account may have up at a time, in bytes. Default 524288000 (500 MiB).
+	// An upload that would go past it is refused until older files expire.
+	UploadsUserQuota int64 `yaml:"uploads_user_quota_bytes"`
 	// UploadsMaxDays is how long an uploaded file is kept. Default 7. A file that is older
 	// disappears; links to it answer "gone" until then.
 	UploadsMaxDays int `yaml:"uploads_max_days"`
@@ -179,6 +182,9 @@ func (c *Config) setDefaults() {
 	if c.UploadsMaxBytes == 0 {
 		c.UploadsMaxBytes = 50 << 20
 	}
+	if c.UploadsUserQuota == 0 {
+		c.UploadsUserQuota = 500 << 20
+	}
 	if c.UploadsMaxDays == 0 {
 		c.UploadsMaxDays = 7
 	}
@@ -232,6 +238,9 @@ func (c *Config) Validate() error {
 	if !c.DisableUploads {
 		if c.UploadsMaxBytes < 1024 {
 			errs = append(errs, errors.New("uploads_max_bytes must be at least 1024 for uploads to be of use"))
+		}
+		if c.UploadsUserQuota < c.UploadsMaxBytes {
+			errs = append(errs, errors.New("uploads_user_quota_bytes must be at least uploads_max_bytes, or one file could never fit"))
 		}
 		if c.UploadsMaxDays < 1 || c.UploadsMaxDays > 365 {
 			errs = append(errs, errors.New("uploads_max_days must be between 1 and 365"))

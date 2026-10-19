@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"gestalt/server/internal/api"
@@ -48,6 +49,9 @@ var inlineTypes = map[string]bool{
 
 const maxNameLen = 200
 
+// uploadStall is how long an upload may go without sending a byte before it is dropped.
+const uploadStall = 30 * time.Second
+
 type Service struct {
 	api   *api.API
 	store *store.Store
@@ -55,6 +59,49 @@ type Service struct {
 	max   int64
 	days  int
 	now   func() time.Time
+
+	// quota is the most one user may have up at once; 0 means no limit. inflight is what uploads that have
+	// started may still add, held back so that several at once cannot go past it together.
+	quota    int64
+	mu       sync.Mutex
+	inflight map[int64]int64
+}
+
+// SetQuota sets how many bytes of unexpired files one user may have. Zero or less removes the limit.
+func (w *Service) SetQuota(n int64) { w.quota = n }
+
+// reserve works out how large the next upload from u may be (the file size limit, or what is left of the
+// user's quota if that is less) and holds that much back until release. It returns 0 when nothing is left.
+func (w *Service) reserve(userID int64) (limit int64, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	limit = w.max
+	if w.quota > 0 {
+		used, err := w.store.UserUploadBytes(userID, w.now().UnixMilli())
+		if err != nil {
+			return 0, err
+		}
+		left := w.quota - used - w.inflight[userID]
+		if left < limit {
+			limit = left
+		}
+	}
+	if limit <= 0 {
+		return 0, nil
+	}
+	if w.inflight == nil {
+		w.inflight = map[int64]int64{}
+	}
+	w.inflight[userID] += limit
+	return limit, nil
+}
+
+func (w *Service) release(userID, n int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.inflight[userID] -= n; w.inflight[userID] <= 0 {
+		delete(w.inflight, userID)
+	}
 }
 
 // New makes the service. dir is created if missing. The caller decides whether the
@@ -86,10 +133,14 @@ type Limits struct {
 	Enabled  bool  `json:"enabled"`
 	MaxBytes int64 `json:"max_bytes"`
 	MaxDays  int   `json:"max_days"`
+	// QuotaBytes is what one user may have up at once (0: no limit), and UsedBytes what this user has now.
+	QuotaBytes int64 `json:"quota_bytes"`
+	UsedBytes  int64 `json:"used_bytes"`
 }
 
-func (w *Service) info(wr http.ResponseWriter, r *http.Request, _ store.User) {
-	api.WriteJSON(wr, http.StatusOK, Limits{Enabled: true, MaxBytes: w.max, MaxDays: w.days})
+func (w *Service) info(wr http.ResponseWriter, r *http.Request, u store.User) {
+	used, _ := w.store.UserUploadBytes(u.ID, w.now().UnixMilli())
+	api.WriteJSON(wr, http.StatusOK, Limits{Enabled: true, MaxBytes: w.max, MaxDays: w.days, QuotaBytes: w.quota, UsedBytes: used})
 }
 
 // receive takes one file: the bytes, a percent-encoded X-File-Name, and nothing more.
@@ -112,13 +163,38 @@ func (w *Service) receive(wr http.ResponseWriter, r *http.Request, u store.User)
 		api.WriteError(wr, http.StatusRequestEntityTooLarge, "the file is larger than this bouncer accepts")
 		return
 	}
-	body := http.MaxBytesReader(wr, r.Body, w.max)
+	limit, err := w.reserve(u.ID)
+	if err != nil {
+		log.Printf("uploads: counting %s's files: %v", u.Name, err)
+		api.WriteError(wr, http.StatusInternalServerError, "the files could not be counted")
+		return
+	}
+	if limit == 0 {
+		api.WriteError(wr, http.StatusInsufficientStorage, "you have too many files up already; wait for some to expire")
+		return
+	}
+	defer w.release(u.ID, limit)
+	if r.ContentLength > limit {
+		api.WriteError(wr, http.StatusInsufficientStorage, "you have too many files up already; wait for some to expire")
+		return
+	}
+	// A body cut off at a limit lower than the size limit hit the user's quota, not the size of a file.
+	bodyFailed := func(err error) {
+		var tooBig *http.MaxBytesError
+		if limit < w.max && errors.As(err, &tooBig) {
+			api.WriteError(wr, http.StatusInsufficientStorage, "you have too many files up already; wait for some to expire")
+			return
+		}
+		writeBodyError(wr, err, w.max)
+	}
+	// A client that goes quiet half way through is dropped; a slow one that keeps sending is not.
+	body := api.StallGuard(wr, http.MaxBytesReader(wr, r.Body, limit), uploadStall)
 
 	// The first block decides what the file really is, not what the sender claims.
 	head := make([]byte, 512)
 	n, err := io.ReadFull(body, head)
 	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
-		writeBodyError(wr, err, w.max)
+		bodyFailed(err)
 		return
 	}
 	if n == 0 {
@@ -157,7 +233,7 @@ func (w *Service) receive(wr http.ResponseWriter, r *http.Request, u store.User)
 		}
 		if werr != nil {
 			_ = os.Remove(path)
-			writeBodyError(wr, werr, w.max)
+			bodyFailed(werr)
 			return
 		}
 	}

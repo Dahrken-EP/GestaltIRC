@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -649,6 +650,29 @@ func (a *API) cookie(r *http.Request, value string, maxAge int) *http.Cookie {
 	}
 }
 
+// bodyStall is how long a client may send nothing in the middle of a small request body.
+const bodyStall = 10 * time.Second
+
+// StallGuard wraps a request body so that a client that stops sending for d has its read fail, and the
+// handler with it. A deadline for the whole request would cut off a big upload on a slow line; this one
+// restarts with every byte that arrives, so only a connection that has gone quiet is dropped. Without it a
+// handful of connections that send a header and then nothing hold their handlers for ever.
+func StallGuard(w http.ResponseWriter, body io.Reader, d time.Duration) io.Reader {
+	return &stallReader{rc: http.NewResponseController(w), r: body, d: d}
+}
+
+type stallReader struct {
+	rc *http.ResponseController
+	r  io.Reader
+	d  time.Duration
+}
+
+func (s *stallReader) Read(p []byte) (int, error) {
+	// Not every server supports deadlines (a test recorder does not); then the guard simply does nothing.
+	_ = s.rc.SetReadDeadline(time.Now().Add(s.d))
+	return s.r.Read(p)
+}
+
 // ReadJSON decodes a JSON request body of at most max bytes into v. On failure
 // it writes the error response and returns false.
 func ReadJSON(w http.ResponseWriter, r *http.Request, max int64, v any) bool {
@@ -660,7 +684,7 @@ func readJSON(w http.ResponseWriter, r *http.Request, max int64, v any) bool {
 		writeError(w, http.StatusUnsupportedMediaType, "send application/json")
 		return false
 	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, max))
+	dec := json.NewDecoder(StallGuard(w, http.MaxBytesReader(w, r.Body, max), bodyStall))
 	if err := dec.Decode(v); err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {

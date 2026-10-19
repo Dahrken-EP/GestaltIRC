@@ -212,6 +212,7 @@ func serve(cfg *config.Config) error {
 		if err != nil {
 			log.Printf("uploads: %v — the bouncer runs without hosting files", err)
 		} else {
+			up.SetQuota(cfg.UploadsUserQuota)
 			up.Register()
 			b.SetUploads(up.Public())
 			go up.ExpireLoop(ctx, 30*time.Minute)
@@ -220,7 +221,12 @@ func serve(cfg *config.Config) error {
 
 	go b.Run(ctx)
 
-	srv := &http.Server{Addr: cfg.Listen, Handler: b.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	// No ReadTimeout or WriteTimeout: they would end WebSockets, long uploads and the media proxy's streams. A body that
+	// stalls is dropped by api.StallGuard instead, and a connection that sits idle between requests by IdleTimeout.
+	srv := &http.Server{
+		Addr: cfg.Listen, Handler: b.Handler(),
+		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10,
+	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
 	log.Printf("bouncer listening on %s", cfg.Listen)

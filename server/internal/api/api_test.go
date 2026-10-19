@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -553,5 +555,52 @@ func TestRateLimitIsPerAccount(t *testing.T) {
 	}
 	if resp, _ := e.do(t, "GET", "/api/prefs", "", nil, eve); resp.StatusCode != 200 {
 		t.Errorf("another account's first request = %d, want 200: the limit is per account", resp.StatusCode)
+	}
+}
+
+func TestAStalledRequestBodyIsCutOff(t *testing.T) {
+	done := make(chan error, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := io.ReadAll(StallGuard(w, r.Body, 200*time.Millisecond))
+		done <- err
+	}))
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Promises a megabyte, sends ten bytes, and goes quiet.
+	fmt.Fprintf(conn, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1048576\r\n\r\n0123456789")
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("the read ended without an error")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a client that went quiet kept its handler")
+	}
+}
+
+func TestASlowButSteadyBodyIsNotCutOff(t *testing.T) {
+	done := make(chan int, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(StallGuard(w, r.Body, 300*time.Millisecond))
+		done <- len(b)
+	}))
+	defer srv.Close()
+	conn, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\n")
+	for i := 0; i < 10; i++ { // a second in all, longer than the guard, but never silent for long
+		fmt.Fprint(conn, "x")
+		time.Sleep(100 * time.Millisecond)
+	}
+	if n := <-done; n != 10 {
+		t.Fatalf("read %d bytes, want 10", n)
 	}
 }

@@ -49,6 +49,9 @@ type Bouncer struct {
 	plugins  *plugins.Registry // server-side plugins, nil when none are configured
 	dcc      *dcc.Proxy        // DCC file transfer proxy
 	uploads  http.Handler      // public /uploads/{id}/{name} route, nil when uploads are off
+	gate     *connGate         // counts the client WebSockets
+	// regTimeout is how long a client may take to log in.
+	regTimeout time.Duration
 
 	mu      sync.Mutex
 	ctx     context.Context
@@ -64,10 +67,12 @@ type runningNetwork struct {
 // New builds a bouncer. Call Run to start the networks.
 func New(conf *config.Config, st *store.Store, acc *accounts.Service) *Bouncer {
 	b := &Bouncer{
-		conf:     conf,
-		store:    st,
-		accounts: acc,
-		running:  map[int64]*runningNetwork{},
+		conf:       conf,
+		store:      st,
+		accounts:   acc,
+		running:    map[int64]*runningNetwork{},
+		gate:       newConnGate(),
+		regTimeout: defaultRegisterTimeout,
 	}
 	b.api = api.New(acc, b, conf)
 
@@ -440,7 +445,16 @@ func (b *Bouncer) routes() http.Handler {
 	wsHandler := ws.Handler(b.conf.AllowedOrigins, func(ctx context.Context, conn irc.LineConn) {
 		newSession(b, conn, api.IdentityFrom(ctx)).run(ctx)
 	})
-	mux.Handle("/ws", b.api.WithIdentity(wsHandler))
+	mux.Handle("/ws", b.api.WithIdentity(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t := b.gate.enter(api.IdentityFrom(r.Context()).IP)
+		if t == nil {
+			w.Header().Set("Retry-After", "10")
+			http.Error(w, "too many connections", http.StatusServiceUnavailable)
+			return
+		}
+		defer t.leave()
+		wsHandler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ticketKey{}, t)))
+	})))
 	mux.Handle("/api/", b.api.Handler())
 	if b.uploads != nil {
 		// Files the client put up, removed on their expiry date. Public, so someone reading
