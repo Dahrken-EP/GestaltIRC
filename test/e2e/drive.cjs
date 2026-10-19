@@ -15,6 +15,10 @@ const ok = (cond, msg) => {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+/** Console errors worth failing over. Chromium logs permissions-policy probes of its own
+ * (compute-pressure) that nothing on the page asked for; those are browser noise, not the app. */
+const appConsoleError = (m) => m.type() === 'error' && !m.text().includes('compute-pressure')
+
 async function login(page, user = 'matt', password = PASSWORD) {
   await page.waitForSelector('form.card')
   await page.fill('input[autocomplete=username]', user)
@@ -66,7 +70,7 @@ async function send(page, text) {
   const requested = []
   page.on('request', (r) => requested.push(r.url()))
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message))
-  page.on('console', (m) => m.type() === 'error' && errors.push('console: ' + m.text()))
+  page.on('console', (m) => appConsoleError(m) && errors.push('console: ' + m.text()))
 
   // ---------- A. login and session security ----------
   await page.goto(URL)
@@ -615,7 +619,7 @@ async function send(page, text) {
   const ctxJ = await browser.newContext({ viewport: { width: 1100, height: 760 }, acceptDownloads: true })
   const jane = await ctxJ.newPage()
   jane.on('pageerror', (e) => errors.push('jane pageerror: ' + e.message))
-  jane.on('console', (m) => m.type() === 'error' && errors.push('jane console: ' + m.text()))
+  jane.on('console', (m) => appConsoleError(m) && errors.push('jane console: ' + m.text()))
   await jane.goto(URL)
   await login(jane, 'jane')
   await jane.waitForSelector('.status.connected')
@@ -754,7 +758,7 @@ async function send(page, text) {
     const ctx = await browser.newContext({ viewport: { width: 1100, height: 760 } })
     const p = await ctx.newPage()
     p.on('pageerror', (e) => errors.push(`${user} pageerror: ` + e.message))
-    p.on('console', (m) => m.type() === 'error' && errors.push(`${user} console: ` + m.text()))
+    p.on('console', (m) => appConsoleError(m) && errors.push(`${user} console: ` + m.text()))
     await p.goto(URL)
     await login(p, user)
     await p.waitForSelector('.status.connected')
