@@ -3,7 +3,7 @@
 // guest hears of jane and everything jane hears of the guest is mixed by the app. Measured with the browsers' own
 // statistics: how much sound arrived, in the stretch where everyone talks and in the stretch where the host is muted
 // (when nothing is left to hear but what the app passes on).
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
+const browserKind = require('./browser.cjs')
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:18280'
 const PASSWORD = process.env.TEST_PASSWORD || 'a-long-password-1'
@@ -49,10 +49,7 @@ const heard = (page) =>
 
 ;(async () => {
   if (!GUEST_PATH) throw new Error('GUEST_PATH is not set: run.sh makes the link')
-  const browser = await chromium.launch({
-    executablePath: process.env.CHROMIUM_PATH || undefined,
-    args: [...(process.env.CI || process.env.NO_SANDBOX ? ['--no-sandbox'] : []), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
-  })
+  const browser = await browserKind.launch()
   const errors = []
   const open = async () => {
     const ctx = await browser.newContext({ viewport: { width: 1100, height: 760 } })
@@ -108,7 +105,9 @@ const heard = (page) =>
   console.log(`everyone talking:  guest heard ${f(talking.guest)}; jane heard ${f(talking.jane)}`)
   console.log(`the host muted:    guest heard ${f(muted.guest)}; jane heard ${f(muted.jane)}`)
 
-  const SOUND = 0.05
+  // Decoded silence reads exactly 0; the browsers' test tones read from 0.04 (Firefox, muted stretch) to over 1 (Chromium), so
+  // anything clearly above zero is sound that really arrived.
+  const SOUND = 0.01
   ok(talking.guest.packets > 100 && talking.guest.energy > SOUND, 'the guest hears the room')
   ok(talking.jane.packets > 100 && talking.jane.energy > SOUND, 'the browser in the room hears the host')
   ok(muted.guest.packets > 100 && muted.guest.energy > SOUND, "with the host muted, the guest still hears the person in the room: the app passes it on")

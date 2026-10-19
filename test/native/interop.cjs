@@ -1,7 +1,7 @@
 // Chromium (as "jane") in a voice room with the desktop app (as "matt", driven by the app's own debug-build
 // driver). Checks what only a real second implementation can: that the native WebRTC stack and a browser's
 // connect, hear each other, and stay connected through mute and a leave and rejoin. Run by run.sh.
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
+const browserKind = require('./browser.cjs')
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:18280'
 const PASSWORD = process.env.TEST_PASSWORD || 'a-long-password-1'
@@ -13,10 +13,7 @@ const ok = (cond, msg) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 ;(async () => {
-  const browser = await chromium.launch({
-    executablePath: process.env.CHROMIUM_PATH || undefined,
-    args: [...(process.env.CI || process.env.NO_SANDBOX ? ['--no-sandbox'] : []), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
-  })
+  const browser = await browserKind.launch()
   const page = await (await browser.newContext()).newPage()
   const errors = []
   page.on('pageerror', (e) => errors.push(e.message))

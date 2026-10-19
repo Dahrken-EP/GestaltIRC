@@ -53,9 +53,9 @@ jobs:
           cargo build --locked
           GESTALT_MEDIA_FAKE_AUDIO=1 GESTALT_MEDIA_SELFTEST=1 timeout 120 xvfb-run -a ./target/debug/gestalt-desktop
           cargo test --locked --bin gestalt-desktop
-      - name: Chromium
+      - name: Chromium and Firefox
         working-directory: web
-        run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
+        run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps chromium firefox
       - name: The app and a browser in one voice room
         run: test/native/run.sh
         env:
@@ -71,4 +71,24 @@ jobs:
         run: test/native/run.sh guests
         env:
           CI: "1"
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/web/node_modules/playwright
+      # The same three again with Firefox, a second implementation with its own ideas about SDP and data channels.
+      - name: Firefox - the app and a browser in one voice room
+        run: test/native/run.sh voice
+        env:
+          CI: "1"
+          BROWSER: firefox
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/web/node_modules/playwright
+      - name: Firefox - a direct chat with a file each way
+        run: test/native/run.sh transfer
+        env:
+          CI: "1"
+          BROWSER: firefox
+          MB: "10"
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/web/node_modules/playwright
+      - name: Firefox - a guest by link in the app's room
+        run: test/native/run.sh guests
+        env:
+          CI: "1"
+          BROWSER: firefox
           PLAYWRIGHT_MODULE: ${{ github.workspace }}/web/node_modules/playwright

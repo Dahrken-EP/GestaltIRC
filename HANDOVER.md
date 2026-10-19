@@ -76,6 +76,9 @@ real devices; the same variable lets the app run on a machine with no audio. `.g
 the selftest, on changes to the native code. Muting was suspected of making the connection flicker to "disconnected";
 it does not (that was Chromium closing the page in an earlier manual run).
 
+`BROWSER=firefox test/native/run.sh <scenario>` runs the same scenarios with Playwright's Firefox; all three pass with
+both browsers. Safari (and iOS) are not tested: nothing here can run them.
+
 ## Running the live check again (by hand, with real devices)
 
 1. Build both sides: `npm --prefix web run build`,
