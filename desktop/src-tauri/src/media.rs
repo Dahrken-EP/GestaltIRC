@@ -959,6 +959,15 @@ fn wire_channel(inner: Arc<Inner>, id: u64, dc: Arc<RTCDataChannel>) {
         conn.channels.lock().unwrap().insert(label.clone(), dc.clone());
     }
     {
+        // A channel that fails (a message too big for the read buffer, a reset) is closed by the library, and
+        // without this the only sign was a close the page could not explain.
+        let label = label.clone();
+        dc.on_error(Box::new(move |e| {
+            let label = label.clone();
+            Box::pin(async move { log(&format!("pc {id}: channel '{label}' failed: {e}")) })
+        }));
+    }
+    {
         let inner = inner.clone();
         let label = label.clone();
         dc.on_open(Box::new(move || {

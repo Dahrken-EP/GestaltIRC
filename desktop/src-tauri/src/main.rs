@@ -531,6 +531,48 @@ fn main() {
                 });
             }
 
+            // Development only: GESTALT_EVAL_JS names a script to run in the window once the page has had time to
+            // load. The script keeps its findings in window.__probe; they are printed as "PROBE <json>" every few
+            // seconds, and the app exits (status 0, or 1 if __probe.ok is false) when __probe.done is true or
+            // GESTALT_EVAL_SECS (default 120) have passed. For tests that drive the real page.
+            #[cfg(all(debug_assertions, target_os = "linux"))]
+            if let Ok(path) = std::env::var("GESTALT_EVAL_JS") {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let limit = std::env::var("GESTALT_EVAL_SECS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(120);
+                    std::thread::sleep(std::time::Duration::from_secs(4));
+                    let Some(win) = handle.get_webview_window("main") else { return };
+                    let js = std::fs::read_to_string(&path).unwrap_or_default();
+                    let _ = win.eval(&js);
+                    let started = std::time::Instant::now();
+                    let verdict = std::sync::Arc::new(std::sync::Mutex::new(None::<bool>));
+                    while started.elapsed().as_secs() < limit {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        let v = verdict.clone();
+                        let _ = win.eval_with_callback(
+                            "(function(){var p=window.__probe||null;return JSON.stringify(p)})()",
+                            move |out| {
+                                println!("PROBE {out}");
+                                if let Ok(inner) = serde_json::from_str::<String>(&out) {
+                                    if let Ok(j) = serde_json::from_str::<serde_json::Value>(&inner) {
+                                        if j.get("done").and_then(|d| d.as_bool()) == Some(true) {
+                                            *v.lock().unwrap() = Some(j.get("ok").and_then(|o| o.as_bool()) != Some(false));
+                                        }
+                                    }
+                                }
+                            },
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                        if let Some(ok) = *verdict.lock().unwrap() {
+                            handle.exit(if ok { 0 } else { 1 });
+                            return;
+                        }
+                    }
+                    println!("PROBE timeout");
+                    handle.exit(1);
+                });
+            }
+
             let menu = MenuBuilder::new(app)
                 .item(
                     &SubmenuBuilder::new(app, "Gestalt")
