@@ -693,6 +693,20 @@ impl Play {
 
 const CHUNK: usize = 960;
 
+/// What one connection is sent this pass. The same mixes as the page's RoomMixer makes in a browser (voice/mixer.ts):
+///   to the room:  our microphone + every guest        (with no guests, just the microphone)
+///   to a guest:   our microphone + everyone else in the room + every other guest
+/// `said` is what each connection's far person said this pass; `room` and `guests` say which connections are whose.
+fn mix_for(up: &Uplink, own: u64, mic: &[f32], said: &HashMap<u64, Vec<f32>>, room: &[u64], guests: &[u64]) -> Vec<f32> {
+    let mut sources: Vec<&[f32]> = vec![mic];
+    match up {
+        Uplink::Mic | Uplink::Room => sources.extend(guests.iter().filter_map(|id| said.get(id).map(Vec::as_slice))),
+        // Never the guest's own voice: nobody hears themselves.
+        Uplink::Guest(_) => sources.extend(room.iter().chain(guests.iter()).filter(|id| **id != own).filter_map(|id| said.get(id).map(Vec::as_slice))),
+    }
+    (0..FRAME).map(|i| sources.iter().map(|f| f.get(i).copied().unwrap_or(0.0)).sum::<f32>().clamp(-1.0, 1.0)).collect()
+}
+
 /// One mixing pass.
 fn mix_pass(inner: &Arc<Inner>, encoders: &mut HashMap<String, opus::Encoder>, pass: u32) {
     let peers: Vec<Arc<Conn>> = inner.peers.lock().unwrap().values().cloned().collect();
@@ -709,30 +723,17 @@ fn mix_pass(inner: &Arc<Inner>, encoders: &mut HashMap<String, opus::Encoder>, p
         inner.tell(Event::Rms { src: "mic".into(), level });
     }
 
-    // What each guest said this pass, taken once so the mixes can share it.
-    let guests: Vec<Arc<Conn>> = peers
-        .iter()
-        .filter(|c| matches!(*c.uplink.lock().unwrap(), Some(Uplink::Guest(_))))
-        .cloned()
-        .collect();
-    let mut guest_frames: HashMap<u64, Vec<f32>> = HashMap::new();
-    for g in &guests {
+    // What every connection's far person said this pass, taken once so the mixes can share it. Every one is taken
+    // every pass, used or not: a queue left unread fills to its limit and then plays that much late.
+    let is_guest = |c: &Arc<Conn>| matches!(*c.uplink.lock().unwrap(), Some(Uplink::Guest(_)));
+    let mut said: HashMap<u64, Vec<f32>> = HashMap::new();
+    for c in &peers {
         let mut f = Vec::new();
-        g.mirror.take(FRAME, 1.0, &mut f);
-        guest_frames.insert(g.id, f);
+        c.mirror.take(FRAME, 1.0, &mut f);
+        said.insert(c.id, f);
     }
-    let sum_of = |frames: Vec<&Vec<f32>>| -> Vec<f32> {
-        let mut mix = Vec::with_capacity(FRAME);
-        for i in 0..FRAME {
-            let mut v = 0.0f32;
-            for f in &frames {
-                v += f.get(i).copied().unwrap_or(0.0);
-            }
-            mix.push(v.clamp(-1.0, 1.0));
-        }
-        mix
-    };
-
+    let guest_ids: Vec<u64> = peers.iter().filter(|c| is_guest(c)).map(|c| c.id).collect();
+    let room_ids: Vec<u64> = peers.iter().filter(|c| !is_guest(c)).map(|c| c.id).collect();
     // Frames encoded in this pass, by mix kind, so two listeners of the same mix share one.
     let mut new_frames: HashMap<String, Vec<u8>> = HashMap::new();
     inner.rt.block_on(async {
@@ -742,24 +743,13 @@ fn mix_pass(inner: &Arc<Inner>, encoders: &mut HashMap<String, opus::Encoder>, p
             let up = c.uplink.lock().unwrap().clone();
             let Some(up) = up else { continue };
             let key = match &up {
-                Uplink::Mic => "mic".to_owned(),
-                Uplink::Room => "room".to_owned(),
+                // With no guests these are the same mix, so they are encoded once.
+                Uplink::Mic | Uplink::Room => "room".to_owned(),
                 Uplink::Guest(_) => format!("guest:{}", c.id),
             };
             // What this connection is sent: the plain microphone, or what the tag names.
             if !new_frames.contains_key(&key) {
-                let mix = match &up {
-                    Uplink::Mic => mic_frame.clone(),
-                    Uplink::Room => {
-                        let all: Vec<&Vec<f32>> = guest_frames.values().collect();
-                        sum_of(all)
-                    }
-                    Uplink::Guest(_) => {
-                        // Everyone else's frame, never the guest's own: nobody hears themselves.
-                        let others: Vec<&Vec<f32>> = guest_frames.iter().filter(|(id, _)| **id != c.id).map(|(_, f)| f).collect();
-                        sum_of(others)
-                    }
-                };
+                let mix = mix_for(&up, c.id, &mic_frame, &said, &room_ids, &guest_ids);
                 let Some(bytes) = encode(encoders, &key, &mix) else { continue };
                 new_frames.insert(key.clone(), bytes);
             }
@@ -1495,4 +1485,65 @@ pub fn selftest(state: &tauri::State<'_, Hub>) -> Result<(), String> {
     mic_stop(state.clone())?;
     log("selftest: every connection down, the microphone given back");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // One frame of a constant level, so what each mix adds up to can be read off.
+    fn flat(v: f32) -> Vec<f32> {
+        vec![v; FRAME]
+    }
+
+    fn room() -> (Vec<f32>, HashMap<u64, Vec<f32>>, Vec<u64>, Vec<u64>) {
+        let said = HashMap::from([(1, flat(0.02)), (2, flat(0.04)), (10, flat(0.08)), (11, flat(0.16))]);
+        (flat(0.01), said, vec![1, 2], vec![10, 11])
+    }
+
+    fn level(mix: &[f32]) -> f32 {
+        assert_eq!(mix.len(), FRAME);
+        assert!(mix.iter().all(|s| (s - mix[0]).abs() < 1e-6));
+        mix[0]
+    }
+
+    #[test]
+    fn the_room_hears_our_microphone_and_every_guest_but_not_each_other_twice() {
+        let (mic, said, room, guests) = room();
+        // Not the people in the room: they hear each other directly.
+        assert!((level(&mix_for(&Uplink::Mic, 1, &mic, &said, &room, &guests)) - (0.01 + 0.08 + 0.16)).abs() < 1e-5);
+        assert!((level(&mix_for(&Uplink::Room, 2, &mic, &said, &room, &guests)) - (0.01 + 0.08 + 0.16)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn with_no_guests_the_room_hears_just_the_microphone() {
+        let (mic, said, room, _) = room();
+        assert!((level(&mix_for(&Uplink::Mic, 1, &mic, &said, &room, &[])) - 0.01).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_guest_hears_the_microphone_the_room_and_the_other_guests_but_never_themselves() {
+        let (mic, said, room, guests) = room();
+        let to_10 = level(&mix_for(&Uplink::Guest("a".into()), 10, &mic, &said, &room, &guests));
+        let to_11 = level(&mix_for(&Uplink::Guest("b".into()), 11, &mic, &said, &room, &guests));
+        assert!((to_10 - (0.01 + 0.02 + 0.04 + 0.16)).abs() < 1e-5, "{to_10}");
+        assert!((to_11 - (0.01 + 0.02 + 0.04 + 0.08)).abs() < 1e-5, "{to_11}");
+    }
+
+    #[test]
+    fn a_muted_host_still_relays_the_room_to_a_guest_and_the_guest_to_the_room() {
+        let (_, said, room, guests) = room();
+        let silent = flat(0.0);
+        assert!((level(&mix_for(&Uplink::Guest("a".into()), 10, &silent, &said, &room, &guests)) - (0.02 + 0.04 + 0.16)).abs() < 1e-5);
+        assert!((level(&mix_for(&Uplink::Mic, 1, &silent, &said, &room, &guests)) - (0.08 + 0.16)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_mix_that_adds_up_past_full_scale_is_held_there_and_a_short_frame_counts_as_silence_after_its_end() {
+        let said = HashMap::from([(10, flat(0.9)), (11, vec![0.1; 10])]);
+        let mix = mix_for(&Uplink::Mic, 1, &flat(0.9), &said, &[1], &[10, 11]);
+        assert_eq!(mix[0], 1.0);
+        assert_eq!(mix.len(), FRAME);
+        assert_eq!(mix[FRAME - 1], 1.0);
+    }
 }
