@@ -20,4 +20,40 @@ async function launch() {
   })
 }
 
-module.exports = { launch, name }
+// Keeps every connection a page makes, so its statistics can be read. Add it to a context before the page loads.
+const record = () => {
+  const Orig = window.RTCPeerConnection
+  window.__pcs = []
+  const Wrapped = function (...args) {
+    const pc = new Orig(...args)
+    window.__pcs.push(pc)
+    return pc
+  }
+  Wrapped.prototype = Orig.prototype
+  Object.assign(Wrapped, Orig)
+  window.RTCPeerConnection = Wrapped
+}
+
+/**
+ * Sound a page has received over all its connections so far: packets, and the energy of what arrived. This is what the
+ * connection delivered, whatever the page then does with it. (The page's own "speaking" light needs an audio output
+ * to run its meter, which a browser on a machine with no sound card, like a CI runner, does not have.)
+ */
+const heard = (page) =>
+  page.evaluate(async () => {
+    let packets = 0
+    let energy = 0
+    for (const pc of window.__pcs || []) {
+      if (pc.connectionState === 'closed') continue
+      const stats = await pc.getStats()
+      stats.forEach((r) => {
+        if (r.type === 'inbound-rtp' && r.kind === 'audio') {
+          packets += r.packetsReceived || 0
+          energy += r.totalAudioEnergy || 0
+        }
+      })
+    }
+    return { packets, energy }
+  })
+
+module.exports = { launch, name, record, heard }

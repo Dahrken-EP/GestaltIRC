@@ -15,45 +15,13 @@ const ok = (cond, msg) => {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// Keeps every connection the page makes, so its statistics can be read.
-const RECORD = () => {
-  const Orig = window.RTCPeerConnection
-  window.__pcs = []
-  const Wrapped = function (...args) {
-    const pc = new Orig(...args)
-    window.__pcs.push(pc)
-    return pc
-  }
-  Wrapped.prototype = Orig.prototype
-  Object.assign(Wrapped, Orig)
-  window.RTCPeerConnection = Wrapped
-}
-
-/** Sound received over all of a page's connections so far: packets, and the energy of what was received. */
-const heard = (page) =>
-  page.evaluate(async () => {
-    let packets = 0
-    let energy = 0
-    for (const pc of window.__pcs || []) {
-      if (pc.connectionState === 'closed') continue
-      const stats = await pc.getStats()
-      stats.forEach((r) => {
-        if (r.type === 'inbound-rtp' && r.kind === 'audio') {
-          packets += r.packetsReceived || 0
-          energy += r.totalAudioEnergy || 0
-        }
-      })
-    }
-    return { packets, energy }
-  })
-
 ;(async () => {
   if (!GUEST_PATH) throw new Error('GUEST_PATH is not set: run.sh makes the link')
   const browser = await browserKind.launch()
   const errors = []
   const open = async () => {
     const ctx = await browser.newContext({ viewport: { width: 1100, height: 760 } })
-    await ctx.addInitScript(RECORD)
+    await ctx.addInitScript(browserKind.record)
     const page = await ctx.newPage()
     page.on('pageerror', (e) => errors.push(e.message))
     return page
@@ -90,7 +58,7 @@ const heard = (page) =>
   const samples = []
   const t0 = Date.now()
   while (Date.now() - t0 < 16500) {
-    samples.push({ t: (Date.now() - t0) / 1000, guest: await heard(guest), jane: await heard(jane) })
+    samples.push({ t: (Date.now() - t0) / 1000, guest: await browserKind.heard(guest), jane: await browserKind.heard(jane) })
     await sleep(500)
   }
   const between = (who, from, to) => {
