@@ -3,7 +3,7 @@
  * its buffer is on screen: playing inside it would stop the video on every change of channel. The player itself is in
  * FloatingPlayer, which is never taken down.
  */
-export type MediaKind = 'youtube' | 'streamable' | 'twitch' | 'soundcloud' | 'spotify' | 'vimeo'
+export type MediaKind = 'youtube' | 'streamable' | 'twitch' | 'soundcloud' | 'spotify'
 
 export interface Playing {
   href: string
