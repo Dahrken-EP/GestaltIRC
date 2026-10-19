@@ -45,7 +45,6 @@ var supportedCaps = map[string]bool{
 	"standard-replies":        true,
 	"draft/read-marker":       true,
 	"draft/message-redaction": true,
-	"draft/multiline":         true,
 }
 
 // capOrder fixes the order of CAP LS so the output is stable.
@@ -53,7 +52,7 @@ var capOrder = []string{
 	"message-tags", "server-time", "batch", "echo-message", "sasl", "chathistory", "message-ids",
 	"away-notify", "account-notify", "account-tag", "extended-join", "multi-prefix", "userhost-in-names",
 	"invite-notify", "chghost", "setname", "cap-notify", "standard-replies",
-	"draft/read-marker", "draft/message-redaction", "draft/multiline",
+	"draft/read-marker", "draft/message-redaction",
 }
 
 // capList renders the CAP LS reply. Values (such as sasl=PLAIN) are only sent to

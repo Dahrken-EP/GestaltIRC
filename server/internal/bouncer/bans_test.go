@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"gestalt/server/internal/config"
 	"gestalt/server/internal/upstream"
 )
 
@@ -149,4 +150,25 @@ func TestBanListIsSafeAgainstMODEFromTheNetwork(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+// draft/multiline is not implemented (docs/SERVER.md says so), so it must be neither offered to clients
+// nor asked of the network: a half version once sent long messages as batch-tagged lines with no BATCH.
+func TestMultilineIsNotAdvertisedOrRequested(t *testing.T) {
+	b := &Bouncer{conf: &config.Config{}}
+	for _, v := range []int{301, 302} {
+		if strings.Contains(b.capList(v, false), "multiline") {
+			t.Errorf("CAP LS %d offers multiline", v)
+		}
+	}
+	for _, c := range upstream.DefaultCaps {
+		if strings.Contains(c, "multiline") {
+			t.Errorf("the bouncer asks the network for %s", c)
+		}
+	}
+	for c := range supportedCaps {
+		if strings.Contains(c, "multiline") {
+			t.Errorf("%s is accepted from clients", c)
+		}
+	}
 }

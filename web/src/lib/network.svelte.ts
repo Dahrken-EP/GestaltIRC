@@ -10,11 +10,6 @@ import {
   nickOf,
   timeOf,
   type Message,
-  isMultiline,
-  multilineStage,
-  MultilineConcat,
-  MultilineCont,
-  MultilineEnd,
 } from './irc/message'
 import { pageUnfocused } from './notify'
 import type { ChatLine, ChatView } from './p2p/chat'
@@ -382,9 +377,6 @@ export class NetworkState {
   private pendingMarkers = new Map<string, number>()
   private typingSent = new Map<string, { at: number; active: boolean }>()
   private activateOnJoin = new Set<string>()
-  /** draft/multiline reassembly: batch id -> parts that have arrived so far. */
-  private multiline = new Map<string, { parts: Message[]; target: string }>()
-  private multiSeq = 0
   private send: (line: string) => void
   private hooks: NetworkHooks
   private hub: P2pHub
@@ -1011,17 +1003,6 @@ export class NetworkState {
           const first = a.line.slice(5).split(' ')[0]!.split(',')[0]!
           this.activateOnJoin.add(first.toLowerCase())
         }
-        // A long PRIVMSG or NOTICE is sent as draft/multiline parts when the network supports it.
-        if (
-          this.caps.has('draft/multiline') &&
-          (a.line.startsWith('PRIVMSG ') || a.line.startsWith('NOTICE '))
-        ) {
-          const parts = this.splitRawForMultiLine(a.line)
-          if (parts.length > 1) {
-            for (const p of parts) this.send(p)
-            break
-          }
-        }
         if (replyTo && a.line.startsWith('PRIVMSG ') && this.caps.has('message-tags')) {
           this.send(format({ tags: { '+draft/reply': replyTo }, command: 'PRIVMSG', params: this.splitPrivmsg(a.line) }))
         } else {
@@ -1061,48 +1042,6 @@ export class NetworkState {
     const rest = line.slice('PRIVMSG '.length)
     const sp = rest.indexOf(' :')
     return sp < 0 ? [rest] : [rest.slice(0, sp), rest.slice(sp + 2)]
-  }
-
-  // maxMultiLineBytes is the largest text part the client sends in one line
-  // when splitting a long message with draft/multiline.
-  private static readonly maxMultiLineBytes = 400
-
-  /** Splits a raw PRIVMSG/NOTICE line into draft/multiline parts. Returns one element when no split is needed. */
-  private splitRawForMultiLine(line: string): string[] {
-    const isPrivmsg = line.startsWith('PRIVMSG ')
-    const prefix = isPrivmsg ? 'PRIVMSG ' : 'NOTICE '
-    const rest = line.slice(prefix.length)
-    const sp = rest.indexOf(' :')
-    if (sp < 0) return [line]
-    const target = rest.slice(0, sp)
-    const text = rest.slice(sp + 2)
-    if (text.length <= NetworkState.maxMultiLineBytes) return [line]
-
-    // Split the text into chunks, never mid-UTF8.
-    const chunks: string[] = []
-    let remaining = text
-    while (remaining.length > 0) {
-      let n = NetworkState.maxMultiLineBytes
-      if (n >= remaining.length) {
-        chunks.push(remaining)
-        break
-      }
-      while (n > 0 && (remaining.charCodeAt(n) & 0xC0) === 0x80) n--
-      chunks.push(remaining.slice(0, n))
-      remaining = remaining.slice(n)
-    }
-
-    this.multiSeq++
-    const batch = String(this.multiSeq)
-    const out: string[] = []
-    for (let i = 0; i < chunks.length; i++) {
-      const tags: Record<string, string> = { batch }
-      if (i === 0) tags[MultilineConcat] = ''
-      else if (i === chunks.length - 1) tags[MultilineEnd] = ''
-      else tags[MultilineCont] = ''
-      out.push(format({ tags, command: isPrivmsg ? 'PRIVMSG' : 'NOTICE', params: [target, chunks[i]!] }))
-    }
-    return out
   }
 
   /** Adds a line that exists only in this browser. */
@@ -1369,20 +1308,6 @@ export class NetworkState {
   }
 
   private onText(m: Message, history: boolean): void {
-    // draft/multiline: buffer parts by batch id. When the final part arrives,
-    // reassemble into one message and process it as usual.
-    if (m.tags.batch !== undefined && isMultiline(m)) {
-      const batch = m.tags.batch
-      const entry = this.multiline.get(batch) ?? { parts: [], target: m.params[0] ?? '' }
-      entry.parts.push(m)
-      this.multiline.set(batch, entry)
-      if (multilineStage(m) !== 'end') return
-      // All parts have arrived: reassemble and process as one message.
-      const reassembled = this.reassembleMultiLine(batch)
-      if (!reassembled) return
-      m = reassembled
-    }
-
     const from = nickOf(m.prefix)
     const target = m.params[0] ?? ''
     let text = m.params[1] ?? ''
@@ -1437,32 +1362,6 @@ export class NetworkState {
       },
       history,
     )
-  }
-
-  /** Reassembles a completed multiline batch into one message, or returns null when the batch is incomplete. */
-  private reassembleMultiLine(batch: string): Message | null {
-    const entry = this.multiline.get(batch)
-    if (!entry) return null
-    this.multiline.delete(batch)
-    const parts = entry.parts
-    if (parts.length === 0) return null
-    // Parts arrive in order; the last one has the end tag. Concatenate their trailing parameters.
-    const first = parts[0]!
-    const text = parts.map((p) => p.params[1] ?? '').join('')
-    const tags: Record<string, string> = {}
-    for (const [k, v] of Object.entries(first.tags)) {
-      if (k === 'batch' || k === MultilineConcat || k === MultilineCont || k === MultilineEnd) continue
-      tags[k] = v
-    }
-    // Use the first part's time tag if present.
-    if (first.tags.time) tags.time = first.tags.time
-    if (first.tags.msgid) tags.msgid = first.tags.msgid
-    return {
-      tags,
-      prefix: first.prefix,
-      command: first.command,
-      params: [entry.target, text],
-    }
   }
 
   private onTagmsg(m: Message, history: boolean): void {
