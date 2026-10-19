@@ -559,7 +559,7 @@ async function send(page, text) {
   await phone.getByRole('button', { name: /Reply to alice/ }).tap()
   await phone.waitForSelector('.replying:has-text("Replying to alice")')
   ok((await phone.locator('.tools:visible').count()) === 0, 'choosing an action closes the buttons')
-  await phone.locator('.line:has-text("welcome to #chat") .text').tap()
+  await phone.locator('.line:has-text("welcome to #chat") .time').tap()
   await phone.getByRole('button', { name: 'Add reaction' }).tap()
   await phone.getByRole('button', { name: 'React with 👍' }).tap()
   await phone.waitForSelector('.chip:has-text("👍 1")')
