@@ -2,6 +2,7 @@
 // network. Run it with run.sh, which starts both. See README.md in this folder.
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
 const crypto = require('node:crypto')
+const { URL: Url } = require('node:url') // (this file's own URL constant is the bouncer's address)
 
 const OUT = process.env.OUT_DIR || '.'
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:18080'
@@ -14,6 +15,19 @@ const ok = (cond, msg) => {
   console.log((cond ? 'ok  : ' : 'FAIL: ') + msg)
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/** Whether a request is to `host` (or one of its subdomains), by its parsed address, not by text found in it. For a
+ * request to the bouncer's media proxy (/api/media?u=...) it is the address asked for that counts. */
+const toHost = (u, host) => {
+  try {
+    const url = new Url(u, 'http://bouncer.invalid')
+    const target = url.searchParams.get('u')
+    const h = new Url(target ?? url.href).hostname
+    return h === host || h.endsWith('.' + host)
+  } catch {
+    return false
+  }
+}
 
 /** Console errors worth failing over. Chromium logs permissions-policy probes of its own
  * (compute-pressure) that nothing on the page asked for; those are browser noise, not the app. */
@@ -166,7 +180,7 @@ async function send(page, text) {
   // the machine running the test can reach those sites (a CI runner can, and a real picture would change the layout).
   await page.route(/\/api\/media\?u=https%3A%2F%2F(i\.imgur\.com|media\.giphy\.com)/, (route) => route.abort())
   await send(page, '!msg https://imgur.com/AbCd123 and https://giphy.com/gifs/cat-xT9IgzoKnwFNmISR8I')
-  for (let i = 0; i < 40 && !(requested.some((u) => u.includes('i.imgur.com')) && requested.some((u) => u.includes('media.giphy.com'))); i++) await sleep(200)
+  for (let i = 0; i < 40 && !(requested.some((u) => toHost(u, 'i.imgur.com')) && requested.some((u) => toHost(u, 'media.giphy.com'))); i++) await sleep(200)
   ok(requested.some((u) => u.endsWith('/api/media?u=https%3A%2F%2Fi.imgur.com%2FAbCd123.jpg')), 'an imgur page link is fetched as its picture, through the bouncer')
   ok(requested.some((u) => u.endsWith('/api/media?u=https%3A%2F%2Fmedia.giphy.com%2Fmedia%2FxT9IgzoKnwFNmISR8I%2Fgiphy.gif')), 'a giphy page link is fetched as its gif, through the bouncer')
 
@@ -215,7 +229,7 @@ async function send(page, text) {
   const outside = requested.filter(
     (u) =>
       !u.startsWith(BASE) && !u.startsWith('data:') && !u.startsWith('blob:') &&
-      !u.includes('youtube-nocookie.com') && !playerHost.test(u),
+      !toHost(u, 'youtube-nocookie.com') && !playerHost.test(u),
   )
   ok(outside.length === 0, 'every request went to the bouncer (or the YouTube player itself)' + (outside.length ? ': ' + outside.join(', ') : ''))
 

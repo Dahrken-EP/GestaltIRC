@@ -154,8 +154,9 @@ fn run_bouncer(exe: &Path, config: &Path, args: &[&str], stdin: Option<&str>) ->
     }
 }
 
-/// Starts the bouncer that comes with the app, making its files and the user's account the first time.
-fn start_bouncer(app: &AppHandle, st: &App, user: &str, password: &str) -> Result<Url, String> {
+/// Starts the bouncer that comes with the app, making its files and, when `new_account` names one, the user's account
+/// (name and password), the first time. `None` starts the bouncer as it is.
+fn start_bouncer(app: &AppHandle, st: &App, new_account: Option<(&str, &str)>) -> Result<Url, String> {
     let res = resources(app);
     let exe = bouncer_exe(&res);
     if !exe.exists() {
@@ -180,7 +181,7 @@ fn start_bouncer(app: &AppHandle, st: &App, user: &str, password: &str) -> Resul
     if !dir.join("bouncer.db").exists() {
         run_bouncer(&exe, &config, &["init"], None)?;
     }
-    if !user.is_empty() {
+    if let Some((user, password)) = new_account {
         if password.len() < 8 {
             return Err("Choose a password of at least 8 characters.".into());
         }
@@ -211,7 +212,7 @@ fn start_bouncer(app: &AppHandle, st: &App, user: &str, password: &str) -> Resul
         let mut s = st.settings.lock().unwrap();
         s.mode = "local".into();
         s.port = port;
-        if !user.is_empty() {
+        if let Some((user, _)) = new_account {
             s.user = user.to_string();
         }
     }
@@ -221,7 +222,9 @@ fn start_bouncer(app: &AppHandle, st: &App, user: &str, password: &str) -> Resul
 
 #[tauri::command]
 fn start_local(app: AppHandle, window: WebviewWindow, st: State<App>, user: String, password: String) -> Result<(), String> {
-    let url = start_bouncer(&app, &st, user.trim(), &password)?;
+    // The launcher sends no name once the account exists, and then there is nothing to make.
+    let new_account = (!user.trim().is_empty()).then(|| (user.trim(), password.as_str()));
+    let url = start_bouncer(&app, &st, new_account)?;
     show(&window, &st, &url)
 }
 
@@ -397,7 +400,7 @@ fn main() {
                             }
                         }
                         "local" => {
-                            if let Ok(u) = start_bouncer(&h, &st, "", "") {
+                            if let Ok(u) = start_bouncer(&h, &st, None) {
                                 let _ = show(&w, &st, &u);
                             }
                         }
