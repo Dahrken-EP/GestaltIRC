@@ -71,7 +71,16 @@ Note the permission identifiers are hyphenated (`allow-pc-create`, not
 Wire guest uplinks: tag presence (`pc_uplink` `'room'`/`'guest:<nick>'`) so
 native rooms can take guests; the Rust side is built for it.
 
-## Running the live check again
+## Automated check (added after review)
+
+`test/native/run.sh` runs the desktop app (debug build, signing in and joining the room by itself) and Chromium in the
+same voice room against a real bouncer, and checks both directions of audio, mute, leave and rejoin. It uses
+`GESTALT_MEDIA_FAKE_AUDIO=1` — a tone as the microphone, nowhere to play — so it needs no sound server and touches no
+real devices; the same variable lets the app run on a machine with no audio. `.github/workflows/native.yml` runs it, and
+the selftest, on changes to the native code. Muting was suspected of making the connection flicker to "disconnected";
+it does not (that was Chromium closing the page in an earlier manual run).
+
+## Running the live check again (by hand, with real devices)
 
 1. Build both sides: `npm --prefix web run build`,
    `cd desktop/src-tauri && cargo build`.
