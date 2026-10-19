@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{MenuBuilder, MenuItem, SubmenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    webview::NewWindowResponse,
     AppHandle, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 
@@ -403,6 +404,32 @@ fn allow_media(win: &WebviewWindow) {
 #[cfg(not(target_os = "linux"))]
 fn allow_media(_win: &WebviewWindow) {}
 
+/// The hosts of the players the web client embeds once a person presses "Play here" (the same list as `frame-src` in the
+/// bouncer's content security policy, internal/api/headers.go). The window's navigation rule sees an embed loading in
+/// its frame as a navigation, like any other, and without these it refuses it: the frame stays a blank square.
+const EMBED_HOSTS: &[&str] = &[
+    "www.youtube-nocookie.com", "streamable.com", "player.twitch.tv", "clips.twitch.tv", "w.soundcloud.com", "open.spotify.com",
+    "player.vimeo.com",
+];
+
+fn is_embed(url: &Url) -> bool {
+    url.scheme() == "https" && url.host_str().is_some_and(|h| EMBED_HOSTS.contains(&h))
+}
+
+/// A link the page wants in a new window (every `target="_blank"`) goes to the person's own browser, and the app does not
+/// open a window of its own. Only web addresses: nothing the page links to may start another program.
+fn open_in_browser(url: &Url) {
+    if is_web(url) {
+        if let Err(e) = open::that_detached(url.as_str()) {
+            eprintln!("could not open {url} in the browser: {e}");
+        }
+    }
+}
+
+fn is_web(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+}
+
 fn main() {
     // The media module's commands exist only where the module does; a handler list
     // cannot be built across a binding (its runtime type is only inferred inside the
@@ -447,7 +474,11 @@ fn main() {
                         return true;
                     }
                     let allowed = st.allowed.lock().unwrap().clone();
-                    allowed.is_some_and(|a| url.origin() == a.origin())
+                    allowed.is_some_and(|a| url.origin() == a.origin()) || is_embed(url)
+                })
+                .on_new_window(|url, _features| {
+                    open_in_browser(&url);
+                    NewWindowResponse::Deny
                 })
                 .build()?;
             *app.state::<App>().launcher.lock().unwrap() = win.url().ok();
@@ -679,4 +710,52 @@ fn main() {
             handle.state::<App>().stop_local();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn url(s: &str) -> Url {
+        Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn the_players_the_page_embeds_may_load_in_their_frames() {
+        for u in [
+            "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0",
+            "https://streamable.com/e/abc123?autoplay=1",
+            "https://player.twitch.tv/?channel=x&autoplay=true&parent=127.0.0.1",
+            "https://clips.twitch.tv/embed?clip=Abc",
+            "https://w.soundcloud.com/player/?url=https%3A%2F%2Fsoundcloud.com%2Fa%2Fb",
+            "https://open.spotify.com/embed/track/4iV5W9uYEdYUVa79Axb7Rh",
+            "https://player.vimeo.com/video/123456789?autoplay=true",
+        ] {
+            assert!(is_embed(&url(u)), "{u}");
+        }
+    }
+
+    #[test]
+    fn nothing_else_is_taken_for_a_player() {
+        for u in [
+            "http://www.youtube-nocookie.com/embed/x",               // not over https
+            "https://www.youtube-nocookie.com.evil.example/embed/x", // look-alike host
+            "https://evil.example/www.youtube-nocookie.com",
+            "https://www.youtube.com/watch?v=x",
+            "https://example.org/",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+        ] {
+            assert!(!is_embed(&url(u)), "{u}");
+        }
+    }
+
+    #[test]
+    fn only_web_addresses_are_handed_to_the_browser() {
+        assert!(is_web(&url("https://example.org/page")));
+        assert!(is_web(&url("http://example.org/")));
+        for u in ["file:///etc/passwd", "mailto:a@b.example", "ssh://host", "javascript:alert(1)", "tauri://localhost/", "data:text/html,x"] {
+            assert!(!is_web(&url(u)), "{u}");
+        }
+    }
 }
