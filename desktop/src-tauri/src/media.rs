@@ -362,6 +362,12 @@ struct Inner {
     error: Mutex<String>,
     /// The microphone's capture rate, once capture begins; 0 until then.
     rate: AtomicU64,
+    /// GESTALT_MEDIA_FAKE_AUDIO is set: no sound device is opened. A thread supplies a quiet tone as the
+    /// microphone and takes what would be played, so the rest of the stack (encoding, RTP, decoding, the
+    /// loudness meters) runs as it does with real devices. For machines with no audio, and for tests.
+    fake: bool,
+    /// Whether the fake microphone is switched on (some voice chat holds the microphone).
+    fake_mic: AtomicBool,
 }
 
 struct Mic {
@@ -497,11 +503,51 @@ impl Inner {
         }
     }
 
+    /// The stand-in for the sound devices (see `fake`): every 20 ms it queues a frame of a 440 Hz tone as the
+    /// microphone's capture, unless that is switched off or muted, and takes the frame the speaker would have
+    /// played from each connection, which also keeps the loudness the page's speaking meters read.
+    fn spawn_fake_audio(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        let _ = std::thread::Builder::new().name("gestalt-media-fake".into()).spawn(move || {
+            let mut phase = 0.0f32;
+            let mut next = Instant::now();
+            let mut scratch = Vec::new();
+            loop {
+                next += TICK;
+                std::thread::sleep(next.saturating_duration_since(Instant::now()));
+                let Some(inner) = weak.upgrade() else { return };
+                if inner.fake_mic.load(Ordering::Relaxed) {
+                    let mut q = inner.mic.chunks.lock().unwrap();
+                    if inner.mic.enabled.load(Ordering::Relaxed) {
+                        for _ in 0..FRAME {
+                            q.push_back(0.2 * phase.sin());
+                            phase = (phase + std::f32::consts::TAU * 440.0 / SAMPLE_RATE as f32) % std::f32::consts::TAU;
+                        }
+                        while q.len() > MIC_KEEP {
+                            let _ = q.pop_front();
+                        }
+                    } else {
+                        q.clear();
+                    }
+                }
+                let peers: Vec<Arc<Conn>> = inner.peers.lock().unwrap().values().cloned().collect();
+                for c in peers {
+                    c.inbound.take(FRAME, c.gain(), &mut scratch);
+                }
+            }
+        });
+    }
+
     // --- microphone ---
 
     /// Opens the capture stream. The first ask is at the mixing rate; if the device refuses,
     /// its own rate and format are taken, and the mixing pass resamples.
     fn open_input(self: &Arc<Self>) -> Result<(), String> {
+        if self.fake {
+            self.rate.store(SAMPLE_RATE as u64, Ordering::Relaxed);
+            self.fake_mic.store(true, Ordering::Relaxed);
+            return Ok(());
+        }
         use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
         use cpal::SampleFormat;
         let host = cpal::default_host();
@@ -1232,6 +1278,7 @@ pub fn mic_stop(state: State<'_, Hub>) -> Result<(), String> {
     if was <= 1 {
         // The last listener is gone: the capture stops and its leftovers are shed.
         *inner.input.lock().unwrap() = None;
+        inner.fake_mic.store(false, Ordering::Relaxed);
         inner.mic.chunks.lock().unwrap().clear();
         *inner.mic.rs.lock().unwrap() = None;
         inner.rate.store(0, Ordering::Relaxed);
@@ -1260,6 +1307,7 @@ pub fn hub(win: WebviewWindow) -> Hub {
             host.default_output_device().is_some()
         }
     };
+    let fake = std::env::var_os("GESTALT_MEDIA_FAKE_AUDIO").is_some();
     let inner = Arc::new(Inner {
         win,
         rt,
@@ -1272,12 +1320,17 @@ pub fn hub(win: WebviewWindow) -> Hub {
         },
         output: Mutex::new(None),
         input: Mutex::new(None),
-        has_mic: AtomicBool::new(has(true)),
-        has_output: AtomicBool::new(has(false)),
+        has_mic: AtomicBool::new(fake || has(true)),
+        has_output: AtomicBool::new(fake || has(false)),
         error: Mutex::new(String::new()),
         rate: AtomicU64::new(0),
+        fake,
+        fake_mic: AtomicBool::new(false),
     });
-    if inner.has_output.load(Ordering::Relaxed) {
+    if fake {
+        inner.spawn_fake_audio();
+        inner.spawn_mixer();
+    } else if inner.has_output.load(Ordering::Relaxed) {
         inner.open_speaker();
         inner.spawn_mixer();
     } else {

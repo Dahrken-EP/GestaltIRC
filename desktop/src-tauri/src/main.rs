@@ -50,7 +50,7 @@ fn yes() -> bool {
 /// It looks at shapes, not words — the form ids the launcher owns, the autocomplete
 /// attributes the login form owns, the voice section's own class and button count — so
 /// word changes in any language leave it working.
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, target_os = "linux"))]
 const DRIVER_JS: &str = r#"
 ;(function () {
   if (location.protocol.startsWith('tauri')) {
@@ -455,6 +455,7 @@ fn main() {
             // streams and connections).
             #[cfg(target_os = "linux")]
             app.manage(media::hub(win.clone()));
+            #[cfg(target_os = "linux")]
             if std::env::var("GESTALT_MEDIA_SELFTEST").is_ok() {
                 // The whole native voice loop in one process: it plays through the real
                 // speaker and captures the real microphone, says what it found, and exits.
@@ -475,7 +476,7 @@ fn main() {
             }
             // Development only: the driver signs in with a password it is given in the environment, so a release
             // build does not contain it.
-            #[cfg(debug_assertions)]
+            #[cfg(all(debug_assertions, target_os = "linux"))]
             if let Ok(live) = std::env::var("GESTALT_MEDIA_LIVE") {
                 // The local live check's driver: it does around the page what a person
                 // would — connect, sign in as the named nick, join the room — so two

@@ -1,0 +1,62 @@
+name: native-media
+
+# The experimental native voice stack (Rust WebRTC in the Tauri app) against a real browser. Nothing else builds or
+# tests that Rust code on Linux. Not part of any release.
+on:
+  pull_request:
+    paths:
+      - 'desktop/src-tauri/**'
+      - 'web/src/lib/native/**'
+      - 'web/src/lib/voice/**'
+      - 'web/src/lib/p2p/**'
+      - 'test/native/**'
+      - '.github/workflows/native.yml'
+  push:
+    branches: [native-media]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  voice:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: System libraries for the app, and a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config xvfb libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev libasound2-dev libopus-dev
+      - name: The web client
+        working-directory: web
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Build the app, and the in-process selftest of the Rust stack
+        working-directory: desktop/src-tauri
+        run: |
+          cargo build --locked
+          GESTALT_MEDIA_FAKE_AUDIO=1 GESTALT_MEDIA_SELFTEST=1 timeout 120 xvfb-run -a ./target/debug/gestalt-desktop
+      - name: Chromium
+        working-directory: web
+        run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
+      - name: The app and a browser in one voice room
+        run: test/native/run.sh
+        env:
+          CI: "1"
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/web/node_modules/playwright
