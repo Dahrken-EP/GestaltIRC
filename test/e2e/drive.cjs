@@ -529,7 +529,9 @@ async function send(page, text) {
   await phone.waitForSelector('.line:has-text("welcome to #chat")')
   ok((await phone.evaluate(() => matchMedia('(hover: none)').matches)), 'the phone cannot hover')
   ok((await phone.locator('.line:has-text("welcome to #chat") .tools').isVisible()) === false, 'a message shows no buttons until it is tapped')
-  await phone.locator('.line:has-text("welcome to #chat") .text').tap()
+  // The message text can hold a link (the wrap point of a different font set can put one under the
+  // tap), and a tap on a link must not also select the message, so the timestamp is tapped instead.
+  await phone.locator('.line:has-text("welcome to #chat") .time').tap()
   try {
     await phone.locator('.line:has-text("welcome to #chat") .tools').waitFor({ state: 'visible', timeout: 10_000 })
   } catch (e) {
