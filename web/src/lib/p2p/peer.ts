@@ -5,12 +5,20 @@
 
 import { sha256Hex } from './sha256'
 import type { DataChannelLike } from './transfer'
+import type { NativeVoicePC } from '../native/pc'
 
 export type PeerState = 'new' | 'connecting' | 'connected' | 'failed' | 'closed'
 
 export interface Description {
   t: 'offer' | 'answer'
   sdp: string
+}
+
+export interface PeerConnectionContext {
+  /** The session carries a microphone or expects one. */
+  audio: boolean
+  /** The session wants to hear the other side (a listener in a voice room). */
+  receiveAudio: boolean
 }
 
 export interface PeerOptions {
@@ -26,8 +34,8 @@ export interface PeerOptions {
   receiveAudio?: boolean
   /** The other side's audio arrived. */
   onTrack?: (stream: MediaStream) => void
-  /** Makes the connection. Tests pass a fake. */
-  createConnection?: (config: RTCConfiguration) => RTCPeerConnection
+  /** Makes the connection. Tests pass a fake. A factory may pick a native one by session: audio sessions are marked. */
+  createConnection?: (config: RTCConfiguration, ctx?: PeerConnectionContext) => RTCPeerConnection
   /** How long to wait for candidates before sending what has been found. */
   gatherTimeoutMs?: number
 }
@@ -42,7 +50,8 @@ export class PeerSession {
 
   constructor(private opts: PeerOptions) {
     const make = opts.createConnection ?? ((c) => new RTCPeerConnection(c))
-    this.pc = make({ iceServers: opts.iceServers })
+    const ctx = { audio: !!opts.stream, receiveAudio: !!opts.receiveAudio }
+    this.pc = make({ iceServers: opts.iceServers }, ctx)
     this.pc.ondatachannel = (ev) => opts.onChannel?.(asLike(ev.channel))
     this.pc.ontrack = (ev) => opts.onTrack?.(ev.streams[0] ?? new MediaStream([ev.track]))
     this.pc.onconnectionstatechange = () => {
@@ -69,9 +78,19 @@ export class PeerSession {
     this.opts.onState?.(s)
   }
 
-  /** The certificate fingerprints of both ends, once both descriptions are known. */
+  /**
+   * The certificate fingerprints of both ends, once both descriptions are known. */
   get fingerprints(): { local: string; remote: string } {
     return { local: this.localFp, remote: this.remoteFp }
+  }
+
+  /**
+   * The connection's native half, when the app made this session through the bridge.
+   * Voice rooms and calls use it for the loudness feeds and the per-person volume. */
+  get nativeVoice(): NativeVoicePC | null {
+    const pc = this.pc as { nativeVoice?: boolean }
+    if (!pc.nativeVoice) return null
+    return this.pc as unknown as NativeVoicePC
   }
 
   /** Opens a data channel from our side. */
@@ -103,8 +122,11 @@ export class PeerSession {
   async accept(sdp: string): Promise<void> {
     this.set('connecting')
     this.remoteFp = fingerprintOf(sdp)
-    await this.pc.setRemoteDescription({ type: 'offer', sdp })
+    // Our tracks go on before the offer lands: in the browser a track added after the
+    // remote description rides a second m-line that needs renegotiation, while ahead of
+    // it the offered audio slot is taken over — the order that works everywhere.
     this.addLocalTracks()
+    await this.pc.setRemoteDescription({ type: 'offer', sdp })
     const answer = await this.pc.createAnswer()
     await this.pc.setLocalDescription(answer)
     await this.gathered()

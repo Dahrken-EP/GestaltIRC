@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pc-uplink"
+description = "Enables the pc_uplink command without any pre-configured scope."
+commands.allow = ["pc_uplink"]
+
+[[permission]]
+identifier = "deny-pc-uplink"
+description = "Denies the pc_uplink command without any pre-configured scope."
+commands.deny = ["pc_uplink"]

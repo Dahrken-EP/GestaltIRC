@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pc-track"
+description = "Enables the pc_track command without any pre-configured scope."
+commands.allow = ["pc_track"]
+
+[[permission]]
+identifier = "deny-pc-track"
+description = "Denies the pc_track command without any pre-configured scope."
+commands.deny = ["pc_track"]

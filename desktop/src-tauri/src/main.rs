@@ -3,6 +3,12 @@
 // where that is chosen; everything after it is the bouncer's own page, exactly as a browser would show it.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// The experimental native media stack lives behind this: the web client's voice and
+// calls are handled here on Linux, instead of by WebKitGTK's WebRTC. Everything the
+// module registers is Linux-only with it.
+#[cfg(target_os = "linux")]
+mod media;
+
 use std::{
     fs,
     io::Write,
@@ -38,6 +44,92 @@ struct Settings {
 fn yes() -> bool {
     true
 }
+
+/// The live-check driver, evaluated against the page every couple of seconds until
+/// nothing is left to do: submit the launcher form, sign in, open the room, join voice.
+/// It looks at shapes, not words — the form ids the launcher owns, the autocomplete
+/// attributes the login form owns, the voice section's own class and button count — so
+/// word changes in any language leave it working.
+const DRIVER_JS: &str = r#"
+;(function () {
+  if (location.protocol.startsWith('tauri')) {
+    const f = document.querySelector('#remote-form')
+    if (f) f.requestSubmit()
+    return 'launcher'
+  }
+  const u = document.querySelector('input[autocomplete="username"]')
+  if (u) {
+    const p = document.querySelector('input[type="password"]')
+    if (p && !p.value) {
+      if (!u.value) {
+        u.value = '__USER__'
+        u.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      p.value = '__PASS__'
+      p.dispatchEvent(new Event('input', { bubbles: true }))
+      setTimeout(() => {
+        if (u.form) u.form.requestSubmit()
+      }, 80)
+      return 'login sent'
+    }
+  }
+  if (!document.querySelector('section.voice')) {
+    const spots = [...document.querySelectorAll('a,button,li,div,span')].filter(
+      (e) => e.textContent.trim() === '#chat' && e.offsetParent && !e.firstElementChild,
+    )
+    if (spots.length) {
+      spots[spots.length - 1].click()
+      return 'opened #chat'
+    }
+  }
+  const sec = document.querySelector('section.voice')
+  const buttons = sec ? [...sec.querySelectorAll('button')] : []
+  const on = sec ? sec.classList.contains('on') : false
+  if (sec && !on && buttons.length > 1) {
+    // Not on, more than one button: the join pair. One button alone is cancel while
+    // joining; the road in is only when the panel offers both ways.
+    buttons[0].click()
+    return 'joined'
+  }
+  if (!sec || !on) {
+    return JSON.stringify({ login: !!u, voice: !!sec, on: null, buttons: buttons.length })
+  }
+  // In the room: exercise the controls a person would — mute, unmute, leave — spaced
+  // out by the tick, so one round covers talking, quiet, and a clean goodbye.
+  window.__GC = (window.__GC ?? 0) + 1
+  const tick = window.__GC
+  const find = (prefix) => buttons.find((b) => b.textContent.trim().startsWith(prefix))
+  if (tick > 4 && !window.__GM1) {
+    const mute = find('Mute')
+    if (mute) {
+      mute.click()
+      window.__GM1 = true
+      return 'muted'
+    }
+  }
+  if (tick > 6 && !window.__GM2) {
+    const unmute = find('Mute')
+    if (unmute) {
+      unmute.click()
+      window.__GM2 = true
+      return 'unmuted'
+    }
+  }
+  if (tick > 8 && !window.__GLV) {
+    const leave = find('Leave voice')
+    if (leave) {
+      leave.click()
+      window.__GLV = true
+      return 'left'
+    }
+  }
+  const people = [...document.querySelectorAll('[data-testid="voice-person"]')].map((li) => ({
+    who: li.textContent.trim().slice(0, 18),
+    st: li.getAttribute('data-state'),
+  }))
+  return JSON.stringify({ on, people })
+})()
+"#;
 
 struct App {
     settings_path: PathBuf,
@@ -278,8 +370,22 @@ fn allow_media(win: &WebviewWindow) {
 fn allow_media(_win: &WebviewWindow) {}
 
 fn main() {
-    let app = tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![get_state, connect_remote, start_local, report])
+    // The media module's commands exist only where the module does; a handler list
+    // cannot be built across a binding (its runtime type is only inferred inside the
+    // invoke_handler call), so each platform builds its own list here.
+    #[cfg(target_os = "linux")]
+    let app = tauri::Builder::default().invoke_handler(tauri::generate_handler![
+        get_state, connect_remote, start_local, report,
+        media::native_media, media::pc_create, media::pc_local, media::pc_remote,
+        media::pc_track, media::pc_uplink, media::pc_channel, media::pc_send, media::pc_volume,
+        media::pc_close, media::mic_start, media::mic_mute, media::mic_stop
+    ]);
+    #[cfg(not(target_os = "linux"))]
+    let app = tauri::Builder::default().invoke_handler(tauri::generate_handler![
+        get_state, connect_remote, start_local, report
+    ]);
+
+    let app = app
         .setup(|app| {
             let dir = app.path().app_config_dir()?;
             let settings_path = dir.join("settings.json");
@@ -311,6 +417,84 @@ fn main() {
                 .build()?;
             *app.state::<App>().launcher.lock().unwrap() = win.url().ok();
             allow_media(&win);
+
+            // The native media stack gets the window it reports state on, and lives as
+            // long as the app does (managed state is dropped at exit, which closes its
+            // streams and connections).
+            #[cfg(target_os = "linux")]
+            app.manage(media::hub(win.clone()));
+            if std::env::var("GESTALT_MEDIA_SELFTEST").is_ok() {
+                // The whole native voice loop in one process: it plays through the real
+                // speaker and captures the real microphone, says what it found, and exits.
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let state = handle.state::<media::Hub>();
+                    match media::selftest(&state) {
+                        Ok(()) => {
+                            media::log_line("selftest: PASS");
+                            handle.exit(0);
+                        }
+                        Err(e) => {
+                            media::log_line(&format!("selftest: FAIL {e}"));
+                            handle.exit(1);
+                        }
+                    }
+                });
+            }
+            if let Ok(live) = std::env::var("GESTALT_MEDIA_LIVE") {
+                // The local live check's driver: it does around the page what a person
+                // would — connect, sign in as the named nick, join the room — so two
+                // instances can find each other with no hands. "nick:password" splits.
+                std::thread::spawn(|| {
+                    struct StdoutLog;
+                    impl log::Log for StdoutLog {
+                        fn enabled(&self, m: &log::Metadata) -> bool {
+                            m.level() <= log::Level::Info
+                        }
+                        fn log(&self, r: &log::Record) {
+                            println!("{}: [{}] {}", r.target(), r.level(), r.args());
+                        }
+                        fn flush(&self) {}
+                    }
+                    if log::set_boxed_logger(Box::new(StdoutLog)).is_ok() {
+                        log::set_max_level(log::LevelFilter::Info);
+                        log::info!("the log crates connected");
+                    } else {
+                        println!("media: the log crate could not connect");
+                    }
+                });
+                let handle = app.handle().clone();
+                let (user, pass) = match live.split_once(':') {
+                    Some((u, p)) => (u.to_string(), p.to_string()),
+                    None => (String::new(), String::new()),
+                };
+                std::thread::spawn(move || {
+                    for i in 0..40u32 {
+                        if i == 0 {
+                            media::log_line(&format!("driver: up, user {user}"));
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        match handle.get_webview_window("main") {
+                            Some(win) => {
+                                let script = DRIVER_JS.replace("__USER__", &user).replace("__PASS__", &pass);
+                                let h2 = handle.clone();
+                                let script = DRIVER_JS.replace("__USER__", &user).replace("__PASS__", &pass);                                match win.eval_with_callback(&script, move |out| {
+                                    if !out.is_empty() {
+                                        media::log_line(&format!("driver got: {out}"));
+                                    }
+                                }) {
+                                    Err(e) => {
+                                        media::log_line(&format!("driver: {e}"));
+                                        break;
+                                    }
+                                    Ok(()) => {}
+                                }
+                            }
+                            None => media::log_line("driver: no main webview"),
+                        }
+                    }
+                });
+            }
 
             let menu = MenuBuilder::new(app)
                 .item(
