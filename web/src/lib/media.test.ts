@@ -167,11 +167,17 @@ describe('new platform ids', () => {
     expect(soundcloudId(new URL('https://soundcloud.com/user/track-name'))).toBe('track-name')
   })
 
-  it('extracts spotify track, album and playlist ids', () => {
-    expect(classifyLink('https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh')).toEqual({ kind: 'spotify', id: '4iV5W9uYEdYUVa79Axb7Rh' })
-    expect(classifyLink('https://open.spotify.com/album/1A2gWYaoRZg6C4D2K3sXfL')).toEqual({ kind: 'spotify', id: '1A2gWYaoRZg6C4D2K3sXfL' })
-    expect(classifyLink('https://open.spotify.com/playlist/37i9dQZF1DX0UXBs16Z9o1')).toEqual({ kind: 'spotify', id: '37i9dQZF1DX0UXBs16Z9o1' })
-    expect(spotifyId(new URL('https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh'))).toBe('4iV5W9uYEdYUVa79Axb7Rh')
+  it('extracts what a spotify link points at, with its kind', () => {
+    expect(classifyLink('https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh')).toEqual({ kind: 'spotify', id: 'track/4iV5W9uYEdYUVa79Axb7Rh' })
+    expect(classifyLink('https://open.spotify.com/album/1A2gWYaoRZg6C4D2K3sXfL')).toEqual({ kind: 'spotify', id: 'album/1A2gWYaoRZg6C4D2K3sXfL' })
+    expect(classifyLink('https://open.spotify.com/playlist/37i9dQZF1DX0UXBs16Z9o1')).toEqual({ kind: 'spotify', id: 'playlist/37i9dQZF1DX0UXBs16Z9o1' })
+    expect(classifyLink('https://open.spotify.com/episode/4rOoJ6Egrf8K2IrywzwOMk')).toEqual({ kind: 'spotify', id: 'episode/4rOoJ6Egrf8K2IrywzwOMk' })
+    expect(classifyLink('https://open.spotify.com/show/2MAi0BvDc6GTFvKFPXnkCL')).toEqual({ kind: 'spotify', id: 'show/2MAi0BvDc6GTFvKFPXnkCL' })
+    expect(classifyLink('https://open.spotify.com/artist/0TnOYISbd1XYRBk9myaseg')).toEqual({ kind: 'spotify', id: 'artist/0TnOYISbd1XYRBk9myaseg' })
+    // A tracking query and a language prefix are not part of it.
+    expect(spotifyId(new URL('https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh?si=abc123def456'))).toBe('track/4iV5W9uYEdYUVa79Axb7Rh')
+    expect(spotifyId(new URL('https://open.spotify.com/intl-de/track/4iV5W9uYEdYUVa79Axb7Rh'))).toBe('track/4iV5W9uYEdYUVa79Axb7Rh')
+    expect(spotifyId(new URL('https://open.spotify.com/user/someone'))).toBe('')
   })
 
   it('extracts vimeo video ids', () => {
@@ -210,7 +216,9 @@ describe('mediaSrc and embedSrc', () => {
     expect(embedSrc('twitch', '123456789')).toBe('https://player.twitch.tv/?video=123456789&autoplay=true&parent=localhost&parent=127.0.0.1')
     expect(embedSrc('twitch', 'AbCdEf12', 'https://twitch.tv/clip/AbCdEf12')).toBe('https://clips.twitch.tv/embed?clip=AbCdEf12&autoplay=true&parent=localhost&parent=127.0.0.1')
     expect(embedSrc('soundcloud', 'track-name', 'https://soundcloud.com/user/track-name')).toMatch(/^https:\/\/w\.soundcloud\.com\/player\/\?url=/)
-    expect(embedSrc('spotify', '4iV5W9uYEdYUVa79Axb7Rh')).toBe('https://open.spotify.com/embed/4iV5W9uYEdYUVa79Axb7Rh')
+    // The kind is in the address; with the id alone Spotify answers 404.
+    expect(embedSrc('spotify', 'track/4iV5W9uYEdYUVa79Axb7Rh')).toBe('https://open.spotify.com/embed/track/4iV5W9uYEdYUVa79Axb7Rh')
+    expect(embedSrc('spotify', 'playlist/37i9dQZF1DX0UXBs16Z9o1')).toBe('https://open.spotify.com/embed/playlist/37i9dQZF1DX0UXBs16Z9o1')
     expect(embedSrc('vimeo', '123456789')).toBe('https://player.vimeo.com/video/123456789?autoplay=true')
   })
 })

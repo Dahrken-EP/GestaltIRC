@@ -16,7 +16,7 @@ export type LinkKind =
 
 export interface LinkInfo {
   kind: LinkKind
-  /** The video or clip id for youtube, streamable, twitch and vimeo. For soundcloud and spotify it is the track/item id. */
+  /** The video or clip id for youtube, streamable, twitch and vimeo. For soundcloud it is the track id; for spotify "<kind>/<id>", such as "track/4iV5W9uYEdYUVa79Axb7Rh". */
   id?: string
   /** For imgur and giphy links: the address of the file itself, which is not the address that was posted. */
   src?: string
@@ -121,18 +121,22 @@ export function soundcloudId(u: URL): string {
   return ''
 }
 
-/** The item id in a Spotify link, or ''. Handles /track/, /album/, /playlist/. */
+/** The kinds of thing Spotify has a player for. */
+const SPOTIFY_KINDS = new Set(['track', 'album', 'playlist', 'episode', 'show', 'artist'])
+
+/**
+ * What a Spotify link points at, as "<kind>/<id>" (for example "track/4iV5W9uYEdYUVa79Axb7Rh"), or ''. The kind is
+ * part of it because the player's address needs both: https://open.spotify.com/embed/track/ID. (With the id alone the
+ * address is a 404.) A language prefix such as /intl-de/ and a query such as ?si=... are ignored.
+ */
 export function spotifyId(u: URL): string {
   const host = u.hostname.toLowerCase().replace(/^www\./, '')
   if (host !== 'open.spotify.com' && host !== 'spotify.com') return ''
-  const path = u.pathname.replace(/^\/+|\/+$/g, '')
-  const parts = path.split('/')
-  // open.spotify.com/track/ID, /album/ID, /playlist/ID
-  if ((parts[0] === 'track' || parts[0] === 'album' || parts[0] === 'playlist') && parts.length >= 2) {
-    const id = ((parts[1] ?? '').split('?')[0] ?? '')
-    return SPOTIFY_ID.test(id) ? id : ''
-  }
-  return ''
+  const parts = u.pathname.replace(/^\/+|\/+$/g, '').split('/')
+  if (/^intl-[a-z-]+$/i.test(parts[0] ?? '')) parts.shift()
+  const kind = parts[0] ?? ''
+  const id = parts[1] ?? ''
+  return SPOTIFY_KINDS.has(kind) && SPOTIFY_ID.test(id) ? `${kind}/${id}` : ''
 }
 
 /** The video id in a Vimeo link, or ''. */
@@ -259,7 +263,7 @@ export function embedSrc(kind: LinkKind, id: string, href?: string): string {
         ? `https://w.soundcloud.com/player/?url=${encodeURIComponent(href)}&auto_play=true&hide_related=false&show_comments=true&show_user=true&show_reposts=false`
         : `https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/${id}&auto_play=true`
     case 'spotify':
-      return `https://open.spotify.com/embed/${id}`
+      return `https://open.spotify.com/embed/${id}` // id is "<kind>/<id>"
     case 'vimeo':
       return `https://player.vimeo.com/video/${id}?autoplay=true`
     default:
