@@ -169,7 +169,9 @@ async function startBouncer(user, password) {
 
 function show(url) {
   allowed = new URL(url).origin
-  return win.loadURL(url)
+  // "no-cache" makes the first request check with the server whether the page has changed. The cache used to be
+  // trusted for as long as it liked, and an app started days after the server was updated showed the old client.
+  return win.loadURL(url, { extraHeaders: 'Cache-Control: no-cache\n' })
 }
 
 // Only the launcher's own page, in the window's top frame: not another file, and not a frame inside a server's page.
@@ -235,6 +237,7 @@ function toggleWindow() {
 function menuTemplate() {
   return [
     { label: 'Show Gestalt', click: showWindow },
+    { label: 'Reload page', click: () => win?.webContents.reloadIgnoringCache() },
     { label: 'Change server…', click: backToLauncher },
     {
       label: 'Closing the window keeps Gestalt in the tray',
