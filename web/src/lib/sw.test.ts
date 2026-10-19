@@ -1,6 +1,7 @@
 // The service worker (public/sw.js) run against a stand-in for its global scope.
-import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
+// The worker's source as text. (Vite reads it; the tests' types do not include Node's, so `node:fs` is not used.)
+import code from '../../public/sw.js?raw'
 
 type Handler = (event: unknown) => void
 
@@ -25,7 +26,6 @@ function loadWorker() {
   const fetchFn = vi.fn((req: { url: string }) =>
     Promise.resolve({ ok: true, status: req.url.includes('/partial') ? 206 : 200, clone() { return this } }),
   )
-  const code = readFileSync(new URL('../../public/sw.js', import.meta.url), 'utf8')
   new Function('self', 'caches', 'fetch', 'URL', code)(self, caches, fetchFn, URL)
 
   /** Sends a request through the worker; says whether it answered it, and waits for it to finish. */
