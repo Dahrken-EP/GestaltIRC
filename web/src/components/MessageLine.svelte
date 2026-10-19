@@ -247,7 +247,8 @@
        message that follows the same sender (which leaves the nick out) keeps
        the same start instead of sliding back to a narrower column. */
     flex: none;
-    width: 9em;
+    /* Room for a 15-character nick (the width of "0" is wider than an average letter) beside its < > markers. */
+    width: calc(15ch + 2em);
     text-align: right;
     white-space: nowrap;
     overflow: hidden;
