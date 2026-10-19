@@ -12,7 +12,15 @@ const APP_SHELL = [
   "/icon-maskable-512.png",
 ];
 
-const CACHE_NAME = "gestalt-shell-v2";
+// Bumped when what may be cached changes: the old cache is deleted on activation. (v2 kept anything the site
+// answered, including uploaded files and guest-link pages; v3 keeps only the app itself.)
+const CACHE_NAME = "gestalt-shell-v3";
+
+// What the worker may keep: the app shell, the manifest, and the hashed build files. Everything else (hosted
+// uploads, a guest link's page, the media proxy, the API) is left to the network, so that a file that has
+// expired on the bouncer does not live on in this browser, and a link that was revoked is not shown from here.
+const CACHEABLE = new Set([...APP_SHELL, "/manifest.webmanifest"]);
+const isCacheable = (url) => CACHEABLE.has(url.pathname) || url.pathname.startsWith("/assets/");
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -39,15 +47,15 @@ self.addEventListener("fetch", (event) => {
   // Only handle same-origin GET requests.
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
 
-  // API and WebSocket requests are never cached.
-  if (url.pathname.startsWith("/api/") || url.pathname === "/ws") return;
+  // Only the app itself is the worker's business.
+  if (!isCacheable(url)) return;
 
   if (url.pathname.startsWith("/assets/")) {
     event.respondWith(
       caches.match(request).then((cached) => {
         if (cached) return cached;
         return fetch(request).then((response) => {
-          if (response.ok) {
+          if (response.status === 200) {
             const copy = response.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
           }
@@ -61,8 +69,8 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     fetch(request)
       .then((response) => {
-        // Keep the fresh copy so a later reload works offline.
-        if (response.ok) {
+        // Keep the fresh copy so a later reload works offline. (Only a whole answer: a partial one cannot be stored.)
+        if (response.status === 200) {
           const copy = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
         }

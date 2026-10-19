@@ -3,7 +3,6 @@
   import { app } from '../lib/app.svelte'
   import { install } from '../lib/install.svelte'
   import PluginsPanel from './PluginsPanel.svelte'
-  import { checkUpdate, installUpdate, type UpdateStatus } from '../lib/update'
   import { notificationsSupported, requestNotifyPermission } from '../lib/notify'
   import { disablePush, enablePush, pushSubscribed, pushSupported } from '../lib/push'
   import { settings, type Density, type Theme } from '../lib/settings.svelte'
@@ -21,20 +20,6 @@
   let pushOn = $state(false)
   let pushMsg = $state('')
   let pushBusy = $state(false)
-  let updateStatus = $state<UpdateStatus>('up-to-date')
-  let updateVersion = $state('')
-  let updateChecking = $state(false)
-
-  async function checkForUpdate() {
-    updateChecking = true
-    try {
-      const info = await checkUpdate()
-      updateStatus = info.status
-      updateVersion = info.version ?? ''
-    } finally {
-      updateChecking = false
-    }
-  }
 
   $effect(() => {
     void pushSubscribed().then((on) => (pushOn = on))
@@ -366,22 +351,6 @@
           <li><kbd>Esc</kbd> — {t('shortcut.cancel')}</li>
           <li><kbd>Ctrl</kbd> + <kbd>E</kbd> — {t('shortcut.emoji')}</li>
         </ul>
-        <h3>{t('settings.updates')}</h3>
-        <div class="row">
-          <button class="btn" disabled={updateChecking} onclick={checkForUpdate}>
-            {updateChecking ? t('button.checking') : t('button.check_updates')}
-          </button>
-        </div>
-        {#if updateStatus === 'update-available'}
-          <div class="row">
-            <span class="grow">{t('settings.update_available', { version: updateVersion })}</span>
-            <button class="btn primary" onclick={() => void installUpdate()}>{t('button.install_update')}</button>
-          </div>
-        {:else if updateStatus === 'error'}
-          <p class="note error">{t('settings.check_failed', { error: updateVersion })}</p>
-        {:else if updateStatus === 'up-to-date'}
-          <p class="note">{t('settings.up_to_date')}</p>
-        {/if}
       {/if}
     </div>
   </div>

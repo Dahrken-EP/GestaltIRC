@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -513,5 +515,92 @@ func TestStoredDocumentsBelongToTheAccount(t *testing.T) {
 	}
 	if resp, out := e.do(t, "GET", "/api/docs/plugins", "", nil, eve); resp.StatusCode != 200 || out != nil {
 		t.Errorf("eve can see matt's plugins: %d %v", resp.StatusCode, out)
+	}
+}
+
+func TestAuthenticatedRequestsAreRateLimited(t *testing.T) {
+	e := newEnv(t, config.Config{APIRate: 5}, fakeStatus{})
+	cookie, _ := e.login(t)
+
+	for i := 1; i <= 5; i++ {
+		if resp, _ := e.do(t, "GET", "/api/prefs", "", nil, cookie); resp.StatusCode != 200 {
+			t.Fatalf("request %d = %d, want 200", i, resp.StatusCode)
+		}
+	}
+	resp, _ := e.do(t, "GET", "/api/prefs", "", nil, cookie)
+	if resp.StatusCode != 429 || resp.Header.Get("Retry-After") == "" {
+		t.Fatalf("request past the limit = %d (Retry-After %q), want 429 with a wait", resp.StatusCode, resp.Header.Get("Retry-After"))
+	}
+	// The session answer, which a page asks for before it can do anything, is not behind the limit.
+	if resp, _ := e.do(t, "GET", "/api/session", "", nil, cookie); resp.StatusCode != 200 {
+		t.Errorf("/api/session = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestRateLimitIsPerAccount(t *testing.T) {
+	e := newEnv(t, config.Config{APIRate: 3}, fakeStatus{})
+	if err := e.acc.CreateUser("eve", "eve-long-password"); err != nil {
+		t.Fatal(err)
+	}
+	cookie, _ := e.login(t)
+	for i := 0; i < 4; i++ {
+		e.do(t, "GET", "/api/prefs", "", nil, cookie)
+	}
+	resp, _ := e.do(t, "POST", "/api/login", `{"user":"eve","password":"eve-long-password"}`, nil, nil)
+	var eve *http.Cookie
+	for _, c := range resp.Cookies() {
+		if c.Name == CookieName {
+			eve = c
+		}
+	}
+	if resp, _ := e.do(t, "GET", "/api/prefs", "", nil, eve); resp.StatusCode != 200 {
+		t.Errorf("another account's first request = %d, want 200: the limit is per account", resp.StatusCode)
+	}
+}
+
+func TestAStalledRequestBodyIsCutOff(t *testing.T) {
+	done := make(chan error, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := io.ReadAll(StallGuard(w, r.Body, 200*time.Millisecond))
+		done <- err
+	}))
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Promises a megabyte, sends ten bytes, and goes quiet.
+	fmt.Fprintf(conn, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1048576\r\n\r\n0123456789")
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("the read ended without an error")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a client that went quiet kept its handler")
+	}
+}
+
+func TestASlowButSteadyBodyIsNotCutOff(t *testing.T) {
+	done := make(chan int, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(StallGuard(w, r.Body, 300*time.Millisecond))
+		done <- len(b)
+	}))
+	defer srv.Close()
+	conn, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\n")
+	for i := 0; i < 10; i++ { // a second in all, longer than the guard, but never silent for long
+		fmt.Fprint(conn, "x")
+		time.Sleep(100 * time.Millisecond)
+	}
+	if n := <-done; n != 10 {
+		t.Fatalf("read %d bytes, want 10", n)
 	}
 }

@@ -68,6 +68,10 @@ type Config struct {
 	// then CommandRate a second. A client over the limit has lines dropped and, if it keeps on, is disconnected.
 	CommandBurst int     `yaml:"command_burst"`
 	CommandRate  float64 `yaml:"command_rate"`
+	// APIRate is how many API requests one logged-in account may make in a minute, and a client address twice that.
+	// The web client makes a request for every picture and link preview it shows, so the default (600) is generous:
+	// it is there to stop a flood, not to pace a person.
+	APIRate int `yaml:"api_rate"`
 	// AllowPrivateNetworks lets a user point a network at an address on the bouncer's own network (a
 	// private, loopback or link-local one) from the web editor. It is off by default, so that a user cannot
 	// make the bouncer connect to services behind it. Networks added with the command line are not affected.
@@ -87,6 +91,9 @@ type Config struct {
 	// UploadsMaxBytes caps one uploaded file, in bytes. Default 52428800 (50 MiB). Nothing
 	// larger is accepted, and the browser is told the figure so it can warn first.
 	UploadsMaxBytes int64 `yaml:"uploads_max_bytes"`
+	// UploadsUserQuota caps the files one account may have up at a time, in bytes. Default 524288000 (500 MiB).
+	// An upload that would go past it is refused until older files expire.
+	UploadsUserQuota int64 `yaml:"uploads_user_quota_bytes"`
 	// UploadsMaxDays is how long an uploaded file is kept. Default 7. A file that is older
 	// disappears; links to it answer "gone" until then.
 	UploadsMaxDays int `yaml:"uploads_max_days"`
@@ -163,6 +170,9 @@ func (c *Config) setDefaults() {
 	if c.PluginStoragePath == "" {
 		c.PluginStoragePath = filepath.Join(c.DataDir, "plugins")
 	}
+	if c.APIRate == 0 {
+		c.APIRate = 600
+	}
 	if c.CommandBurst == 0 {
 		c.CommandBurst = 30
 	}
@@ -171,6 +181,9 @@ func (c *Config) setDefaults() {
 	}
 	if c.UploadsMaxBytes == 0 {
 		c.UploadsMaxBytes = 50 << 20
+	}
+	if c.UploadsUserQuota == 0 {
+		c.UploadsUserQuota = 500 << 20
 	}
 	if c.UploadsMaxDays == 0 {
 		c.UploadsMaxDays = 7
@@ -213,6 +226,9 @@ func (c *Config) Validate() error {
 	if c.STSPort < 0 || c.STSPort > 65535 {
 		errs = append(errs, errors.New("sts_port must be between 1 and 65535"))
 	}
+	if c.APIRate < 1 {
+		errs = append(errs, errors.New("api_rate must be at least 1"))
+	}
 	if c.HistoryLimit < 1 {
 		errs = append(errs, errors.New("history_limit must be at least 1"))
 	}
@@ -222,6 +238,9 @@ func (c *Config) Validate() error {
 	if !c.DisableUploads {
 		if c.UploadsMaxBytes < 1024 {
 			errs = append(errs, errors.New("uploads_max_bytes must be at least 1024 for uploads to be of use"))
+		}
+		if c.UploadsUserQuota < c.UploadsMaxBytes {
+			errs = append(errs, errors.New("uploads_user_quota_bytes must be at least uploads_max_bytes, or one file could never fit"))
 		}
 		if c.UploadsMaxDays < 1 || c.UploadsMaxDays > 365 {
 			errs = append(errs, errors.New("uploads_max_days must be between 1 and 365"))

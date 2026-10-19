@@ -119,7 +119,7 @@ func TestInfoTellsTheLimits(t *testing.T) {
 	if r.StatusCode != http.StatusOK {
 		t.Fatalf("info answered %s", r.Status)
 	}
-	want := `{"enabled":true,"max_bytes":1024,"max_days":3}`
+	want := `{"enabled":true,"max_bytes":1024,"max_days":3,"quota_bytes":0,"used_bytes":0}`
 	if text(t, r) != want+"\n" {
 		t.Errorf("info = %q", text(t, r))
 	}
@@ -243,5 +243,62 @@ func TestNameWithoutExtensionIsAllowed(t *testing.T) {
 	out := upload(t, s, "plain bytes", "README")
 	if out.Name != "README" {
 		t.Errorf("name = %q", out.Name)
+	}
+}
+
+func TestAUserCannotHaveMoreFilesUpThanTheirQuota(t *testing.T) {
+	s := newStack(t, 100, 0)
+	s.up.SetQuota(150)
+	upload(t, s, strings.Repeat("a", 100), "one.txt")
+
+	r := s.logged(t, "PUT", "/api/uploads", strings.Repeat("b", 100), "two.txt", true)
+	if r.StatusCode != http.StatusInsufficientStorage {
+		t.Fatalf("a file past the quota answered %s, want 507", r.Status)
+	}
+	// What is left still fits a smaller file.
+	upload(t, s, strings.Repeat("c", 40), "three.txt")
+
+	r = s.logged(t, "GET", "/api/uploads/info", "", "", true)
+	if got := text(t, r); !strings.Contains(got, `"quota_bytes":150`) || !strings.Contains(got, `"used_bytes":140`) {
+		t.Errorf("info = %q", got)
+	}
+}
+
+func TestAnUploadOfUnknownLengthIsCutOffAtTheQuota(t *testing.T) {
+	s := newStack(t, 1000, 0)
+	s.up.SetQuota(1000)
+	upload(t, s, strings.Repeat("a", 900), "big.txt")
+
+	req := httptest.NewRequest("PUT", "/api/uploads", strings.NewReader(strings.Repeat("z", 500)))
+	req.ContentLength = -1 // chunked: the size is not known until it has been read
+	req.Header.Set("Cookie", api.CookieName+"="+s.token)
+	req.Header.Set("X-CSRF-Token", s.csrf)
+	req.Header.Set("X-File-Name", "more.txt")
+	rec := httptest.NewRecorder()
+	s.mux().ServeHTTP(rec, req)
+	if rec.Code != http.StatusInsufficientStorage {
+		t.Fatalf("answered %d, want 507", rec.Code)
+	}
+}
+
+func TestExpiredFilesFreeTheQuota(t *testing.T) {
+	s := newStack(t, 100, 1)
+	s.up.SetQuota(100)
+	upload(t, s, strings.Repeat("a", 100), "old.txt")
+	if r := s.logged(t, "PUT", "/api/uploads", "b", "full.txt", true); r.StatusCode != http.StatusInsufficientStorage {
+		t.Fatalf("answered %s while full", r.Status)
+	}
+	later := time.Now().Add(48 * time.Hour)
+	s.up.now = func() time.Time { return later }
+	upload(t, s, strings.Repeat("c", 100), "new.txt")
+}
+
+func TestQuotaIsPerUser(t *testing.T) {
+	s := newStack(t, 100, 0)
+	s.up.SetQuota(100)
+	upload(t, s, strings.Repeat("a", 100), "mine.txt")
+	reserved, err := s.up.reserve(999) // someone else
+	if err != nil || reserved == 0 {
+		t.Fatalf("another user's room = %d, %v", reserved, err)
 	}
 }

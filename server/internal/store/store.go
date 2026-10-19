@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -35,8 +37,18 @@ type Record struct {
 
 // Store is the SQLite-backed history.
 type Store struct {
-	db *sql.DB
+	// db is the one connection that writes. rdb is for reading history and searching it: SQLite in WAL mode lets
+	// readers run beside the writer, so a long search no longer holds up every message waiting to be stored (and,
+	// through the network's lock, every client of that network).
+	db  *sql.DB
+	rdb *sql.DB
 }
+
+// maxReaders is how many connections may read at once.
+const maxReaders = 4
+
+// searchBudget is the longest a history search may run.
+const searchBudget = 10 * time.Second
 
 // Open opens or creates the database at path and applies the schema.
 func Open(path string) (*Store, error) {
@@ -65,12 +77,24 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	// Opened after the schema exists. query_only makes a mistake that sends a write down this path an error.
+	rdb, err := sql.Open("sqlite", dsn+"&_pragma=query_only(1)")
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	rdb.SetMaxOpenConns(maxReaders)
+	s.rdb = rdb
 	return s, nil
 }
 
 // Close closes the database.
 func (s *Store) Close() error {
-	return s.db.Close()
+	err := s.rdb.Close()
+	if werr := s.db.Close(); err == nil {
+		err = werr
+	}
+	return err
 }
 
 func (s *Store) migrate() error {
@@ -348,7 +372,7 @@ type TargetTime struct {
 // Targets returns the buffers whose newest message is after fromMS and before toMS, the newest limit of them,
 // oldest first. Channels and private conversations are both included.
 func (s *Store) Targets(network int64, fromMS, toMS int64, limit int) ([]TargetTime, error) {
-	rows, err := s.db.Query(`SELECT target, newest FROM (
+	rows, err := s.rdb.Query(`SELECT target, newest FROM (
 	SELECT target, MAX(time_ms) AS newest FROM messages WHERE network_id = ? GROUP BY target
 ) WHERE newest > ? AND newest < ? ORDER BY newest DESC, target ASC LIMIT ?`, network, fromMS, toMS, clampLimit(limit))
 	if err != nil {
@@ -375,7 +399,7 @@ func (s *Store) Targets(network int64, fromMS, toMS int64, limit int) ([]TargetT
 // TimeOfMsgID returns the server time of a stored message, if it exists.
 func (s *Store) TimeOfMsgID(network int64, msgid string) (int64, bool, error) {
 	var ms int64
-	err := s.db.QueryRow(`SELECT time_ms FROM messages WHERE network_id = ? AND msgid = ? ORDER BY id DESC LIMIT 1`,
+	err := s.rdb.QueryRow(`SELECT time_ms FROM messages WHERE network_id = ? AND msgid = ? ORDER BY id DESC LIMIT 1`,
 		network, msgid).Scan(&ms)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
@@ -392,7 +416,7 @@ type Target struct {
 // Missed returns, for every buffer with messages received after recvMS, up to
 // perTarget of its newest lines, oldest first. Buffers come sorted by name.
 func (s *Store) Missed(network int64, recvMS int64, perTarget int) ([]Target, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT target FROM messages WHERE network_id = ? AND recv_ms > ?`, network, recvMS)
+	rows, err := s.rdb.Query(`SELECT DISTINCT target FROM messages WHERE network_id = ? AND recv_ms > ?`, network, recvMS)
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +485,10 @@ func (s *Store) Search(networkID int64, target, from string, words []string, lim
 	b.WriteString(` ORDER BY id DESC LIMIT ?`)
 	args = append(args, limit)
 
-	rows, err := s.db.Query(b.String(), args...)
+	// A search can be a scan of the whole table; it is given a limited time, and runs beside the writer.
+	ctx, cancel := context.WithTimeout(context.Background(), searchBudget)
+	defer cancel()
+	rows, err := s.rdb.QueryContext(ctx, b.String(), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -500,7 +527,7 @@ func (s *Store) SetKV(key string, value int64) error {
 // query runs a history select. Queries that walk backwards for the newest rows
 // set newestFirst, and the result is reversed so callers always get oldest first.
 func (s *Store) query(newestFirst bool, q string, args ...any) ([]string, error) {
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.rdb.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -25,44 +25,6 @@ var (
 	ErrBodyTooLong = errors.New("irc: message body too long")
 )
 
-// Multiline tag names from the IRCv3 draft/multiline specification.
-const (
-	MultilineConcat = "+draft/multiline-concat" // first part of a multiline message
-	MultilineCont   = "+draft/multiline-cont"   // continuation part
-	MultilineEnd    = "+draft/multiline-end"    // final part
-)
-
-// IsMultiline reports whether m carries any draft/multiline tag.
-func IsMultiline(m *Message) bool {
-	_, ok := m.Tag(MultilineConcat)
-	if ok {
-		return true
-	}
-	_, ok = m.Tag(MultilineCont)
-	if ok {
-		return true
-	}
-	_, ok = m.Tag(MultilineEnd)
-	return ok
-}
-
-// MultilineStage reports which part of a multiline message m is, or "".
-func MultilineStage(m *Message) string {
-	_, ok := m.Tag(MultilineConcat)
-	if ok {
-		return "concat"
-	}
-	_, ok = m.Tag(MultilineCont)
-	if ok {
-		return "cont"
-	}
-	_, ok = m.Tag(MultilineEnd)
-	if ok {
-		return "end"
-	}
-	return ""
-}
-
 // HasTag reports whether m carries the named tag with a non-empty value.
 func (m *Message) HasTag(key string) bool {
 	v, ok := m.Tag(key)

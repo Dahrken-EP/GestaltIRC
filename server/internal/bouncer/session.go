@@ -45,7 +45,6 @@ var supportedCaps = map[string]bool{
 	"standard-replies":        true,
 	"draft/read-marker":       true,
 	"draft/message-redaction": true,
-	"draft/multiline":         true,
 }
 
 // capOrder fixes the order of CAP LS so the output is stable.
@@ -53,7 +52,7 @@ var capOrder = []string{
 	"message-tags", "server-time", "batch", "echo-message", "sasl", "chathistory", "message-ids",
 	"away-notify", "account-notify", "account-tag", "extended-join", "multi-prefix", "userhost-in-names",
 	"invite-notify", "chghost", "setname", "cap-notify", "standard-replies",
-	"draft/read-marker", "draft/message-redaction", "draft/multiline",
+	"draft/read-marker", "draft/message-redaction",
 }
 
 // capList renders the CAP LS reply. Values (such as sasl=PLAIN) are only sent to
@@ -104,6 +103,10 @@ type Session struct {
 	replyNick string
 	notifyc   chan struct{}
 	done      chan struct{}
+	// loggedIn is closed once the client has logged in and attached; ticket is its place in the connection gate.
+	loggedIn chan struct{}
+	regOnce  sync.Once
+	ticket   *ticket
 
 	// Read-loop state. Only the read loop touches these.
 	capVersion     int
@@ -137,19 +140,22 @@ func newSession(b *Bouncer, conn irc.LineConn, id api.Identity) *Session {
 		burst, rate = 30, 10
 	}
 	return &Session{
-		b:       b,
-		conn:    conn,
-		id:      id,
-		caps:    map[string]bool{},
-		notifyc: make(chan struct{}, 1),
-		done:    make(chan struct{}),
-		bucket:  ratelimit.NewBucket(burst, rate),
+		b:        b,
+		conn:     conn,
+		id:       id,
+		caps:     map[string]bool{},
+		notifyc:  make(chan struct{}, 1),
+		done:     make(chan struct{}),
+		bucket:   ratelimit.NewBucket(burst, rate),
+		loggedIn: make(chan struct{}),
 	}
 }
 
 // run serves the client until it disconnects.
 func (s *Session) run(ctx context.Context) {
+	s.ticket = ticketFrom(ctx)
 	go s.writeLoop()
+	go s.registerDeadline()
 	defer func() {
 		if s.attached {
 			s.target.Detach(s)
@@ -185,6 +191,20 @@ func (s *Session) run(ctx context.Context) {
 		if !s.handle(m) {
 			return
 		}
+	}
+}
+
+// registerDeadline drops a client that has not logged in soon enough. Anyone can open a connection, and one that
+// never speaks would otherwise be held for ever.
+func (s *Session) registerDeadline() {
+	t := time.NewTimer(s.b.regTimeout)
+	defer t.Stop()
+	select {
+	case <-s.loggedIn:
+	case <-s.done:
+	case <-t.C:
+		s.enqueueMsg(notice(s.nickOr("*"), "Disconnected: you did not log in in time"))
+		s.close()
 	}
 }
 
@@ -415,6 +435,12 @@ func (s *Session) maybeRegister() {
 		return
 	}
 	s.attached = true
+	s.regOnce.Do(func() {
+		close(s.loggedIn)
+		if s.ticket != nil {
+			s.ticket.registered()
+		}
+	})
 	// The network decides the nick. Use it from now on, even if the client asked for another.
 	s.nick = s.target.Nick()
 	s.mu.Lock()

@@ -55,7 +55,15 @@ or `--cert-file` and `--key-file` for a certificate you already have.
 ## Limits you can tune
 
 `history_limit` (messages kept per buffer), `replay_limit` (replayed to a client on attach), `command_burst` and
-`command_rate` (how fast a client may send), `turn_ttl`, `sts_duration`, `allow_private_networks` and `disable_guests` (see [GUESTS.md](GUESTS.md)).
+`command_rate` (how fast a client may send), `api_rate` (API requests an account may make a minute, default 600; a client address gets twice that), `turn_ttl`, `sts_duration`, `allow_private_networks` and `disable_guests` (see [GUESTS.md](GUESTS.md)).
+
+## Connection limits
+
+A client WebSocket that has not logged in within 60 seconds is dropped, and no more than 20 connections per address
+may be waiting to log in at once (a connection that has logged in stops counting against its address, so a
+household or an office behind one address is not held to it). All client connections together are limited to 2000.
+A request body that stops arriving for 10 seconds (30 for an upload) is cut off, and a connection idle between
+requests for two minutes is closed. These are fixed values, not settings.
 
 ## Hosted attachments
 
@@ -66,6 +74,7 @@ bouncer serves the file at `/uploads/…` and deletes it when its days run out. 
 | --- | --- | --- |
 | `disable_uploads` | `false` | switches the whole feature off: no paper clip, no storage, nothing served |
 | `uploads_max_bytes` | `52428800` (50 MiB) | the most one file may weigh; larger ones are refused before any storage starts |
+| `uploads_user_quota_bytes` | `524288000` (500 MiB) | the most one account may have up at once; an upload past it is refused (507) until older files expire. Must be at least `uploads_max_bytes` |
 | `uploads_max_days` | `7` | how long a file is kept; after that it disappears and its links answer "gone" |
 | `uploads_dir` | `data_dir/uploads` | where the files are kept (one file per random id, name remembered in the database) |
 

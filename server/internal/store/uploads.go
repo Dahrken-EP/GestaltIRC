@@ -74,6 +74,13 @@ func (s *Store) DeleteExpiredUploads(nowMS int64) ([]UploadRow, error) {
 	return gone, nil
 }
 
+// UserUploadBytes is the weight of the files a user has up that have not expired yet.
+func (s *Store) UserUploadBytes(userID, nowMS int64) (int64, error) {
+	var n int64
+	err := s.db.QueryRow(`SELECT COALESCE(SUM(size), 0) FROM uploads WHERE user_id = ? AND expires_ms >= ?`, userID, nowMS).Scan(&n)
+	return n, err
+}
+
 // UploadsTTL is the default time a file stays, for callers that want a duration.
 func UploadsTTL(days int) time.Duration {
 	return time.Duration(days) * 24 * time.Hour

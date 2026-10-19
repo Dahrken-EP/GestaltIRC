@@ -60,4 +60,8 @@ check on it finds everything. (The Tauri code still builds on Linux and shows a 
 - Signing: an unsigned Windows build shows a SmartScreen warning. A code-signing certificate costs about $100 to $400 a year.
   AppImages on newer distributions need FUSE.
 - Auto-update can come from Tauri's updater, with signed update manifests on the releases page.
-- A remote self-signed certificate needs an explicit "trust this fingerprint" step in the app.
+- A remote server whose certificate the system does not trust (self-signed, or from a private authority) is shown only after
+  the person accepts that exact certificate, with its fingerprint on screen (Linux/Electron; the Windows/Tauri app does not have
+  this yet). The fingerprint is remembered for that server and asked about again if it changes.
+- The bouncer the Linux app carries is watched: if it dies by itself it is started again (up to three times in a minute), and one
+  left behind by an app that was killed is stopped before a new one starts.

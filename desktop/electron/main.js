@@ -1,15 +1,18 @@
 // Gestalt on the desktop, for Linux, in Electron. Linux's own web view (WebKitGTK) has no WebRTC on Ubuntu and Debian,
 // and Electron carries Chromium, which does. It does what the Tauri app does for Windows: a launcher that chooses
 // between a bouncer run elsewhere and the one the app carries, then the bouncer's page, and nothing else.
-const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, session, shell } = require('electron')
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, session, shell } = require('electron')
 const { spawn, spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const net = require('node:net')
 const path = require('node:path')
 
+const { certificateDecision, isLauncher, launcherHref, navigationAllowed } = require('./policy')
+
 const launcher = path.join(__dirname, '..', 'ui', 'index.html')
+const launcherUrl = launcherHref(launcher)
 const settingsPath = path.join(app.getPath('userData'), 'settings.json')
-let settings = { mode: '', url: '', port: 0, user: '', closeToTray: true }
+let settings = { mode: '', url: '', port: 0, user: '', closeToTray: true, trustedCerts: {} }
 try {
   settings = { ...settings, ...JSON.parse(fs.readFileSync(settingsPath, 'utf8')) }
 } catch {
@@ -31,9 +34,71 @@ const resources = () => process.env.GESTALT_RESOURCES || (app.isPackaged ? path.
 const exe = () => path.join(resources(), process.platform === 'win32' ? 'bouncer.exe' : 'bouncer')
 const dataDir = () => path.join(app.getPath('userData'), 'bouncer')
 
+const pidPath = () => path.join(dataDir(), 'bouncer.pid')
+/** When the bouncer last died by itself, to stop restarting one that cannot stay up. */
+let deaths = []
+
 function stopLocal() {
-  if (child) child.kill()
-  child = null
+  const old = child
+  child = null // before the kill, so the exit handler knows this one was meant
+  if (old) old.kill()
+  fs.rmSync(pidPath(), { force: true })
+}
+
+/**
+ * A bouncer left running by an app that was killed rather than quit. It holds the database and the port, and a second
+ * one started beside it would write to the same file. Only a process that is really this app's bouncer is stopped.
+ */
+async function stopStale() {
+  let pid
+  try {
+    pid = Number(fs.readFileSync(pidPath(), 'utf8'))
+  } catch {
+    return
+  }
+  fs.rmSync(pidPath(), { force: true })
+  if (!pid || process.platform !== 'linux') return
+  try {
+    const cmd = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')
+    if (cmd[0] !== exe() || !cmd.includes('serve')) return
+    process.kill(pid, 'SIGTERM')
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 100))
+      try {
+        process.kill(pid, 0)
+      } catch {
+        return
+      }
+    }
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    // gone already, or not ours to read
+  }
+}
+
+/** Starts the bouncer process and watches it: if it dies by itself it is started again, a few times. */
+function runChild(config) {
+  const mine = spawn(exe(), ['-config', config, 'serve'], { stdio: 'ignore', windowsHide: true })
+  child = mine
+  if (mine.pid) fs.writeFileSync(pidPath(), String(mine.pid))
+  mine.on('exit', (code, signal) => {
+    if (child !== mine) return // stopped on purpose
+    child = null
+    fs.rmSync(pidPath(), { force: true })
+    const now = Date.now()
+    deaths = deaths.filter((t) => now - t < 60000)
+    deaths.push(now)
+    console.error(`the bouncer stopped by itself (${signal ?? code}); ${deaths.length} time(s) in the last minute`)
+    if (deaths.length > 3) {
+      dialog.showErrorBox('Gestalt', 'The bouncer that comes with the app keeps stopping. Choose the server again to start it afresh.')
+      backToLauncher()
+      return
+    }
+    // The page reconnects by itself once it is back.
+    setTimeout(() => {
+      if (!child && settings.mode === 'local' && !quitting) runChild(config)
+    }, 1000 * deaths.length)
+  })
 }
 
 function freePort() {
@@ -91,7 +156,9 @@ async function startBouncer(user, password) {
     runBouncer(config, ['user', 'add', user], password)
   }
   stopLocal()
-  child = spawn(exe(), ['-config', config, 'serve'], { stdio: 'ignore', windowsHide: true })
+  await stopStale()
+  deaths = []
+  runChild(config)
   await waitFor(port)
   settings.mode = 'local'
   settings.port = port
@@ -105,7 +172,8 @@ function show(url) {
   return win.loadURL(url)
 }
 
-const fromLauncher = (e) => String(e.senderFrame?.url || '').startsWith('file://')
+// Only the launcher's own page, in the window's top frame: not another file, and not a frame inside a server's page.
+const fromLauncher = (e) => e.senderFrame === e.sender.mainFrame && isLauncher(String(e.senderFrame?.url || ''), launcherUrl)
 const handle = (name, fn) =>
   ipcMain.handle('gestalt:' + name, (e, args) => {
     if (!fromLauncher(e)) throw new Error('not allowed')
@@ -223,6 +291,41 @@ app.whenReady().then(async () => {
   })
   ipcMain.on('gestalt:show', showWindow)
 
+  // A server whose certificate the system does not vouch for (self-signed, or from a private authority) is
+  // shown only if the person says so, for that certificate. A different one later is asked about again.
+  app.on('certificate-error', (event, wc, url, _error, certificate, callback) => {
+    event.preventDefault()
+    let origin = ''
+    try {
+      origin = new URL(url).origin
+    } catch {
+      // stays empty and is refused
+    }
+    const fingerprint = certificate.fingerprint
+    const decision = certificateDecision(settings.trustedCerts, origin, allowed, fingerprint)
+    if (decision === 'trusted') return callback(true)
+    if (decision === 'refuse') return callback(false)
+    void dialog
+      .showMessageBox(win, {
+        type: 'warning',
+        buttons: ['Do not connect', 'Trust this certificate'],
+        defaultId: 0,
+        cancelId: 0,
+        title: 'Certificate not trusted',
+        message: decision === 'changed' ? `The certificate of ${origin} has changed.` : `${origin} presents a certificate this computer does not trust.`,
+        detail:
+          (decision === 'changed' ? 'It is not the one you accepted before. Unless the server was set up again, do not connect.\n\n' : 'This is normal for a server you run yourself with its own certificate. Compare the fingerprint with the one on your server before you accept.\n\n') +
+          `SHA-256 fingerprint:\n${fingerprint.replace(/^sha256\//, '')}`,
+      })
+      .then(({ response }) => {
+        if (response === 1) {
+          settings.trustedCerts = { ...settings.trustedCerts, [origin]: fingerprint }
+          save()
+        }
+        callback(response === 1)
+      })
+  })
+
   win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -233,9 +336,12 @@ app.whenReady().then(async () => {
   })
   const wc = win.webContents
   // Only the launcher and the chosen bouncer. A link to anywhere else opens in the user's own browser.
-  wc.on('will-navigate', (e, url) => {
-    if (!url.startsWith('file://') && new URL(url).origin !== allowed) e.preventDefault()
-  })
+  // A server can also move the window by answering with a redirect, which is a different event from a link.
+  const guard = (e, url) => {
+    if (!navigationAllowed(url, launcherUrl, allowed)) e.preventDefault()
+  }
+  wc.on('will-navigate', (e, url) => guard(e, url))
+  wc.on('will-redirect', (e, url) => guard(e, url))
   wc.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) void shell.openExternal(url)
     return { action: 'deny' }

@@ -49,6 +49,9 @@ type Bouncer struct {
 	plugins  *plugins.Registry // server-side plugins, nil when none are configured
 	dcc      *dcc.Proxy        // DCC file transfer proxy
 	uploads  http.Handler      // public /uploads/{id}/{name} route, nil when uploads are off
+	gate     *connGate         // counts the client WebSockets
+	// regTimeout is how long a client may take to log in.
+	regTimeout time.Duration
 
 	mu      sync.Mutex
 	ctx     context.Context
@@ -64,10 +67,12 @@ type runningNetwork struct {
 // New builds a bouncer. Call Run to start the networks.
 func New(conf *config.Config, st *store.Store, acc *accounts.Service) *Bouncer {
 	b := &Bouncer{
-		conf:     conf,
-		store:    st,
-		accounts: acc,
-		running:  map[int64]*runningNetwork{},
+		conf:       conf,
+		store:      st,
+		accounts:   acc,
+		running:    map[int64]*runningNetwork{},
+		gate:       newConnGate(),
+		regTimeout: defaultRegisterTimeout,
 	}
 	b.api = api.New(acc, b, conf)
 
@@ -204,74 +209,54 @@ func (b *Bouncer) Status(networkID int64) (nick string, connected bool, ok bool)
 
 // BanList returns the ban masks for one channel on one network.
 func (b *Bouncer) BanList(networkID int64, channel string) ([]string, error) {
-	b.mu.Lock()
-	for _, r := range b.running {
-		if r.net.id == networkID {
-			n := r.net
-			b.mu.Unlock()
-			n.mu.Lock()
-			cs := n.channels[strings.ToLower(channel)]
-			n.mu.Unlock()
-			if cs == nil {
-				return nil, errors.New("channel not found")
-			}
-			out := make([]string, 0, len(cs.bans))
-			out = append(out, cs.bans...)
-			return out, nil
-		}
+	n := b.network(networkID)
+	if n == nil {
+		return nil, fmt.Errorf("%w: network", api.ErrNotFound)
 	}
-	b.mu.Unlock()
-	return nil, errors.New("network not found")
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	cs := n.channels[strings.ToLower(channel)]
+	if cs == nil {
+		return nil, fmt.Errorf("%w: channel", api.ErrNotFound)
+	}
+	return append([]string{}, cs.bans...), nil
 }
 
-// BanAdd adds a ban mask to a channel on one network.
+// BanAdd asks the network to ban a mask in a channel. The list the bouncer keeps changes when the network
+// reports the new mode, so a ban the network refuses never shows up in it.
 func (b *Bouncer) BanAdd(networkID int64, channel, mask string) error {
-	b.mu.Lock()
-	for _, r := range b.running {
-		if r.net.id == networkID {
-			n := r.net
-			b.mu.Unlock()
-			n.mu.Lock()
-			cs := n.channels[strings.ToLower(channel)]
-			n.mu.Unlock()
-			if cs == nil {
-				return errors.New("channel not found")
-			}
-			cs.addBan(mask)
-			n.mu.Unlock()
-			if c := n.client; c != nil {
-				return c.Send(irc.New("MODE", channel, "+b", mask))
-			}
-			return errors.New("not connected")
-		}
-	}
-	b.mu.Unlock()
-	return errors.New("network not found")
+	return b.banMode(networkID, channel, "+b", mask)
 }
 
-// BanRemove removes a ban mask from a channel on one network.
+// BanRemove asks the network to lift a ban from a channel.
 func (b *Bouncer) BanRemove(networkID int64, channel, mask string) error {
-	b.mu.Lock()
-	for _, r := range b.running {
-		if r.net.id == networkID {
-			n := r.net
-			b.mu.Unlock()
-			n.mu.Lock()
-			cs := n.channels[strings.ToLower(channel)]
-			n.mu.Unlock()
-			if cs == nil {
-				return errors.New("channel not found")
-			}
-			cs.removeBan(mask)
-			n.mu.Unlock()
-			if c := n.client; c != nil {
-				return c.Send(irc.New("MODE", channel, "-b", mask))
-			}
-			return errors.New("not connected")
-		}
+	return b.banMode(networkID, channel, "-b", mask)
+}
+
+func (b *Bouncer) banMode(networkID int64, channel, mode, mask string) error {
+	if !isChannel(channel) || !plainParam(channel) || mask == "" || !plainParam(mask) {
+		return fmt.Errorf("%w: a channel and a ban mask are single words without control characters", api.ErrInvalid)
 	}
-	b.mu.Unlock()
-	return errors.New("network not found")
+	n := b.network(networkID)
+	if n == nil {
+		return fmt.Errorf("%w: network", api.ErrNotFound)
+	}
+	n.mu.Lock()
+	known := n.channels[strings.ToLower(channel)] != nil
+	c := n.client
+	n.mu.Unlock()
+	if !known {
+		return fmt.Errorf("%w: channel", api.ErrNotFound)
+	}
+	if c == nil {
+		return fmt.Errorf("%w (%w)", api.ErrUnavailable, ErrNotConnected)
+	}
+	return c.Send(irc.New("MODE", channel, mode, mask))
+}
+
+// plainParam reports whether s can travel as one IRC parameter: no spaces, control characters or commas.
+func plainParam(s string) bool {
+	return !strings.ContainsFunc(s, func(r rune) bool { return r <= ' ' || r == 0x7f || r == ',' })
 }
 
 // sendToNetwork sends a raw line from a plugin to an upstream network.
@@ -460,7 +445,16 @@ func (b *Bouncer) routes() http.Handler {
 	wsHandler := ws.Handler(b.conf.AllowedOrigins, func(ctx context.Context, conn irc.LineConn) {
 		newSession(b, conn, api.IdentityFrom(ctx)).run(ctx)
 	})
-	mux.Handle("/ws", b.api.WithIdentity(wsHandler))
+	mux.Handle("/ws", b.api.WithIdentity(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t := b.gate.enter(api.IdentityFrom(r.Context()).IP)
+		if t == nil {
+			w.Header().Set("Retry-After", "10")
+			http.Error(w, "too many connections", http.StatusServiceUnavailable)
+			return
+		}
+		defer t.leave()
+		wsHandler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ticketKey{}, t)))
+	})))
 	mux.Handle("/api/", b.api.Handler())
 	if b.uploads != nil {
 		// Files the client put up, removed on their expiry date. Public, so someone reading

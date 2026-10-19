@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,6 +21,29 @@ import (
 	"gestalt/server/internal/ratelimit"
 	"gestalt/server/internal/store"
 )
+
+// Errors a NetworkStatus may return, so the handlers can answer with the right status.
+var (
+	// ErrInvalid means the request itself was malformed.
+	ErrInvalid = errors.New("invalid request")
+	// ErrNotFound means the network or channel is not one the bouncer knows.
+	ErrNotFound = errors.New("not found")
+	// ErrUnavailable means the network is known but cannot take the request now.
+	ErrUnavailable = errors.New("network not connected")
+)
+
+// statusFor maps an error from a NetworkStatus to an HTTP status.
+func statusFor(err error) int {
+	switch {
+	case errors.Is(err, ErrInvalid):
+		return http.StatusBadRequest
+	case errors.Is(err, ErrNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, ErrUnavailable):
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusInternalServerError
+}
 
 // CookieName is the session cookie.
 const CookieName = "session"
@@ -65,16 +89,20 @@ type API struct {
 
 // New builds the API with its default rate limits.
 func New(acc *accounts.Service, nets NetworkStatus, conf *config.Config) *API {
+	// A Config built by hand, not loaded, has no defaults filled in.
+	perUser := conf.APIRate
+	if perUser < 1 {
+		perUser = 600
+	}
 	a := &API{
 		Accounts:    acc,
 		Networks:    nets,
 		Conf:        conf,
 		LoginByIP:   ratelimit.New(10, 10*time.Minute),
 		LoginByUser: ratelimit.New(20, 10*time.Minute),
-		// 60 requests per minute per IP, 120 per minute per user.
-		APIByIP:   ratelimit.New(60, time.Minute),
-		APIByUser: ratelimit.New(120, time.Minute),
-		mux:       http.NewServeMux(),
+		APIByIP:     ratelimit.New(2*perUser, time.Minute),
+		APIByUser:   ratelimit.New(perUser, time.Minute),
+		mux:         http.NewServeMux(),
 	}
 	a.mux.HandleFunc("POST /api/login", a.login)
 	a.mux.HandleFunc("POST /api/logout", a.logout)
@@ -210,17 +238,23 @@ func (a *API) authed(h func(http.ResponseWriter, *http.Request, store.User)) htt
 			}
 		}
 
-		// Rate-limit authenticated API endpoints per IP and per user.
+		// Rate-limit authenticated API endpoints per IP and per user. The limiter counts what it is told of, so
+		// every request that gets this far is recorded; one that is turned away is not, or a client that keeps
+		// retrying would never get out of the penalty.
 		ip := a.ClientIP(r)
-		for _, k := range []struct {
+		keys := []struct {
 			l   *ratelimit.Limiter
 			key string
-		}{{a.APIByIP, "ip:" + ip}, {a.APIByUser, "user:" + u.Name}} {
+		}{{a.APIByIP, "ip:" + ip}, {a.APIByUser, "user:" + u.Name}}
+		for _, k := range keys {
 			if blocked, wait := k.l.Blocked(k.key); blocked {
 				w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
 				writeError(w, http.StatusTooManyRequests, "API rate limit exceeded; try again later")
 				return
 			}
+		}
+		for _, k := range keys {
+			k.l.Fail(k.key)
 		}
 		h(w, r, u)
 	}
@@ -453,15 +487,13 @@ func (a *API) banList(w http.ResponseWriter, r *http.Request, u store.User) {
 		writeError(w, http.StatusNotFound, "network not found")
 		return
 	}
-	_, _, nOk := a.Networks.Status(spec.ID)
-	if !nOk {
+	if _, _, running := a.Networks.Status(spec.ID); !running {
 		writeError(w, http.StatusServiceUnavailable, "network not connected")
 		return
 	}
-	// The bouncer tracks bans; expose them via a method on Network.
 	bans, err := a.Networks.BanList(spec.ID, channel)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not list bans")
+		writeError(w, statusFor(err), "could not list bans: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, bans)
@@ -483,7 +515,7 @@ func (a *API) banAdd(w http.ResponseWriter, r *http.Request, u store.User) {
 		return
 	}
 	if err := a.Networks.BanAdd(spec.ID, channel, req.Mask); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, statusFor(err), err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -500,7 +532,7 @@ func (a *API) banRemove(w http.ResponseWriter, r *http.Request, u store.User) {
 		return
 	}
 	if err := a.Networks.BanRemove(spec.ID, channel, mask); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, statusFor(err), err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -618,6 +650,29 @@ func (a *API) cookie(r *http.Request, value string, maxAge int) *http.Cookie {
 	}
 }
 
+// bodyStall is how long a client may send nothing in the middle of a small request body.
+const bodyStall = 10 * time.Second
+
+// StallGuard wraps a request body so that a client that stops sending for d has its read fail, and the
+// handler with it. A deadline for the whole request would cut off a big upload on a slow line; this one
+// restarts with every byte that arrives, so only a connection that has gone quiet is dropped. Without it a
+// handful of connections that send a header and then nothing hold their handlers for ever.
+func StallGuard(w http.ResponseWriter, body io.Reader, d time.Duration) io.Reader {
+	return &stallReader{rc: http.NewResponseController(w), r: body, d: d}
+}
+
+type stallReader struct {
+	rc *http.ResponseController
+	r  io.Reader
+	d  time.Duration
+}
+
+func (s *stallReader) Read(p []byte) (int, error) {
+	// Not every server supports deadlines (a test recorder does not); then the guard simply does nothing.
+	_ = s.rc.SetReadDeadline(time.Now().Add(s.d))
+	return s.r.Read(p)
+}
+
 // ReadJSON decodes a JSON request body of at most max bytes into v. On failure
 // it writes the error response and returns false.
 func ReadJSON(w http.ResponseWriter, r *http.Request, max int64, v any) bool {
@@ -629,7 +684,7 @@ func readJSON(w http.ResponseWriter, r *http.Request, max int64, v any) bool {
 		writeError(w, http.StatusUnsupportedMediaType, "send application/json")
 		return false
 	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, max))
+	dec := json.NewDecoder(StallGuard(w, http.MaxBytesReader(w, r.Body, max), bodyStall))
 	if err := dec.Decode(v); err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
