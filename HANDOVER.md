@@ -62,14 +62,10 @@ Note the permission identifiers are hyphenated (`allow-pc-create`, not
   tag; `0.2.14` shipped from master, which does not have this work.
 - The browser path must stay behaviorally unchanged (e2e in Chromium runs it).
 - The native path must stay invisible to `PeerSession` consumers.
-- Guests in native rooms are **deferred**: rooms refuse guests gracefully
-  (`guestJoined` returns false when `local` is null), and the Rust mixing pass
-  already understands `'room'`/`'guest:<nick>'` uplink tags for later wiring.
-
-## Next step
-
-Wire guest uplinks: tag presence (`pc_uplink` `'room'`/`'guest:<nick>'`) so
-native rooms can take guests; the Rust side is built for it.
+- Guests in native rooms work (added after review). A guest's connection is marked with `pc_uplink` `guest:<nick>`;
+  `mix_for` in media.rs makes the same mixes as the browser's `RoomMixer` (the room hears the microphone and the guests;
+  a guest hears the microphone, the room and the other guests, never themselves), unit-tested, and
+  `test/native/run.sh guests` checks it against two Chromium pages.
 
 ## Automated check (added after review)
 

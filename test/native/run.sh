@@ -6,6 +6,7 @@
 #   (cd desktop/src-tauri && cargo build)
 #   test/native/run.sh            # voice: both directions of audio, mute, leave, rejoin
 #   test/native/run.sh transfer   # a direct chat with a file each way (MB=20 megabytes by default)
+#   test/native/run.sh guests     # a guest by link in the app's room, with a browser in it too
 #
 # Needs Go, Node, Python 3, xvfb-run, Playwright (set PLAYWRIGHT_MODULE to its path if it is not global) and a
 # Chromium (CHROMIUM_PATH, or one Playwright installed). No sound server is needed: GESTALT_MEDIA_FAKE_AUDIO gives
@@ -19,7 +20,7 @@ bouncer_port=${BOUNCER_PORT:-18280}
 irc_port=${IRC_PORT:-16780}
 password='a-long-password-1'
 scenario=${1:-voice}
-case "$scenario" in voice|transfer) ;; *) echo "usage: $0 [voice|transfer]" >&2; exit 2;; esac
+case "$scenario" in voice|transfer|guests) ;; *) echo "usage: $0 [voice|transfer|guests]" >&2; exit 2;; esac
 app="$root/desktop/src-tauri/target/debug/gestalt-desktop"
 pids=()
 
@@ -78,7 +79,26 @@ home="$work/home"
 mkdir -p "$home/config/net.gestalt.desktop"
 printf '{"mode":"remote","url":"http://127.0.0.1:%s/","port":0,"user":"","close_to_tray":false}' "$bouncer_port" > "$home/config/net.gestalt.desktop/settings.json"
 
-if [ "$scenario" = voice ]; then
+if [ "$scenario" = guests ]; then
+  # matt turns guest links on and makes one for the voice room in #chat, as the web client's settings would.
+  base="http://127.0.0.1:$bouncer_port"
+  jar="$work/cookies"
+  curl -fs -c "$jar" -H 'Content-Type: application/json' -d "{\"user\":\"matt\",\"password\":\"$password\"}" "$base/api/login" > /dev/null
+  csrf=$(curl -fs -b "$jar" "$base/api/session" | python3 -c 'import sys,json;print(json.load(sys.stdin)["csrf_token"])')
+  curl -fs -b "$jar" -X PUT -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' -d '{"enabled":true}' "$base/api/guests" > /dev/null
+  GUEST_PATH=$(curl -fs -b "$jar" -X POST -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' -d '{"network":"fake","kind":"room","target":"#chat"}' "$base/api/guests/invites" | python3 -c 'import sys,json;print(json.load(sys.stdin)["path"])')
+  export GUEST_PATH
+  sed -e "s/__PASS__/$password/" "$here/guests-desktop.js" > "$work/guests-desktop.js"
+  BASE_URL="$base" TEST_PASSWORD="$password" node "$here/guests.cjs" > "$work/browser.log" 2>&1 &
+  browser=$!
+  sleep 6
+  env -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR \
+    HOME="$home" XDG_CONFIG_HOME="$home/config" XDG_DATA_HOME="$home/data" XDG_CACHE_HOME="$home/cache" \
+    GESTALT_MEDIA_FAKE_AUDIO=1 GESTALT_EVAL_JS="$work/guests-desktop.js" GESTALT_EVAL_SECS="${EVAL_SECS:-200}" WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+    timeout "${EVAL_SECS:-200}" xvfb-run -a "$app" > "$work/app.log" 2>&1 &
+  appid=$!
+  pids+=($appid)
+elif [ "$scenario" = voice ]; then
   # Chromium joins first and waits; the app signs in as matt, joins, mutes, leaves and joins again.
   BASE_URL="http://127.0.0.1:$bouncer_port" TEST_PASSWORD="$password" node "$here/interop.cjs" > "$work/browser.log" 2>&1 &
   browser=$!
@@ -107,7 +127,7 @@ fi
 
 status=0
 wait "$browser" || status=$?
-if [ "$scenario" = transfer ]; then
+if [ "$scenario" != voice ]; then
   # Give the app a moment to put its last findings on the log, then read them.
   sleep 4
 fi
@@ -124,9 +144,9 @@ if [ "$scenario" = voice ]; then
   fi
 else
   last=$(grep '^PROBE' "$work/app.log" | tail -1 || true)
-  echo "desktop app saw: ${last#PROBE }"
+  echo "desktop app saw: ${last#PROBE }" | cut -c1-400
   if echo "$last" | grep -q '\\"error\\"'; then echo "FAIL: the desktop app reported an error"; status=1; fi
-  if ! echo "$last" | grep -q 'received'; then echo "FAIL: the desktop app did not finish the exchange"; status=1; fi
+  if [ "$scenario" = transfer ] && ! echo "$last" | grep -q 'received'; then echo "FAIL: the desktop app did not finish the exchange"; status=1; fi
 fi
 if [ "$status" -ne 0 ]; then
   echo "--- app log"; grep -E "^(media:|PROBE)" "$work/app.log" | grep -v "driver got" | tail -25

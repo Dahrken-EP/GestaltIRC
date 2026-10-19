@@ -167,6 +167,14 @@ export class NativePC {
 
   wantMic = false
 
+  /**
+   * What this connection is sent: 'mic' (the microphone, and with guests in the room, them too), or 'guest:<name>'
+   * for a guest's own connection, which is sent the room instead (see the mixes in media.rs).
+   */
+  setUplink(tag: string): void {
+    void this.run('pc_uplink', { id: this.id, tag }).catch(() => {})
+  }
+
   /** How loud this person plays, 0 to 1, applied while they are mixed for the speakers. */
   setVolume(v: number): void {
     void this.run('pc_volume', { id: this.id, v }).catch(() => {})
@@ -272,6 +280,8 @@ export function streamPcId(stream: MediaStream): number | null {
 export interface NativeVoicePC {
   readonly id: number
   onrms: ((src: string, level: number) => void) | null
+  /** What the connection is sent; see NativePC.setUplink. */
+  setUplink(tag: string): void
   /** How loud this person plays, 0 to 1. */
   setVolume(v: number): void
 }

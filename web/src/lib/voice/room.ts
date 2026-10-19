@@ -104,8 +104,8 @@ interface GuestPeer {
   volume: number
   code: string
   timer: ReturnType<typeof setTimeout> | undefined
-  /** Guests have no native connection here: their mixes are Rust's, later. */
-  native: null
+  /** The guest's native connection, when this room runs through the bridge. */
+  native: NativeVoicePC | null
 }
 
 export class VoiceRoom {
@@ -352,10 +352,12 @@ export class VoiceRoom {
 
   /** Someone came by a link to this room, and their offer will follow. False if this room cannot take them. */
   guestJoined(nick: string, name: string): boolean {
-    if (this.view.state !== 'active' || !this.local) return false
+    // (In the desktop app the microphone is Rust's, so there is no stream of ours to look for.)
+    if (this.view.state !== 'active' || (!this.local && !this.nat)) return false
     const key = nick.toLowerCase()
     if (this.guestPeers.has(key)) return true
-    if (this.live() >= this.max() - 1 || !this.ensureMixer()) return false
+    // In a browser the page mixes for its guests; in the desktop app Rust does, so there is no mixer to make.
+    if (this.live() >= this.max() - 1 || (!this.nat && !this.ensureMixer())) return false
     const g: GuestPeer = {
       nick, name, sid: '', session: null, state: 'connecting', stream: null, meter: null,
       speaking: new Speaking(), isSpeaking: false, volume: 1, code: '', timer: undefined, native: null,
@@ -386,8 +388,7 @@ export class VoiceRoom {
   }
 
   private ensureMixer(): RoomMixer | null {
-    // Guests' mixes are what the Rust mixing pass is for; until its uplink tags are wired
-    // to the page, a native room takes no guests.
+    // In the desktop app the mixing is Rust's, per connection (see mix_pass in media.rs).
     if (this.nat) return null
     if (this.mixer) return this.mixer
     const m = this.o.mixer?.() ?? null
@@ -412,11 +413,12 @@ export class VoiceRoom {
     try {
       const servers = await this.servers()
       const mixer = this.mixer
-      if (!mixer || this.guestPeers.get(key) !== g || g.sid !== sid || this.view.state !== 'active') return
+      if ((!mixer && !this.nat) || this.guestPeers.get(key) !== g || g.sid !== sid || this.view.state !== 'active') return
       const session: PeerSession = new PeerSession({
         iceServers: servers,
         createConnection: this.o.createConnection,
-        stream: mixer.addGuest(key),
+        // A guest is sent the room: from the page's mixer, or in the app a marker that Rust makes that mix for them.
+        stream: this.nat ? (this.ghost ?? this.nat.ghost()) : mixer!.addGuest(key),
         receiveAudio: true,
         send: (d) => this.guestPeers.get(key) === g && g.sid === sid && this.o.sendSignal(g.nick, sid, { k: 'voice', t: d.t, sdp: d.sdp }),
         onTrack: (s) => this.guestPeers.get(key) === g && this.gotGuestStream(g, s),
@@ -432,6 +434,12 @@ export class VoiceRoom {
         },
       })
       g.session = session
+      const npc = session.nativeVoice
+      if (npc && this.nat) {
+        this.nat.wire(npc)
+        npc.setUplink('guest:' + key)
+        g.native = npc
+      }
       g.timer = setTimeout(() => g.state === 'connecting' && this.guestFailed(g), 45_000)
       await session.accept(sdp)
     } catch {

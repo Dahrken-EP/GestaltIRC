@@ -52,6 +52,7 @@ jobs:
         run: |
           cargo build --locked
           GESTALT_MEDIA_FAKE_AUDIO=1 GESTALT_MEDIA_SELFTEST=1 timeout 120 xvfb-run -a ./target/debug/gestalt-desktop
+          cargo test --locked --bin gestalt-desktop
       - name: Chromium
         working-directory: web
         run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
@@ -65,4 +66,9 @@ jobs:
         env:
           CI: "1"
           MB: "10"
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/web/node_modules/playwright
+      - name: A guest by link in the app's voice room, with a browser in it too
+        run: test/native/run.sh guests
+        env:
+          CI: "1"
           PLAYWRIGHT_MODULE: ${{ github.workspace }}/web/node_modules/playwright
