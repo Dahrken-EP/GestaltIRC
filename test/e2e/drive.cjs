@@ -530,7 +530,24 @@ async function send(page, text) {
   ok((await phone.evaluate(() => matchMedia('(hover: none)').matches)), 'the phone cannot hover')
   ok((await phone.locator('.line:has-text("welcome to #chat") .tools').isVisible()) === false, 'a message shows no buttons until it is tapped')
   await phone.locator('.line:has-text("welcome to #chat") .text').tap()
-  await phone.locator('.line:has-text("welcome to #chat") .tools').waitFor({ state: 'visible' })
+  try {
+    await phone.locator('.line:has-text("welcome to #chat") .tools').waitFor({ state: 'visible', timeout: 10_000 })
+  } catch (e) {
+    // Say what the page looked like, since a CI run leaves nothing else to go on.
+    console.log('DIAGNOSTIC', JSON.stringify(await phone.evaluate(() => {
+      const line = document.querySelector('.line') // closest hit for the awaited selector
+      const lines = [...document.querySelectorAll('.line')].filter((l) => l.textContent.includes('welcome to #chat'))
+      const tools = lines.map((l) => l.querySelector('.tools'))
+      return {
+        hoverNone: matchMedia('(hover: none)').matches,
+        matching: lines.length,
+        firstToolsDisplay: tools[0] ? getComputedStyle(tools[0]).display : 'none-found',
+        firstToolsOpen: tools[0] ? [...tools[0].classList] : [],
+        topLines: lines.map((l) => ({ cls: l.className, text: l.textContent.trim().slice(0, 60) })),
+      }
+    })))
+    throw e
+  }
   const box = await phone.locator('.line:has-text("welcome to #chat") .tools button').first().boundingBox()
   ok(box && box.height >= 34 && box.width >= 38, 'the buttons are big enough for a finger: ' + JSON.stringify(box && { w: Math.round(box.width), h: Math.round(box.height) }))
   // (the middle of this one is a link, which opens the link instead, so the time is tapped)
