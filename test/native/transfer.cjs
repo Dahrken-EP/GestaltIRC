@@ -1,7 +1,7 @@
 // Chromium (as "jane") and the desktop app (as "matt", driven by transfer-desktop.js) in a direct chat, sending each
 // other a file of MB megabytes. Checks that both arrive whole (the protocol's own SHA-256 check) and that the
 // browser's saved copy of the desktop's file is byte for byte what was sent, and reports how long each took.
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
+const browserKind = require('./browser.cjs')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
@@ -17,10 +17,7 @@ const ok = (cond, msg) => {
 }
 
 ;(async () => {
-  const browser = await chromium.launch({
-    executablePath: process.env.CHROMIUM_PATH || undefined,
-    args: [...(process.env.CI || process.env.NO_SANDBOX ? ['--no-sandbox'] : [])],
-  })
+  const browser = await browserKind.launch()
   const ctx = await browser.newContext({ acceptDownloads: true })
   const page = await ctx.newPage()
   const errors = []

@@ -1,7 +1,7 @@
 // Chromium (as "jane") in a voice room with the desktop app (as "matt", driven by the app's own debug-build
 // driver). Checks what only a real second implementation can: that the native WebRTC stack and a browser's
 // connect, hear each other, and stay connected through mute and a leave and rejoin. Run by run.sh.
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
+const browserKind = require('./browser.cjs')
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:18280'
 const PASSWORD = process.env.TEST_PASSWORD || 'a-long-password-1'
@@ -13,11 +13,10 @@ const ok = (cond, msg) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 ;(async () => {
-  const browser = await chromium.launch({
-    executablePath: process.env.CHROMIUM_PATH || undefined,
-    args: [...(process.env.CI || process.env.NO_SANDBOX ? ['--no-sandbox'] : []), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
-  })
-  const page = await (await browser.newContext()).newPage()
+  const browser = await browserKind.launch()
+  const context = await browser.newContext()
+  await context.addInitScript(browserKind.record)
+  const page = await context.newPage()
   const errors = []
   page.on('pageerror', (e) => errors.push(e.message))
 
@@ -32,18 +31,29 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   await page.getByRole('button', { name: 'Leave voice' }).waitFor()
   console.log('jane is in the room; waiting for the desktop app')
 
-  // What jane sees of matt, once a fifth of a second, for as long as the desktop's driver runs through its
-  // lifecycle (join, mute, leave, join again).
+  // What jane sees of matt, five times a second, for as long as the desktop's driver runs through its lifecycle (join,
+  // mute, leave, join again). Whether matt is being heard is read from the sound that arrived (the connection's
+  // statistics), not from the page's speaking light, which needs an audio output to run and so says nothing in a
+  // browser on a machine with no sound card.
   const timeline = []
   const started = Date.now()
   let last = ''
+  let prevEnergy = 0
+  const recent = [] // [time, energy gained] over the last second
   const budget = Number(process.env.WATCH_MS || 70000)
   while (Date.now() - started < budget) {
-    const st = await page.evaluate(() => {
+    let st = await page.evaluate(() => {
       const li = [...document.querySelectorAll('[data-testid=voice-person]')].find((l) => l.textContent.includes('matt'))
-      if (!li) return 'absent'
-      return li.getAttribute('data-state') + (li.classList.contains('speaking') ? '+speaking' : '')
+      return li ? li.getAttribute('data-state') : 'absent'
     })
+    const now = Date.now()
+    const { energy } = await browserKind.heard(page)
+    // A connection that came or went changes the total in a way that is not sound.
+    recent.push([now, Math.max(0, energy - prevEnergy)])
+    prevEnergy = energy
+    while (recent.length && now - recent[0][0] > 1000) recent.shift()
+    const gained = recent.reduce((n, [, e]) => n + e, 0)
+    if (st === 'connected' && gained > 0.005) st += '+speaking'
     if (st !== last) {
       timeline.push({ t: Date.now() - started, st })
       last = st
