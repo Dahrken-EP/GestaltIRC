@@ -2,11 +2,12 @@
 // other person accepts: no connection is made, their microphone stays off, and no network
 // address is shared. The microphone is asked for only when a call is placed or accepted.
 
-import { PeerSession, safetyCode, type PeerState } from '../p2p/peer'
+import { PeerSession, safetyCode, type PeerConnectionContext, type PeerState } from '../p2p/peer'
 import { newSessionId, type Signal } from '../p2p/signal'
 import { voiceSlot, type VoiceSlot } from './active'
 import { audioMeter, primeAudio, Speaking, type Meter, type MeterFactory } from './meter'
 import { stopStream } from './media'
+import type { NativeVoice } from '../native/voice'
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'connecting' | 'connected' | 'ended'
 
@@ -31,12 +32,14 @@ export interface CallOptions {
   getMedia: () => Promise<MediaStream>
   onChange: (v: CallView) => void
   wins: () => boolean
-  createConnection?: (config: RTCConfiguration) => RTCPeerConnection
+  createConnection?: (config: RTCConfiguration, ctx?: PeerConnectionContext) => RTCPeerConnection
   createMeter?: MeterFactory
   newSid?: () => string
   slot?: VoiceSlot
   ringMs?: number
   tickMs?: number
+  /** Voice over Rust (the desktop build): the page touches neither microphone nor speakers. */
+  nativeVoice?: NativeVoice
 }
 
 export class VoiceCall {
@@ -49,6 +52,9 @@ export class VoiceCall {
   private speak = { local: new Speaking(), remote: new Speaking() }
   private timer: ReturnType<typeof setTimeout> | undefined
   private ticker: ReturnType<typeof setInterval> | undefined
+  private nat: NativeVoice | null = null
+  /** The stream a native session is told the microphone is (the bridge carries no audio). */
+  private ghost: MediaStream | null = null
 
   constructor(private o: CallOptions) {}
 
@@ -71,7 +77,7 @@ export class VoiceCall {
     this.update({ state: 'calling', reason: '', code: '', remote: null, muted: false, acked: false })
     this.arm('No answer.')
     try {
-      const mic = await this.o.getMedia()
+      const mic = await this.mic(sid)
       if (this.sid !== sid || this.state !== 'calling') return stopStream(mic)
       this.useLocal(mic)
       const session = await this.makeSession(sid)
@@ -93,7 +99,7 @@ export class VoiceCall {
     this.update({ state: 'connecting' })
     this.arm('The call did not connect.')
     try {
-      const mic = await this.o.getMedia()
+      const mic = await this.mic(sid)
       if (this.sid !== sid || this.state !== 'connecting') return stopStream(mic)
       this.useLocal(mic)
       const session = await this.makeSession(sid)
@@ -136,12 +142,15 @@ export class VoiceCall {
   }
 
   setMuted(muted: boolean): void {
-    for (const t of this.local?.getAudioTracks() ?? []) t.enabled = !muted
+    if (this.nat) this.nat.mic().mute(muted)
+    else for (const t of this.local?.getAudioTracks() ?? []) t.enabled = !muted
     this.update({ muted })
   }
 
   setVolume(v: number): void {
+    // In Rust the volume is applied while mixing; the page records it for its own controls.
     this.update({ volume: Math.min(1, Math.max(0, v)) })
+    this.session?.nativeVoice?.setVolume(Math.min(1, Math.max(0, v)))
   }
 
   handleSignal(sid: string, s: Signal): void {
@@ -200,21 +209,32 @@ export class VoiceCall {
 
   // --- internals ---
 
-  private useLocal(mic: MediaStream): void {
+  /** Asks for the microphone: Rust's in the desktop build, the page's in a browser. Failures say why. */
+  private async mic(sid: string): Promise<MediaStream | null> {
+    this.nat = this.o.nativeVoice ?? null
+    if (this.nat) {
+      await this.nat.mic().start() // throws with the reason
+      this.ghost = this.nat.ghost()
+      return null
+    }
+    return this.o.getMedia()
+  }
+
+  private useLocal(mic: MediaStream | null): void {
     this.local = mic
     const make = this.o.createMeter ?? audioMeter
-    this.meters.local = make(mic)
+    this.meters.local = this.nat ? this.nat.localMeter() : make(mic!)
     this.ticker = setInterval(() => this.tick(), this.o.tickMs ?? 50)
   }
 
   private async makeSession(sid: string): Promise<PeerSession> {
     const servers = await this.o.iceServers().catch(() => [] as RTCIceServer[])
-    if (this.sid !== sid || !this.local) throw new Error('superseded')
+    if (this.sid !== sid || !(this.nat ? this.ghost : this.local)) throw new Error('superseded')
     const current = () => this.session === session
     const session: PeerSession = new PeerSession({
       iceServers: servers,
       createConnection: this.o.createConnection,
-      stream: this.local,
+      stream: (this.nat ? this.ghost : this.local) ?? undefined,
       send: (d) => current() && this.o.sendSignal(sid, { k: 'voice', t: d.t, sdp: d.sdp }),
       onTrack: (s) => {
         if (!current()) return
@@ -233,6 +253,8 @@ export class VoiceCall {
       },
     })
     this.session = session
+    const npc = session.nativeVoice
+    if (npc && this.nat) this.nat.wire(npc)
     return session
   }
 
@@ -271,6 +293,11 @@ export class VoiceCall {
     this.meters.local?.close()
     this.meters.remote?.close()
     this.meters = { local: null, remote: null }
+    if (this.nat && this.ghost) {
+      this.nat.mic().stop()
+      this.nat = null
+      this.ghost = null
+    }
     if (this.local) stopStream(this.local)
     this.local = null
     this.offer = null

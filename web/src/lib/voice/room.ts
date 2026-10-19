@@ -5,12 +5,14 @@
 // Presence travels as a client-only tag on the channel and the offers and answers as
 // signalling messages to each person (see ../p2p/signal.ts); the audio goes browser to browser.
 
-import { PeerSession, safetyCode } from '../p2p/peer'
+import { PeerSession, safetyCode, type PeerConnectionContext } from '../p2p/peer'
 import { newSessionId, type Signal } from '../p2p/signal'
 import { voiceSlot, type VoiceSlot } from './active'
 import { stopStream } from './media'
 import { audioMeter, primeAudio, Speaking, type Meter, type MeterFactory } from './meter'
 import type { RoomMixer } from './mixer'
+import type { NativeVoice } from '../native/voice'
+import type { NativeVoicePC } from '../native/pc'
 import { formatPresence, MAX_VOICE, parsePresence } from './presence'
 
 export type PeerConnState = 'connecting' | 'connected' | 'failed'
@@ -56,7 +58,7 @@ export interface RoomOptions {
   iceServers: () => Promise<RTCIceServer[]>
   getMedia: () => Promise<MediaStream>
   onChange: (view: RoomView) => void
-  createConnection?: (config: RTCConfiguration) => RTCPeerConnection
+  createConnection?: (config: RTCConfiguration, ctx?: PeerConnectionContext) => RTCPeerConnection
   createMeter?: MeterFactory
   newSid?: () => string
   slot?: VoiceSlot
@@ -67,6 +69,8 @@ export interface RoomOptions {
   offerTimeoutMs?: number
   /** How often speaking is checked, in milliseconds. */
   tickMs?: number
+  /** Voice over Rust (the desktop build): the page touches neither microphone nor speakers. */
+  nativeVoice?: NativeVoice
 }
 
 interface Peer {
@@ -82,6 +86,8 @@ interface Peer {
   volume: number
   code: string
   timer: ReturnType<typeof setTimeout> | undefined
+  /** The connection's native half, when this session runs through the bridge. */
+  native: NativeVoicePC | null
 }
 
 /** Someone here by a link, who talks to the room through this browser. */
@@ -98,6 +104,8 @@ interface GuestPeer {
   volume: number
   code: string
   timer: ReturnType<typeof setTimeout> | undefined
+  /** Guests have no native connection here: their mixes are Rust's, later. */
+  native: null
 }
 
 export class VoiceRoom {
@@ -112,6 +120,11 @@ export class VoiceRoom {
   /** Everyone who has answered our join, to tell when the room was already full. */
   private answered = new Set<string>()
   private mixer: RoomMixer | null = null
+  /** When the voice runs in Rust: the card for it, and what we tell PeerSession the stream is (the bridge carries no audio). */
+  private nat: NativeVoice | null = null
+  private ghost: MediaStream | null = null
+  /** True when this room's join opened the Rust microphone, so leaving gives the ref back. */
+  private micStarted = false
   private guestPeers = new Map<string, GuestPeer>()
   /** Guests other people said they brought, by lower-case nick of whoever brought them. */
   private brought = new Map<string, { from: string; names: string[] }>()
@@ -144,13 +157,32 @@ export class VoiceRoom {
       this.update({ error: 'You are already in a voice chat. Leave it first.' })
       return
     }
+    const nat = this.o.nativeVoice ?? null
+    this.nat = nat
     primeAudio()
     const epoch = ++this.epoch
     const listenOnly = opts.listenOnly === true
     const pushToTalk = !listenOnly && opts.pushToTalk === true
     this.update({ state: 'joining', error: '' })
     let stream: MediaStream | null = null
-    if (!listenOnly) {
+    if (nat) {
+      // The mic is Rust's. The page asks it to open, and hands PeerSession a stream that
+      // means "the bridge owns the sound" — so a session knows to send the Rust mic.
+      if (!listenOnly) {
+        try {
+          await nat.mic().start()
+        } catch (e) {
+          if (epoch === this.epoch) this.fail(`Could not use the microphone: ${e instanceof Error ? e.message : 'no microphone'}`)
+          return
+        }
+        if (epoch !== this.epoch) {
+          nat.mic().stop()
+          return
+        }
+        this.micStarted = true
+        this.ghost = nat.ghost()
+      }
+    } else if (!listenOnly) {
       try {
         stream = await this.o.getMedia()
       } catch (e) {
@@ -165,7 +197,8 @@ export class VoiceRoom {
     this.local = stream
     this.answered.clear()
     this.ice = null
-    this.localMeter = stream ? (this.o.createMeter ?? audioMeter)(stream) : null
+    // Loudness: the mic's feed comes from Rust's pass; a real stream is measured here.
+    this.localMeter = this.nat && !listenOnly ? this.nat.localMeter() : stream ? (this.o.createMeter ?? audioMeter)(stream) : null
     this.update({ state: 'active', muted: false, listenOnly, pushToTalk, talking: false })
     this.applyMicrophone()
     this.ticker = setInterval(() => this.tick(), this.o.tickMs ?? 50)
@@ -205,6 +238,12 @@ export class VoiceRoom {
     this.brought.clear()
     this.mixer?.close()
     this.mixer = null
+    this.ghost = null
+    if (this.micStarted) {
+      this.nat?.mic().stop()
+      this.micStarted = false
+    }
+    this.nat = null
     if (this.local) stopStream(this.local)
     this.local = null
     this.slot.release(this)
@@ -319,7 +358,7 @@ export class VoiceRoom {
     if (this.live() >= this.max() - 1 || !this.ensureMixer()) return false
     const g: GuestPeer = {
       nick, name, sid: '', session: null, state: 'connecting', stream: null, meter: null,
-      speaking: new Speaking(), isSpeaking: false, volume: 1, code: '', timer: undefined,
+      speaking: new Speaking(), isSpeaking: false, volume: 1, code: '', timer: undefined, native: null,
     }
     g.timer = setTimeout(() => g.state === 'connecting' && !g.session && this.guestFailed(g), this.o.offerTimeoutMs ?? 30_000)
     this.guestPeers.set(key, g)
@@ -347,6 +386,9 @@ export class VoiceRoom {
   }
 
   private ensureMixer(): RoomMixer | null {
+    // Guests' mixes are what the Rust mixing pass is for; until its uplink tags are wired
+    // to the page, a native room takes no guests.
+    if (this.nat) return null
     if (this.mixer) return this.mixer
     const m = this.o.mixer?.() ?? null
     if (!m) return null
@@ -441,7 +483,8 @@ export class VoiceRoom {
 
   /** What the room should send: the microphone, or the mix once guests are in. */
   private outgoing(): MediaStream | null {
-    return this.mixer?.outbound ?? this.local
+    // The bridge carries no audio, so a native room announces its own mic another way.
+    return this.nat ? this.ghost : (this.mixer?.outbound ?? this.local)
   }
 
   // --- controls ---
@@ -467,10 +510,16 @@ export class VoiceRoom {
 
   /** True while what the microphone picks up is going out. */
   private sending(): boolean {
-    return !!this.local && (this.view.pushToTalk ? this.view.talking : !this.view.muted)
+    return this.nat
+      ? this.view.pushToTalk ? this.view.talking : !this.view.muted
+      : !!this.local && (this.view.pushToTalk ? this.view.talking : !this.view.muted)
   }
 
   private applyMicrophone(): void {
+    if (this.nat) {
+      this.nat.mic().mute(!this.sending())
+      return
+    }
     const on = this.sending()
     for (const t of this.local?.getAudioTracks() ?? []) t.enabled = on
   }
@@ -479,6 +528,8 @@ export class VoiceRoom {
     const p = this.peers.get(nick.toLowerCase()) ?? this.guestPeers.get(nick.toLowerCase())
     if (!p) return
     p.volume = Math.min(1, Math.max(0, volume))
+    // In Rust the volume is applied while mixing; the page's slider only records it.
+    p.native?.setVolume(p.volume)
     this.publish()
   }
 
@@ -515,7 +566,7 @@ export class VoiceRoom {
   private addPeer(nick: string, sid: string, offerer: boolean): Peer {
     const peer: Peer = {
       nick, sid, offerer, session: null, state: 'connecting', stream: null, meter: null,
-      speaking: new Speaking(), isSpeaking: false, volume: 1, code: '', timer: undefined,
+      speaking: new Speaking(), isSpeaking: false, volume: 1, code: '', timer: undefined, native: null,
     }
     this.peers.set(nick.toLowerCase(), peer)
     this.publish()
@@ -549,6 +600,11 @@ export class VoiceRoom {
       },
     })
     peer.session = session
+    const npc = session.nativeVoice
+    if (npc && this.nat) {
+      this.nat.wire(npc)
+      peer.native = npc
+    }
     return session
   }
 

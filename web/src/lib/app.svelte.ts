@@ -11,6 +11,9 @@ import { playAlert } from './audio'
 import { plugins } from './plugins/manager.svelte'
 import { disablePush } from './push'
 import { microphone } from './voice/media'
+import { nativeConnection } from './native/pc'
+import { nativeMeter, nativeVoice } from './native/voice'
+import { audioMeter } from './voice/meter'
 import { audioContext } from './voice/meter'
 import { RoomMixer } from './voice/mixer'
 import { settings } from './settings.svelte'
@@ -285,6 +288,9 @@ class App {
     const net = new NetworkState(id, login, info.nick, (line) => conn.send(line), {
       onMention: (n, buf, msg) => this.notifyMention(n, buf, msg),
       onNewMessage: (n, buf, msg) => this.announce(`${msg.nick} said in ${buf.name}: ${msg.text.slice(0, 80)}`),
+      createConnection: (config, ctx) => nativeConnection(config, ctx),
+      createMeter: (stream) => nativeMeter(stream) ?? audioMeter(stream),
+      nativeVoice: nativeVoice(),
       iceServers: () => api.ice().then((r) => r.iceServers),
       getMedia: microphone,
       plugins,

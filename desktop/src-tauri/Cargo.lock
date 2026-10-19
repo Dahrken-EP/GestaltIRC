@@ -1436,7 +1436,9 @@ name = "gestalt-desktop"
 version = "0.2.15"
 dependencies = [
  "base64 0.22.1",
+ "bytes",
  "cpal",
+ "log",
  "opus",
  "rand",
  "serde",

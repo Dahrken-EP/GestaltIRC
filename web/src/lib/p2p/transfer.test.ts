@@ -49,6 +49,12 @@ async function expectSame(b: Blob, data: Uint8Array): Promise<void> {
   expect(sha256Hex(await bytesOf(b))).toBe(sha256Hex(data))
 }
 
+describe('the size of a piece of a file', () => {
+  it('fits the smallest read buffer a peer is known to have (the desktop app, 65535 bytes)', () => {
+    expect(CHUNK_BYTES).toBeLessThan(65535)
+  })
+})
+
 describe('file transfer', () => {
   it('moves a multi-chunk file intact and agrees on the hash', async () => {
     const data = bytes(CHUNK_BYTES * 5 + 123)
@@ -188,7 +194,7 @@ describe('file transfer', () => {
   })
 
   it('lets the sender cancel mid-file, and the receiver notices', async () => {
-    const data = bytes(CHUNK_BYTES * 60)
+    const data = bytes(HIGH_WATER * 3) // enough to fill the buffer, whatever the size of a piece
     const [a, b] = channelPair()
     const { out, done } = receive(b, data.length)
     const tx = new FileSender({ channel: a, file: new Blob([data]), onProgress: (n) => n > CHUNK_BYTES * 3 && tx.cancel() })
@@ -201,7 +207,7 @@ describe('file transfer', () => {
   })
 
   it('ends the sender with "closed" when the peer goes away while it waits', async () => {
-    const data = bytes(CHUNK_BYTES * 60)
+    const data = bytes(HIGH_WATER * 3) // enough to fill the buffer, whatever the size of a piece
     const [a, b] = channelPair()
     // Nobody receives, so the buffer fills and the sender waits.
     b.onmessage = null

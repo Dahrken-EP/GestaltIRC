@@ -7,7 +7,7 @@
 // the user first, and no connection is made (so no network address is revealed)
 // until they accept.
 
-import { PeerSession, safetyCode, type Description, type PeerState } from './peer'
+import { PeerSession, safetyCode, type Description, type PeerConnectionContext, type PeerState } from './peer'
 import { MAX_CHAT_CHARS, MAX_FILE_BYTES, newId, parseControl, type Control } from './protocol'
 import { FileReceiver, FileSender, type DataChannelLike, type TransferFailure } from './transfer'
 
@@ -67,7 +67,7 @@ export interface DirectChatOptions {
   onChange: (view: ChatView) => void
   onMessage: (line: ChatLine) => void
   /** Makes the connection. Tests pass a fake. */
-  createConnection?: (config: RTCConfiguration) => RTCPeerConnection
+  createConnection?: (config: RTCConfiguration, ctx?: PeerConnectionContext) => RTCPeerConnection
   newSid: () => string
   /** True if this side should win when both start at once. Decided the same way on both ends. */
   wins: () => boolean

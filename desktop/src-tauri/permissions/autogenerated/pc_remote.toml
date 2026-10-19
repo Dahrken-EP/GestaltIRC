@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pc-remote"
+description = "Enables the pc_remote command without any pre-configured scope."
+commands.allow = ["pc_remote"]
+
+[[permission]]
+identifier = "deny-pc-remote"
+description = "Denies the pc_remote command without any pre-configured scope."
+commands.deny = ["pc_remote"]

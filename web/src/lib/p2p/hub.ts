@@ -4,6 +4,7 @@
 // network's flood protection is not tripped.
 
 import { DirectChat, type ChatLine, type ChatView } from './chat'
+import type { PeerConnectionContext } from './peer'
 import { encodeSignal, newSessionId, SIGNAL_TAG, SignalAssembler, type Signal } from './signal'
 
 export interface HubOptions {
@@ -13,7 +14,7 @@ export interface HubOptions {
   iceServers: () => Promise<RTCIceServer[]>
   onView: (peer: string, view: ChatView) => void
   onLine: (peer: string, line: ChatLine) => void
-  createConnection?: (config: RTCConfiguration) => RTCPeerConnection
+  createConnection?: (config: RTCConfiguration, ctx?: PeerConnectionContext) => RTCPeerConnection
   /** A signalling message for something other than chat, such as voice. */
   onSignal?: (from: string, sid: string, payload: Signal) => void
   /** Milliseconds between signalling lines. */

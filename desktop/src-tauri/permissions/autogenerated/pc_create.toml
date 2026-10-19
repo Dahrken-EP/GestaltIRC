@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pc-create"
+description = "Enables the pc_create command without any pre-configured scope."
+commands.allow = ["pc_create"]
+
+[[permission]]
+identifier = "deny-pc-create"
+description = "Denies the pc_create command without any pre-configured scope."
+commands.deny = ["pc_create"]

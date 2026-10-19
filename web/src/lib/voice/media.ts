@@ -1,7 +1,8 @@
 // Small helpers for the microphone stream that rooms and calls share.
 
-/** Turns the microphone off, which also clears the browser's "recording" indicator. */
-export function stopStream(stream: MediaStream): void {
+/** Turns the microphone off, which also clears the browser's "recording" indicator. A null is nothing to stop. */
+export function stopStream(stream: MediaStream | null): void {
+  if (!stream) return
   for (const t of stream.getTracks()) t.stop()
 }
 

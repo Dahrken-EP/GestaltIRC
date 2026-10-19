@@ -13,6 +13,9 @@ import {
 } from './irc/message'
 import { pageUnfocused } from './notify'
 import type { ChatLine, ChatView } from './p2p/chat'
+import type { PeerConnectionContext } from './p2p/peer'
+import type { NativeVoice } from './native/voice'
+import type { MeterFactory } from './voice/meter'
 import { encodeRoster, GUEST_TAG, guestLabel, isGuestPrefix, parseGuestEvent, ROSTER_TAG, type RosterEntry } from './guest/protocol'
 import { P2pHub, SIGNAL_TAG } from './p2p/hub'
 import type { Signal } from './p2p/signal'
@@ -311,7 +314,7 @@ export interface NetworkHooks {
   /** STUN and TURN servers for a direct connection. */
   iceServers?(): Promise<RTCIceServer[]>
   /** Makes peer connections for direct chats. Tests pass a fake. */
-  createConnection?: (config: RTCConfiguration) => RTCPeerConnection
+  createConnection?: (config: RTCConfiguration, ctx?: PeerConnectionContext) => RTCPeerConnection
   /** The microphone, for voice rooms and calls. */
   getMedia?: () => Promise<MediaStream>
   /** Which voice chat holds the microphone. One for the whole page unless a test says otherwise. */
@@ -324,6 +327,10 @@ export interface NetworkHooks {
   guestInvite?(id: string): { kind: 'room' | 'direct'; target: string } | undefined
   /** Makes the mixer that lets guests hear a voice room and be heard in it. */
   mixer?: () => RoomMixer | null
+  /** The loudness meters, when the app decides how to measure (Rust feeds the native ones). */
+  createMeter?: MeterFactory
+  /** Voice in Rust, for the desktop build: null in a plain browser. */
+  nativeVoice?: NativeVoice | null
 }
 
 /** Someone connected through a link this user made. */
@@ -501,6 +508,8 @@ export class NetworkState {
         createConnection: this.hooks.createConnection,
         slot: this.hooks.voiceSlot,
         mixer: this.hooks.mixer,
+        createMeter: this.hooks.createMeter,
+        nativeVoice: this.hooks.nativeVoice ?? undefined,
         onChange: (v) => this.onRoomView(buf, v),
       })
       this.rooms.set(buf.key, room)
@@ -606,6 +615,8 @@ export class NetworkState {
         getMedia: () => this.getMedia(),
         createConnection: this.hooks.createConnection,
         slot: this.hooks.voiceSlot,
+        createMeter: this.hooks.createMeter,
+        nativeVoice: this.hooks.nativeVoice ?? undefined,
         onChange: (v) => this.onCallView(nick, v),
       })
       this.calls.set(key, call)

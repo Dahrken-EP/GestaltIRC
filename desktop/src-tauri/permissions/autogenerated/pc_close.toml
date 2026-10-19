@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pc-close"
+description = "Enables the pc_close command without any pre-configured scope."
+commands.allow = ["pc_close"]
+
+[[permission]]
+identifier = "deny-pc-close"
+description = "Denies the pc_close command without any pre-configured scope."
+commands.deny = ["pc_close"]
