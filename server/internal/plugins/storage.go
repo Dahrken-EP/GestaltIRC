@@ -77,7 +77,7 @@ func (s *MemoryStore) Set(plugin, key, value string) error {
 		s.sizes[plugin] = 0
 	}
 	old := ns[key]
-	added := int64(len(key) + len(value)) - int64(len(key)+len(old))
+	added := int64(len(key)+len(value)) - int64(len(key)+len(old))
 	if _, exists := ns[key]; !exists {
 		if len(ns) >= MaxStorageKeys {
 			return ErrStorageFull

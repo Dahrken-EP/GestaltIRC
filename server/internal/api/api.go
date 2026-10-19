@@ -26,7 +26,7 @@ const CookieName = "session"
 
 // Version is the bouncer's build, reported in the session answer so the client's
 // About page can show which build the server runs next to the client's own.
-const Version = "0.2.13"
+const Version = "0.2.14"
 
 // NetworkStatus tells the API whether a network is up. The bouncer implements it.
 type NetworkStatus interface {
@@ -357,9 +357,12 @@ func (a *API) session(w http.ResponseWriter, r *http.Request) {
 	// The CSRF token belongs to the session, so a page that did not log in in this
 	// visit can still send state-changing requests. Without it, the browser gets by
 	// until it must add a network or flip a server's switch, and is refused there.
+	// EnsureSessionCSRF, not SessionCSRF: sessions that began before the token
+	// column existed hold the schema's empty default, and a minted one means their
+	// next state-changing request is accepted without the user logging in again.
 	var csrf string
 	if c, err := r.Cookie(CookieName); err == nil {
-		if tok, err := a.Accounts.SessionCSRF(c.Value); err == nil {
+		if tok, err := a.Accounts.EnsureSessionCSRF(c.Value); err == nil {
 			csrf = tok
 		}
 	}

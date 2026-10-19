@@ -36,18 +36,18 @@ func WireNetwork(send func(network, line string) error, notice func(network, tar
 
 // pluginHost implements Host for one plugin.
 type pluginHost struct {
-	name    string
-	store   *Store
-	sends   map[string][]time.Time // network -> recent send times
-	mu      sync.Mutex
+	name     string
+	store    *Store
+	sends    map[string][]time.Time // network -> recent send times
+	mu       sync.Mutex
 	manifest Manifest
 }
 
 func newPluginHost(name string, store *Store) *pluginHost {
 	return &pluginHost{
-		name:   name,
-		store:  store,
-		sends:  map[string][]time.Time{},
+		name:  name,
+		store: store,
+		sends: map[string][]time.Time{},
 	}
 }
 
@@ -148,6 +148,6 @@ type noopPlugin struct {
 	manifest Manifest
 }
 
-func (p *noopPlugin) Manifest() Manifest { return p.manifest }
-func (p *noopPlugin) Init(host Host) error { return nil }
+func (p *noopPlugin) Manifest() Manifest      { return p.manifest }
+func (p *noopPlugin) Init(host Host) error    { return nil }
 func (p *noopPlugin) HandleEvent(Event) error { return nil }

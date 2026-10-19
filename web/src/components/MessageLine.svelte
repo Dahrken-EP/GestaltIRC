@@ -241,13 +241,16 @@
     min-width: 3.2em;
   }
   .who {
+    /* One fixed column for the sender, so every message's text starts at the
+       same point no matter how long the nick is. Nicks longer than the column
+       are cut off with an ellipsis instead of pushing the text sideways, and a
+       message that follows the same sender (which leaves the nick out) keeps
+       the same start instead of sliding back to a narrower column. */
     flex: none;
-    min-width: 5.5em;
+    width: 9em;
     text-align: right;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 14em;
   }
   .text {
     flex: 1;
@@ -257,6 +260,16 @@
   }
   .nick {
     font-weight: 600;
+  }
+  /* A nick too long for its column keeps its head and an ellipsis, leaving the
+     < > markers beside it visible. */
+  .who .nick {
+    display: inline-block;
+    vertical-align: baseline;
+    max-width: calc(100% - 1.5em);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .nick:hover {
     text-decoration: underline;

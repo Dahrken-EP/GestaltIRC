@@ -76,6 +76,27 @@ describe('InputBar', () => {
     expect(area.value).toContain('helen')
   })
 
+  // A direct chat has no member list at all, yet the one person it is with must
+  // still be completable.
+  it('completes the peer in a direct chat, where there is no member list', async () => {
+    const net = network()
+    const dm = {
+      key: 'query:helen',
+      name: 'helen',
+      kind: 'query',
+      p2p: undefined,
+      members: new Map(),
+      typing: [],
+    } as unknown as Buffer
+    const result = await open(net, dm)
+    const area = box(result)
+    await fireEvent.input(area, { target: { value: 'hey hel' } })
+    area.setSelectionRange(7, 7)
+    await fireEvent.keyDown(area, { key: 'Tab' })
+    await tick()
+    expect(area.value).toContain('helen')
+  })
+
   it('keeps each buffer its own draft when switching between two channels', async () => {
     const net = network()
     const first = buffer('chan:#one', '#one')

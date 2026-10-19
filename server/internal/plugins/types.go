@@ -15,18 +15,18 @@ import (
 type Permission string
 
 const (
-	PermissionIRC       Permission = "irc"       // send messages and commands as the bouncer
-	PermissionStorage   Permission = "storage"   // keep key/value data between runs
-	PermissionTimers    Permission = "timers"    // run functions on a schedule
-	PermissionEvents    Permission = "events"    // hear about IRC events
-	PermissionNotice    Permission = "notice"    // send notices to users and channels
+	PermissionIRC     Permission = "irc"     // send messages and commands as the bouncer
+	PermissionStorage Permission = "storage" // keep key/value data between runs
+	PermissionTimers  Permission = "timers"  // run functions on a schedule
+	PermissionEvents  Permission = "events"  // hear about IRC events
+	PermissionNotice  Permission = "notice"  // send notices to users and channels
 )
 
 // Manifest is what a plugin says about itself.
 type Manifest struct {
-	Name        string     `json:"name"`
-	Version     string     `json:"version"`
-	Description string     `json:"description"`
+	Name        string       `json:"name"`
+	Version     string       `json:"version"`
+	Description string       `json:"description"`
 	Permissions []Permission `json:"permissions"`
 	// Source is the address of the plugin's Go code, relative to the plugins directory.
 	// Empty means the plugin is compiled into the bouncer itself (a builtin).

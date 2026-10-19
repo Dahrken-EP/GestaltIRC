@@ -32,6 +32,14 @@ func (s *Store) SessionCSRF(tokenHash string) (string, error) {
 	return token, err
 }
 
+// SetSessionCSRF gives a live session a CSRF token, for sessions that began
+// before the token column existed and hold the schema's empty default. Nothing
+// is written for an unknown or expired session.
+func (s *Store) SetSessionCSRF(tokenHash, csrfToken string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET csrf_token = ? WHERE token_hash = ? AND expires_ms > ?`, csrfToken, tokenHash, time.Now().UnixMilli())
+	return err
+}
+
 // SessionUser returns the user a live session belongs to.
 func (s *Store) SessionUser(tokenHash string) (User, error) {
 	var u User

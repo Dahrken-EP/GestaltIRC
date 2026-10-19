@@ -80,11 +80,11 @@ func TestParseOfferInvalid(t *testing.T) {
 func TestFormatOffer(t *testing.T) {
 	ip := net.ParseIP("192.168.1.1")
 	offer := &Offer{
-		Type:  TypeSend,
-		Name:  "test.txt",
-		IP:    ip,
-		Port:  12345,
-		Size:  1024,
+		Type: TypeSend,
+		Name: "test.txt",
+		IP:   ip,
+		Port: 12345,
+		Size: 1024,
 	}
 	want := "DCC SEND test.txt 3232235777 12345 1024"
 	if got := offer.FormatOffer(); got != want {
@@ -117,11 +117,11 @@ func TestIPToInt(t *testing.T) {
 func TestCTCP(t *testing.T) {
 	ip := net.ParseIP("10.0.0.1")
 	offer := &Offer{
-		Type:  TypeSend,
-		Name:  "file.zip",
-		IP:    ip,
-		Port:  9999,
-		Size:  5000,
+		Type: TypeSend,
+		Name: "file.zip",
+		IP:   ip,
+		Port: 9999,
+		Size: 5000,
 	}
 	want := "\x01DCC SEND file.zip 167772161 9999 5000\x01"
 	if got := offer.CTCP(); got != want {

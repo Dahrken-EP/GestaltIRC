@@ -67,8 +67,6 @@ func TestStoreKeyLimit(t *testing.T) {
 	}
 }
 
-
-
 func TestStoreTotalSizeLimit(t *testing.T) {
 	backend := NewMemoryStore()
 	s := NewStore(backend)

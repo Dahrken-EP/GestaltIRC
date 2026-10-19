@@ -134,7 +134,15 @@
       cycle.i = (cycle.i + (e.shiftKey ? -1 : 1) + cycle.c.matches.length) % cycle.c.matches.length
     } else {
       const c = findCompletions(text, el.selectionStart, {
-        nicks: [...buf.members.values()].map((m) => m.nick),
+        // In a channel, everyone in it. A direct chat has no member list, so
+        // the one person it is with (the buffer's name) is the name that exists
+        // there; the status buffer has none at all.
+        nicks:
+          buf.kind === 'channel'
+            ? [...buf.members.values()].map((m) => m.nick)
+            : buf.kind === 'status'
+              ? []
+              : [buf.name],
         channels: net.buffers.filter((b) => b.kind === 'channel').map((b) => b.name),
         commands: COMMANDS,
         chanTypes: net.chanTypes,

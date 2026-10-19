@@ -122,31 +122,31 @@ func eventFrom(network string, m *irc.Message) (Event, bool) {
 		}, true
 	case "NICK":
 		return Event{
-			Type:     "nick",
-			Network:  network,
-			Nick:     m.Nick(),
-			Target:   m.Param(0),
-			Time:     now,
+			Type:    "nick",
+			Network: network,
+			Nick:    m.Nick(),
+			Target:  m.Param(0),
+			Time:    now,
 		}, true
 	case "KICK":
 		return Event{
-			Type:     "kick",
-			Network:  network,
-			Buffer:   m.Param(0),
-			Nick:     m.Nick(),
-			Target:   m.Param(1),
-			Text:     m.Param(2),
-			Time:     now,
+			Type:    "kick",
+			Network: network,
+			Buffer:  m.Param(0),
+			Nick:    m.Nick(),
+			Target:  m.Param(1),
+			Text:    m.Param(2),
+			Time:    now,
 		}, true
 	case "MODE":
 		return Event{
-			Type:     "mode",
-			Network:  network,
-			Buffer:   m.Param(0),
-			Nick:     m.Nick(),
-			Text:     m.Param(1),
-			Target:   m.Param(2),
-			Time:     now,
+			Type:    "mode",
+			Network: network,
+			Buffer:  m.Param(0),
+			Nick:    m.Nick(),
+			Text:    m.Param(1),
+			Target:  m.Param(2),
+			Time:    now,
 		}, true
 	case "TOPIC":
 		return Event{
@@ -159,18 +159,18 @@ func eventFrom(network string, m *irc.Message) (Event, bool) {
 		}, true
 	case "001":
 		return Event{
-			Type:     "connect",
-			Network:  network,
-			Nick:     m.Nick(),
-			Time:     now,
+			Type:    "connect",
+			Network: network,
+			Nick:    m.Nick(),
+			Time:    now,
 		}, true
 	case "ERROR":
 		return Event{
-			Type:     "disconnect",
-			Network:  network,
-			Nick:     m.Nick(),
-			Text:     m.Param(0),
-			Time:     now,
+			Type:    "disconnect",
+			Network: network,
+			Nick:    m.Nick(),
+			Text:    m.Param(0),
+			Time:    now,
 		}, true
 	}
 	return Event{}, false

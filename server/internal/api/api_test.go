@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -8,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gestalt/server/internal/accounts"
 	"gestalt/server/internal/config"
@@ -450,6 +453,45 @@ func TestSessionHandsOutTheCSRFToken(t *testing.T) {
 	// And it is the token the state-changing request needs.
 	if resp, out := e.do(t, "PUT", "/api/prefs", `{"pane":"wide"}`, nil, c, csrf); resp.StatusCode != 200 {
 		t.Errorf("PUT /api/prefs with the session's token = %d %v", resp.StatusCode, out)
+	}
+}
+
+// A session started before the CSRF token column existed holds the schema's
+// empty default, and a page can never learn a token that was never handed out:
+// its /api/session answered csrf_token:"" and every state-changing request was
+// refused with "missing CSRF token", however many times it reloaded. Such a
+// session is handed a minted token now, so it starts working without a new login.
+func TestSessionWithoutATokenYetIsGivenOne(t *testing.T) {
+	e := newEnv(t, config.Config{}, fakeStatus{})
+	u, err := e.acc.Store().GetUser("matt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The same hash the accounts service stores in place of the cookie value.
+	raw := "the-old-cookie-value"
+	sum := sha256.Sum256([]byte(raw))
+	if err := e.acc.Store().CreateSession(hex.EncodeToString(sum[:]), u.ID, time.Hour, ""); err != nil {
+		t.Fatal(err)
+	}
+	c := &http.Cookie{Name: CookieName, Value: raw}
+
+	resp, body := e.do(t, "GET", "/api/session", "", nil, c)
+	if resp.StatusCode != 200 {
+		t.Fatalf("session = %d %v", resp.StatusCode, body)
+	}
+	csrf, _ := body["csrf_token"].(string)
+	if csrf == "" {
+		t.Fatalf("a session with an empty stored token was not given one: %v", body)
+	}
+
+	// The minted token actually passes the check, and reading the session again
+	// does not mint a different one (which would break the tab that is holding it).
+	if resp, out := e.do(t, "PUT", "/api/prefs", `{"pane":"wide"}`, nil, c, csrf); resp.StatusCode != 200 {
+		t.Errorf("PUT /api/prefs with the minted token = %d %v", resp.StatusCode, out)
+	}
+	_, again := e.do(t, "GET", "/api/session", "", nil, c)
+	if again["csrf_token"] != csrf {
+		t.Errorf("reading the session again minted a different token: %v", again["csrf_token"])
 	}
 }
 

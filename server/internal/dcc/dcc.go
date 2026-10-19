@@ -3,7 +3,8 @@
 // send files to any other IRC client.
 //
 // DCC works by embedding connection details in a CTCP message:
-//   PRIVMSG target :\x01DCC SEND filename ip_as_int port filesize\x01
+//
+//	PRIVMSG target :\x01DCC SEND filename ip_as_int port filesize\x01
 //
 // The receiver connects to ip:port to receive the file. The bouncer proxies
 // these connections so neither client needs to expose its own address.
@@ -26,14 +27,14 @@ var ErrInvalidDCC = errors.New("dcc: invalid DCC message")
 type Type string
 
 const (
-	TypeSend  Type = "SEND"  // file transfer
-	TypeChat  Type = "CHAT"  // direct text chat
+	TypeSend   Type = "SEND"   // file transfer
+	TypeChat   Type = "CHAT"   // direct text chat
 	TypeResume Type = "RESUME" // resume a file transfer
 )
 
 // Offer is a DCC SEND or CHAT offer embedded in a CTCP message.
 type Offer struct {
-	Type    Type
+	Type Type
 	// For SEND: the filename. For CHAT: the chat name.
 	Name string
 	// IP address the sender is listening on.

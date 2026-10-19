@@ -72,6 +72,31 @@ func (s *Service) SessionCSRF(token string) (string, error) {
 	return s.store.SessionCSRF(hashToken(token))
 }
 
+// EnsureSessionCSRF returns the CSRF token of a live session, minting one when
+// the session began before the token column existed and so holds the schema's
+// empty default. A page can never learn a token that was never handed out, and
+// without one every state-changing request from such a session was refused
+// forever, however many times its owner reloaded.
+func (s *Service) EnsureSessionCSRF(token string) (string, error) {
+	hash := hashToken(token)
+	stored, err := s.store.SessionCSRF(hash)
+	if err != nil {
+		return "", err
+	}
+	if stored != "" {
+		return stored, nil
+	}
+	raw := make([]byte, csrfTokenLen)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	csrfToken := base64.RawURLEncoding.EncodeToString(raw)
+	if err := s.store.SetSessionCSRF(hash, csrfToken); err != nil {
+		return "", err
+	}
+	return csrfToken, nil
+}
+
 // Store returns the underlying store, for callers that need direct store access.
 func (s *Service) Store() *store.Store {
 	return s.store
