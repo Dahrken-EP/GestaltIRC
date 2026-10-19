@@ -21,6 +21,29 @@ import (
 	"gestalt/server/internal/store"
 )
 
+// Errors a NetworkStatus may return, so the handlers can answer with the right status.
+var (
+	// ErrInvalid means the request itself was malformed.
+	ErrInvalid = errors.New("invalid request")
+	// ErrNotFound means the network or channel is not one the bouncer knows.
+	ErrNotFound = errors.New("not found")
+	// ErrUnavailable means the network is known but cannot take the request now.
+	ErrUnavailable = errors.New("network not connected")
+)
+
+// statusFor maps an error from a NetworkStatus to an HTTP status.
+func statusFor(err error) int {
+	switch {
+	case errors.Is(err, ErrInvalid):
+		return http.StatusBadRequest
+	case errors.Is(err, ErrNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, ErrUnavailable):
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusInternalServerError
+}
+
 // CookieName is the session cookie.
 const CookieName = "session"
 
@@ -453,15 +476,13 @@ func (a *API) banList(w http.ResponseWriter, r *http.Request, u store.User) {
 		writeError(w, http.StatusNotFound, "network not found")
 		return
 	}
-	_, _, nOk := a.Networks.Status(spec.ID)
-	if !nOk {
+	if _, _, running := a.Networks.Status(spec.ID); !running {
 		writeError(w, http.StatusServiceUnavailable, "network not connected")
 		return
 	}
-	// The bouncer tracks bans; expose them via a method on Network.
 	bans, err := a.Networks.BanList(spec.ID, channel)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not list bans")
+		writeError(w, statusFor(err), "could not list bans: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, bans)
@@ -483,7 +504,7 @@ func (a *API) banAdd(w http.ResponseWriter, r *http.Request, u store.User) {
 		return
 	}
 	if err := a.Networks.BanAdd(spec.ID, channel, req.Mask); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, statusFor(err), err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -500,7 +521,7 @@ func (a *API) banRemove(w http.ResponseWriter, r *http.Request, u store.User) {
 		return
 	}
 	if err := a.Networks.BanRemove(spec.ID, channel, mask); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, statusFor(err), err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
