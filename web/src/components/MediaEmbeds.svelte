@@ -38,7 +38,7 @@
   let previews = $state<Record<string, Preview | null>>({})
 
   /** Kinds that open a player in the corner of the window when the user presses play. */
-  const playerKinds: MediaKind[] = ['youtube', 'streamable', 'twitch', 'soundcloud', 'spotify', 'vimeo']
+  const playerKinds: MediaKind[] = ['youtube', 'streamable', 'twitch', 'soundcloud', 'spotify']
 
   // What to show for each link: the kind from its address, and a preview where one is needed.
   const items = $derived(
@@ -92,7 +92,6 @@
       case 'twitch': return 'Twitch'
       case 'soundcloud': return 'SoundCloud'
       case 'spotify': return 'Spotify'
-      case 'vimeo': return 'Vimeo'
       default: return kind
     }
   }

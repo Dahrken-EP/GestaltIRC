@@ -11,12 +11,11 @@ export type LinkKind =
   | 'twitch'
   | 'soundcloud'
   | 'spotify'
-  | 'vimeo'
   | 'link'
 
 export interface LinkInfo {
   kind: LinkKind
-  /** The video or clip id for youtube, streamable, twitch and vimeo. For soundcloud it is the track id; for spotify "<kind>/<id>", such as "track/4iV5W9uYEdYUVa79Axb7Rh". */
+  /** The video or clip id for youtube, streamable and twitch. For soundcloud it is the track id; for spotify "<kind>/<id>", such as "track/4iV5W9uYEdYUVa79Axb7Rh". */
   id?: string
   /** For imgur and giphy links: the address of the file itself, which is not the address that was posted. */
   src?: string
@@ -24,7 +23,7 @@ export interface LinkInfo {
 
 export interface Preview {
   url: string
-  kind: 'link' | 'image' | 'video' | 'audio' | 'youtube' | 'streamable' | 'twitch' | 'soundcloud' | 'spotify' | 'vimeo' | 'none'
+  kind: 'link' | 'image' | 'video' | 'audio' | 'youtube' | 'streamable' | 'twitch' | 'soundcloud' | 'spotify' | 'none'
   title?: string
   description?: string
   site?: string
@@ -44,7 +43,6 @@ const STREAMABLE_ID = /^[a-z0-9]{4,12}$/
 const TWITCH_ID = /^[a-zA-Z0-9_-]{2,25}$/
 const SOUNDCLOUD_ID = /^[a-zA-Z0-9_-]+$/
 const SPOTIFY_ID = /^[A-Za-z0-9]{22}$/
-const VIMEO_ID = /^\d{6,10}$/
 
 /** The address of a proxied copy of `url`. */
 export function mediaSrc(url: string): string {
@@ -139,15 +137,6 @@ export function spotifyId(u: URL): string {
   return SPOTIFY_KINDS.has(kind) && SPOTIFY_ID.test(id) ? `${kind}/${id}` : ''
 }
 
-/** The video id in a Vimeo link, or ''. */
-export function vimeoId(u: URL): string {
-  const host = u.hostname.toLowerCase().replace(/^www\./, '')
-  if (host !== 'vimeo.com') return ''
-  const path = u.pathname.replace(/^\/+|\/+$/g, '')
-  const id = path.split('/')[0] ?? ''
-  return VIMEO_ID.test(id) ? id : ''
-}
-
 /**
  * Imgur and Giphy pages are not files, but each has a file at a known address. Returns that
  * file, or null when the link is something else (an album, a gallery, a profile).
@@ -221,8 +210,6 @@ export function classifyLink(href: string): LinkInfo {
   if (sc) return { kind: 'soundcloud', id: sc }
   const sp = spotifyId(u)
   if (sp) return { kind: 'spotify', id: sp }
-  const vm = vimeoId(u)
-  if (vm) return { kind: 'vimeo', id: vm }
   const mine = selfHostedFile(u)
   if (mine) return mine
   const hosted = hostedFile(u)
@@ -264,8 +251,6 @@ export function embedSrc(kind: LinkKind, id: string, href?: string): string {
         : `https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/${id}&auto_play=true`
     case 'spotify':
       return `https://open.spotify.com/embed/${id}` // id is "<kind>/<id>"
-    case 'vimeo':
-      return `https://player.vimeo.com/video/${id}?autoplay=true`
     default:
       return `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0`
   }

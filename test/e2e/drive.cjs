@@ -237,14 +237,14 @@ async function send(page, text) {
   await openSettingsTab(page, 'Media')
   await page.getByLabel('Show pictures, video and sound inline').uncheck()
   await page.getByLabel('Show a title and picture for other links').uncheck()
-  await page.getByLabel('Offer players for YouTube, Streamable, Twitch, SoundCloud, Spotify and Vimeo').uncheck()
+  await page.getByLabel('Offer players for YouTube, Streamable, Twitch, SoundCloud and Spotify').uncheck()
   await page.keyboard.press('Escape')
   await page.waitForFunction(() => document.querySelectorAll('img[src^="/api/media?u="], video, audio, .card, iframe').length === 0, null, { timeout: 5000 })
   ok(true, 'with the three switches off, nothing is fetched or shown')
   await openSettingsTab(page, 'Media')
   await page.getByLabel('Show pictures, video and sound inline').check()
   await page.getByLabel('Show a title and picture for other links').check()
-  await page.getByLabel('Offer players for YouTube, Streamable, Twitch, SoundCloud, Spotify and Vimeo').check()
+  await page.getByLabel('Offer players for YouTube, Streamable, Twitch, SoundCloud and Spotify').check()
   await page.keyboard.press('Escape')
 
   // ---------- D. typing, E. away ----------

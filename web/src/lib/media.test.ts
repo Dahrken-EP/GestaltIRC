@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { classifyLink, clearPreviews, embedSrc, fetchPreview, mediaSrc, soundcloudId, spotifyId, streamableId, twitchId, uniqueLinks, vimeoId, youtubeId } from './media'
+import { classifyLink, clearPreviews, embedSrc, fetchPreview, mediaSrc, soundcloudId, spotifyId, streamableId, twitchId, uniqueLinks, youtubeId } from './media'
 
 describe('classifyLink', () => {
   it('recognises sound files by file type', () => {
@@ -180,9 +180,8 @@ describe('new platform ids', () => {
     expect(spotifyId(new URL('https://open.spotify.com/user/someone'))).toBe('')
   })
 
-  it('extracts vimeo video ids', () => {
-    expect(classifyLink('https://vimeo.com/123456789')).toEqual({ kind: 'vimeo', id: '123456789' })
-    expect(vimeoId(new URL('https://vimeo.com/123456789'))).toBe('123456789')
+  it('leaves Vimeo as a plain link: its player will not run in the desktop apps', () => {
+    expect(classifyLink('https://vimeo.com/123456789').kind).toBe('link')
   })
 
   it('is not fooled by look-alike hosts or bad ids', () => {
@@ -191,9 +190,7 @@ describe('new platform ids', () => {
       'https://evil.example/twitch.tv/videos/123456789',
       'https://soundcloud.com.evil.example/user/track',
       'https://open.spotify.com.evil.example/track/4iV5W9uYEdYUVa79Axb7Rh',
-      'https://vimeo.com.evil.example/123456789',
       'https://open.spotify.com/track/short',
-      'https://vimeo.com/notanumber',
     ]) {
       expect(classifyLink(u).kind, u).toBe('link')
     }
@@ -219,7 +216,6 @@ describe('mediaSrc and embedSrc', () => {
     // The kind is in the address; with the id alone Spotify answers 404.
     expect(embedSrc('spotify', 'track/4iV5W9uYEdYUVa79Axb7Rh')).toBe('https://open.spotify.com/embed/track/4iV5W9uYEdYUVa79Axb7Rh')
     expect(embedSrc('spotify', 'playlist/37i9dQZF1DX0UXBs16Z9o1')).toBe('https://open.spotify.com/embed/playlist/37i9dQZF1DX0UXBs16Z9o1')
-    expect(embedSrc('vimeo', '123456789')).toBe('https://player.vimeo.com/video/123456789?autoplay=true')
   })
 })
 

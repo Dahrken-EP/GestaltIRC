@@ -442,7 +442,6 @@ fn reload(app: &AppHandle) {
 /// its frame as a navigation, like any other, and without these it refuses it: the frame stays a blank square.
 const EMBED_HOSTS: &[&str] = &[
     "www.youtube-nocookie.com", "streamable.com", "player.twitch.tv", "clips.twitch.tv", "w.soundcloud.com", "open.spotify.com",
-    "player.vimeo.com",
 ];
 
 fn is_embed(url: &Url) -> bool {
@@ -651,7 +650,6 @@ fn main() {
                         .build()?,
                 )
                 .build()?;
-            app.set_menu(menu)?;
             app.on_menu_event(|app, event| match event.id().as_ref() {
                 "show" => show_window(app),
                 "reload" => reload(app),
@@ -703,6 +701,12 @@ fn main() {
                 })
                 .build(app)
                 .is_ok();
+
+            // With a tray the menu is there and the window needs no bar across its top. Without one (a desktop with
+            // no tray) the bar is the way to Change server. macOS keeps its menu either way: it is the system one.
+            if !has_tray || cfg!(target_os = "macos") {
+                app.set_menu(menu)?;
+            }
 
             // Closing the window hides it to the tray, where Gestalt stays connected, unless the user chose
             // otherwise or there is no tray to bring it back from.
@@ -767,7 +771,6 @@ mod tests {
             "https://clips.twitch.tv/embed?clip=Abc",
             "https://w.soundcloud.com/player/?url=https%3A%2F%2Fsoundcloud.com%2Fa%2Fb",
             "https://open.spotify.com/embed/track/4iV5W9uYEdYUVa79Axb7Rh",
-            "https://player.vimeo.com/video/123456789?autoplay=true",
         ] {
             assert!(is_embed(&url(u)), "{u}");
         }
