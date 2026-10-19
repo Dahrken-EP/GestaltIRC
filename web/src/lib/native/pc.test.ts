@@ -161,6 +161,7 @@ describe('NativePC over PeerSession', () => {
     const ch = session.openChannel('chat')
     ch.onmessage = (ev) => incoming.push(ev.data)
     expect(ch.readyState).toBe('connecting')
+    await flush()
     expect(rust.seen.map((r) => r.cmd)).toContain('pc_channel')
     expect(rust.seen.find((r) => r.cmd === 'pc_channel')!.args).toMatchObject({ label: 'chat' })
 
@@ -273,3 +274,54 @@ describe('NativePC over PeerSession', () => {
 function b64Of(bytes: number[]): string {
   return btoa(String.fromCharCode(...bytes))
 }
+
+
+describe('a native connection keeps its commands in order', () => {
+  // The real Rust side runs commands concurrently, each taking as long as it takes. This one makes the first
+  // commands slowest, so anything the page sends without waiting would overtake them.
+  class SlowRust extends FakeRust {
+    running = 0
+    overlapped = false
+    invoke<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
+      if (cmd === 'native_media') return super.invoke(cmd, args)
+      this.running++
+      if (this.running > 1) this.overlapped = true
+      const delay = { pc_create: 20, pc_channel: 10, pc_track: 5 }[cmd as 'pc_create'] ?? 1
+      return new Promise<T>((resolve, reject) => {
+        setTimeout(() => {
+          this.running--
+          super.invoke<T>(cmd, args).then(resolve, reject)
+        }, delay)
+      })
+    }
+  }
+
+  it('creates the connection, then the channel, then describes it, one command at a time', async () => {
+    const rust = new SlowRust()
+    rust.sdp.set('offer', 'v=0\r\n')
+    const session = new PeerSession({
+      iceServers: [],
+      send: () => {},
+      createConnection: (config) => new NativePC(rust, config) as unknown as RTCPeerConnection,
+      stream: { getTracks: () => [{ kind: 'audio' }], getAudioTracks: () => [{ kind: 'audio' }] } as unknown as MediaStream,
+    })
+    session.openChannel('chat')
+    await session.start().catch(() => {})
+    await new Promise((r) => setTimeout(r, 80))
+    const order = rust.seen.filter((r) => r.cmd !== 'native_media').map((r) => r.cmd)
+    expect(order.slice(0, 4)).toEqual(['pc_create', 'pc_channel', 'pc_track', 'pc_local'])
+    expect(rust.overlapped).toBe(false)
+  })
+
+  it('hands file chunks to the channel in the order they were sent', async () => {
+    const rust = new SlowRust()
+    const pc = new NativePC(rust, {})
+    const ch = pc.createDataChannel('file') as unknown as BridgeChannel
+    rust.emit({ k: 'dc-open', id: pc.id, label: 'file' })
+    await new Promise((r) => setTimeout(r, 50))
+    for (let i = 0; i < 20; i++) ch.send(new Uint8Array([i]))
+    await new Promise((r) => setTimeout(r, 100))
+    const sent = rust.seen.filter((r) => r.cmd === 'pc_send').map((r) => atob(r.args.b64 as string).charCodeAt(0))
+    expect(sent).toEqual(Array.from({ length: 20 }, (_, i) => i))
+  })
+})

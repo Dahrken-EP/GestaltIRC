@@ -50,6 +50,7 @@ fn yes() -> bool {
 /// It looks at shapes, not words — the form ids the launcher owns, the autocomplete
 /// attributes the login form owns, the voice section's own class and button count — so
 /// word changes in any language leave it working.
+#[cfg(debug_assertions)]
 const DRIVER_JS: &str = r#"
 ;(function () {
   if (location.protocol.startsWith('tauri')) {
@@ -139,6 +140,8 @@ struct App {
     launcher: Mutex<Option<Url>>,
     /// The one address the window may show besides the launcher.
     allowed: Mutex<Option<Url>>,
+    /// Origins already given the voice bridge (see `grant_media`).
+    media_granted: Mutex<std::collections::HashSet<String>>,
 }
 
 impl App {
@@ -192,8 +195,36 @@ fn get_state(app: AppHandle, st: State<App>) -> State_ {
     }
 }
 
+/// Lets the bouncer's page, at exactly this origin, use the native voice bridge and nothing else of the app's
+/// commands. The permission cannot be written into the static capability, because the address is the user's
+/// to choose: a wildcard there would hand the microphone and the peer connections to every page the window
+/// ever loads, including the third-party players the client embeds, and the launcher's own commands (which
+/// change the server and start the local bouncer) to the bouncer's page. A grant lasts until the app quits.
+#[cfg(target_os = "linux")]
+fn grant_media(win: &WebviewWindow, st: &App, url: &Url) {
+    use tauri::ipc::CapabilityBuilder;
+    let origin = url.origin().ascii_serialization();
+    if origin == "null" || !st.media_granted.lock().unwrap().insert(origin.clone()) {
+        return;
+    }
+    let mut cap = CapabilityBuilder::new(format!("media-{}", st.media_granted.lock().unwrap().len()))
+        .local(false)
+        .remote(format!("{origin}/*"))
+        .window("main");
+    for p in media::PERMISSIONS {
+        cap = cap.permission(*p);
+    }
+    if let Err(e) = win.add_capability(cap) {
+        media::log_line(&format!("could not grant the voice bridge to {origin}: {e}"));
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn grant_media(_win: &WebviewWindow, _st: &App, _url: &Url) {}
+
 fn show(win: &WebviewWindow, st: &App, url: &Url) -> Result<(), String> {
     *st.allowed.lock().unwrap() = Some(url.clone());
+    grant_media(win, st, url);
     win.navigate(url.clone()).map_err(|e| e.to_string())
 }
 
@@ -396,6 +427,7 @@ fn main() {
                 child: Mutex::new(None),
                 launcher: Mutex::new(None),
                 allowed: Mutex::new(None),
+                media_granted: Mutex::new(Default::default()),
             };
             app.manage(st);
 
@@ -441,6 +473,9 @@ fn main() {
                     }
                 });
             }
+            // Development only: the driver signs in with a password it is given in the environment, so a release
+            // build does not contain it.
+            #[cfg(debug_assertions)]
             if let Ok(live) = std::env::var("GESTALT_MEDIA_LIVE") {
                 // The local live check's driver: it does around the page what a person
                 // would — connect, sign in as the named nick, join the room — so two
@@ -477,8 +512,7 @@ fn main() {
                         match handle.get_webview_window("main") {
                             Some(win) => {
                                 let script = DRIVER_JS.replace("__USER__", &user).replace("__PASS__", &pass);
-                                let h2 = handle.clone();
-                                let script = DRIVER_JS.replace("__USER__", &user).replace("__PASS__", &pass);                                match win.eval_with_callback(&script, move |out| {
+                                match win.eval_with_callback(&script, move |out| {
                                     if !out.is_empty() {
                                         media::log_line(&format!("driver got: {out}"));
                                     }

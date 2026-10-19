@@ -1012,8 +1012,40 @@ pub fn native_media(state: State<'_, Hub>) -> Probe {
     }
 }
 
+/// The permissions the bouncer's page is given for the voice bridge (see `grant_media` in main.rs). They are the
+/// commands below and no others, and the right to listen for the "media" events they send back.
+pub const PERMISSIONS: &[&str] = &[
+    "core:event:allow-listen", "core:event:allow-unlisten",
+    "allow-native-media", "allow-pc-create", "allow-pc-local", "allow-pc-remote", "allow-pc-track", "allow-pc-uplink",
+    "allow-pc-channel", "allow-pc-send", "allow-pc-volume", "allow-pc-close", "allow-mic-start", "allow-mic-mute",
+    "allow-mic-stop",
+];
+
+/// The most connections the page may hold at once. A voice room holds one per person, and a room is small.
+const MAX_CONNECTIONS: usize = 32;
+
+/// Runs a piece of async work on the media runtime and waits for it without blocking the caller. The commands
+/// below are `async` so that Tauri runs them off the main thread: the ones that wait (gathering candidates takes
+/// seconds) used to freeze the whole window.
+async fn on_media<T: Send + 'static>(
+    inner: &Arc<Inner>,
+    command: &'static str,
+    work: impl std::future::Future<Output = Result<T, String>> + Send + 'static,
+) -> Result<T, String> {
+    let done = inner.rt.spawn(work).await.map_err(|e| format!("the media task failed: {e}")).and_then(|r| r);
+    if std::env::var_os("GESTALT_MEDIA_TRACE").is_some() && done.is_ok() {
+        log(&format!("{command}: ok"));
+    }
+    if let Err(e) = &done {
+        // The page sees the error too, but only as a refused promise; this is where a failed call can be found.
+        log(&format!("{command}: {e}"));
+    }
+    done
+}
+
 #[tauri::command]
-pub fn pc_create(state: State<'_, Hub>, id: u64, ice: Vec<IceServerIn>) -> Result<(), String> {let config = RTCConfiguration {
+pub async fn pc_create(state: State<'_, Hub>, id: u64, ice: Vec<IceServerIn>) -> Result<(), String> {
+    let config = RTCConfiguration {
         ice_servers: ice
             .into_iter()
             .map(|s| webrtc::ice_transport::ice_server::RTCIceServer {
@@ -1026,22 +1058,33 @@ pub fn pc_create(state: State<'_, Hub>, id: u64, ice: Vec<IceServerIn>) -> Resul
         ..Default::default()
     };
     let inner = state.0.clone();
-    state.0.rt.block_on(async move {
-        create_conn(inner, id, config).await?;
+    {
+        let peers = inner.peers.lock().unwrap();
+        if peers.contains_key(&id) {
+            return Err("that connection already exists".into());
+        }
+        if peers.len() >= MAX_CONNECTIONS {
+            return Err("too many connections".into());
+        }
+    }
+    let work = inner.clone();
+    on_media(&inner, "pc_create", async move {
+        create_conn(work, id, config).await?;
         Ok(())
     })
+    .await
 }
 
 #[tauri::command]
-pub fn pc_local(state: State<'_, Hub>, id: u64, kind: String) -> Result<String, String> {    let conn = state.0.conn(id)?;
-    let inner = state.0.clone();
-    inner.rt.block_on(async move { described_local(&conn.pc, &conn, &kind).await })
+pub async fn pc_local(state: State<'_, Hub>, id: u64, kind: String) -> Result<String, String> {
+    let conn = state.0.conn(id)?;
+    on_media(&state.0, "pc_local", async move { described_local(&conn.pc, &conn, &kind).await }).await
 }
 
 #[tauri::command]
-pub fn pc_remote(state: State<'_, Hub>, id: u64, kind: String, sdp: String) -> Result<(), String> {let conn = state.0.conn(id)?;
-    let rt = &state.0.rt;
-    rt.block_on(async move {
+pub async fn pc_remote(state: State<'_, Hub>, id: u64, kind: String, sdp: String) -> Result<(), String> {
+    let conn = state.0.conn(id)?;
+    on_media(&state.0, "pc_remote", async move {
         let desc = match kind.as_str() {
             "offer" => RTCSessionDescription::offer(sdp),
             "answer" => RTCSessionDescription::answer(sdp),
@@ -1051,14 +1094,15 @@ pub fn pc_remote(state: State<'_, Hub>, id: u64, kind: String, sdp: String) -> R
         conn.pc.set_remote_description(desc).await.map_err(estr)?;
         Ok(())
     })
+    .await
 }
 
 /// Adds audio: kind "mic" puts our own capture on the connection (and sends, unless a tag
 /// is set later), kind "recv" asks to only listen.
 #[tauri::command]
-pub fn pc_track(state: State<'_, Hub>, id: u64, kind: String) -> Result<(), String> {let conn = state.0.conn(id)?;
-    let inner = state.0.clone();
-    inner.rt.block_on(async move {
+pub async fn pc_track(state: State<'_, Hub>, id: u64, kind: String) -> Result<(), String> {
+    let conn = state.0.conn(id)?;
+    on_media(&state.0, "pc_track", async move {
         match kind.as_str() {
             "mic" => {
                 let codec = webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability {
@@ -1091,21 +1135,24 @@ pub fn pc_track(state: State<'_, Hub>, id: u64, kind: String) -> Result<(), Stri
         }
         Ok(())
     })
+    .await
 }
 
 /// Names what this connection sends: the plain microphone, what a guest hears in a room,
 /// or what a room hears the host play. Nothing is sent until audio is on the connection.
 #[tauri::command]
-pub fn pc_uplink(state: State<'_, Hub>, id: u64, tag: String) -> Result<(), String> {let conn = state.0.conn(id)?;
+pub fn pc_uplink(state: State<'_, Hub>, id: u64, tag: String) -> Result<(), String> {
+    let conn = state.0.conn(id)?;
     let up = Uplink::parse(&tag, id);
     *conn.uplink.lock().unwrap() = up;
     Ok(())
 }
 
 #[tauri::command]
-pub fn pc_channel(state: State<'_, Hub>, id: u64, label: String) -> Result<(), String> {let conn = state.0.conn(id)?;
+pub async fn pc_channel(state: State<'_, Hub>, id: u64, label: String) -> Result<(), String> {
+    let conn = state.0.conn(id)?;
     let inner = state.0.clone();
-    state.0.rt.block_on(async move {
+    on_media(&state.0, "pc_channel", async move {
         let dc = conn
             .pc
             .create_data_channel(&label, Some(RTCDataChannelInit { ordered: Some(true), ..Default::default() }))
@@ -1114,13 +1161,14 @@ pub fn pc_channel(state: State<'_, Hub>, id: u64, label: String) -> Result<(), S
         wire_channel(inner, id, dc);
         Ok(())
     })
+    .await
 }
 
 /// Sends on one channel: text as text, bytes from base64. Answers the amount sent.
 #[tauri::command]
-pub fn pc_send(state: State<'_, Hub>, id: u64, label: String, text: Option<String>, b64: Option<String>) -> Result<u64, String> {    let conn = state.0.conn(id)?;
-    let rt = &state.0.rt;
-    rt.block_on(async move {
+pub async fn pc_send(state: State<'_, Hub>, id: u64, label: String, text: Option<String>, b64: Option<String>) -> Result<u64, String> {
+    let conn = state.0.conn(id)?;
+    on_media(&state.0, "pc_send", async move {
         let dc = conn.channels.lock().unwrap().get(&label).cloned().ok_or("no such channel")?;
         let amount = if let Some(text) = text {
             dc.send_text(text).await.map_err(estr)? as u64
@@ -1134,44 +1182,54 @@ pub fn pc_send(state: State<'_, Hub>, id: u64, label: String, text: Option<Strin
         };
         Ok(amount)
     })
+    .await
 }
 
 #[tauri::command]
-pub fn pc_volume(state: State<'_, Hub>, id: u64, v: f32) -> Result<(), String> {let conn = state.0.conn(id)?;
-    let clamped = v.clamp(0.0, 2.0);
+pub fn pc_volume(state: State<'_, Hub>, id: u64, v: f32) -> Result<(), String> {
+    let conn = state.0.conn(id)?;
+    let clamped = if v.is_finite() { v.clamp(0.0, 2.0) } else { 1.0 };
     conn.volume.store(clamped.to_bits(), Ordering::Relaxed);
     Ok(())
 }
 
 #[tauri::command]
-pub fn pc_close(state: State<'_, Hub>, id: u64) -> Result<(), String> {let conn = state.0.peers.lock().unwrap().remove(&id);
+pub async fn pc_close(state: State<'_, Hub>, id: u64) -> Result<(), String> {
+    let conn = state.0.peers.lock().unwrap().remove(&id);
     let Some(conn) = conn else { return Ok(()) };
-    let rt = &state.0.rt;
-    rt.block_on(async move { conn.pc.close().await.map_err(estr) })
+    on_media(&state.0, "pc_close", async move { conn.pc.close().await.map_err(estr) }).await
 }
 
+/// The microphone is shared by every connection that sends, counted: the first start opens it, the last stop
+/// closes it.
 #[tauri::command]
-pub fn mic_start(state: State<'_, Hub>) -> Result<MicInfo, String> {    let inner = state.0.clone();
+pub fn mic_start(state: State<'_, Hub>) -> Result<MicInfo, String> {
+    let inner = state.0.clone();
     if inner.mic.refs.fetch_add(1, Ordering::Relaxed) == 0 {
-        match inner.open_input() {
-            Ok(()) => {}
-            Err(e) => {
-                inner.mic.refs.fetch_sub(1, Ordering::Relaxed);
-                return Ok(MicInfo { ok: false, error: e });
-            }
+        if let Err(e) = inner.open_input() {
+            inner.mic.refs.fetch_sub(1, Ordering::Relaxed);
+            return Ok(MicInfo { ok: false, error: e });
         }
     }
     Ok(MicInfo { ok: true, error: String::new() })
 }
 
 #[tauri::command]
-pub fn mic_mute(state: State<'_, Hub>, muted: bool) -> Result<(), String> {state.0.mic.enabled.store(!muted, Ordering::Relaxed);
+pub fn mic_mute(state: State<'_, Hub>, muted: bool) -> Result<(), String> {
+    state.0.mic.enabled.store(!muted, Ordering::Relaxed);
     Ok(())
 }
 
 #[tauri::command]
-pub fn mic_stop(state: State<'_, Hub>) -> Result<(), String> {let inner = state.0.clone();
-    if inner.mic.refs.fetch_sub(1, Ordering::Relaxed) <= 1 {
+pub fn mic_stop(state: State<'_, Hub>) -> Result<(), String> {
+    let inner = state.0.clone();
+    // Never below zero: a stop the page sends twice must not wrap the count round to "in use" for good.
+    let was = inner
+        .mic
+        .refs
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| Some(n.saturating_sub(1)))
+        .unwrap_or(0);
+    if was <= 1 {
         // The last listener is gone: the capture stops and its leftovers are shed.
         *inner.input.lock().unwrap() = None;
         inner.mic.chunks.lock().unwrap().clear();
@@ -1316,21 +1374,26 @@ fn wait_gone(h: &Arc<Inner>, ids: &[u64]) -> Result<(), String> {
 /// Rust microphone to the other's mixing buffer, volumes apply, and everything comes
 /// down again. GESTALT_MEDIA_SELFTEST=1 runs this at startup, says what it found, and
 /// exits so nothing else is left running.
+/// The commands are async for Tauri; the selftest has no runtime of its own, so it waits on the media one.
+fn block<T>(state: &tauri::State<'_, Hub>, fut: impl std::future::Future<Output = T>) -> T {
+    state.0.rt.block_on(fut)
+}
+
 pub fn selftest(state: &tauri::State<'_, Hub>) -> Result<(), String> {
     log("selftest: making two connections over one offer");
-    pc_create(state.clone(), 1, Vec::new())?;
-    pc_create(state.clone(), 2, Vec::new())?;
-    pc_channel(state.clone(), 1, "s".into())?;
-    pc_track(state.clone(), 1, "mic".into())?;
-    let offer = pc_local(state.clone(), 1, "offer".into())?;
+    block(state, pc_create(state.clone(), 1, Vec::new()))?;
+    block(state, pc_create(state.clone(), 2, Vec::new()))?;
+    block(state, pc_channel(state.clone(), 1, "s".into()))?;
+    block(state, pc_track(state.clone(), 1, "mic".into()))?;
+    let offer = block(state, pc_local(state.clone(), 1, "offer".into()))?;
     log("selftest: carried the description over");
     // The answering side puts its own microphone on BEFORE taking the offer: a track
     // added after becomes a second m-line this stack will not fold into the offered one,
     // and browsers fold nothing here either. Before is the order that works everywhere.
-    pc_track(state.clone(), 2, "mic".into())?;
-    pc_remote(state.clone(), 2, "offer".into(), offer)?;
-    let answer = pc_local(state.clone(), 2, "answer".into())?;
-    pc_remote(state.clone(), 1, "answer".into(), answer)?;
+    block(state, pc_track(state.clone(), 2, "mic".into()))?;
+    block(state, pc_remote(state.clone(), 2, "offer".into(), offer))?;
+    let answer = block(state, pc_local(state.clone(), 2, "answer".into()))?;
+    block(state, pc_remote(state.clone(), 1, "answer".into(), answer))?;
     log("selftest: exchanging states");
     for (id, side) in [(1u64, "the offerer"), (2u64, "the answerer")] {
         wait_state(&state.0, id, RTCPeerConnectionState::Connected)
@@ -1364,8 +1427,8 @@ pub fn selftest(state: &tauri::State<'_, Hub>) -> Result<(), String> {
         }
     }
     log("selftest: volumes applied");
-    pc_close(state.clone(), 1)?;
-    pc_close(state.clone(), 2)?;
+    block(state, pc_close(state.clone(), 1))?;
+    block(state, pc_close(state.clone(), 2))?;
     wait_gone(&state.0, &[1, 2]).map_err(|e| format!("teardown: {e}"))?;
     mic_stop(state.clone())?;
     log("selftest: every connection down, the microphone given back");
