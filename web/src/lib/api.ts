@@ -16,6 +16,8 @@ export interface SessionInfo {
   prefs: Record<string, unknown> | null
   /** CSRF token for state-changing requests. */
   csrf_token?: string
+  /** The bouncer's build, shown on the About page. Missing on older bouncers. */
+  version?: string
 }
 
 /** A network as the editor sees it. Secrets are never sent to the browser, only whether one is set. */
@@ -91,7 +93,7 @@ export function setCsrfToken(token: string): void {
   csrfToken = token
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
   const payload = body === undefined ? undefined : JSON.stringify(body)
   let headers: Record<string, string> | undefined
   if (payload !== undefined) {
@@ -119,9 +121,31 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   if (!res.ok) {
     const msg = (data as { error?: string } | null)?.error ?? `request failed (${res.status})`
+    // A page can outlive the bouncer's last restart: the CSRF token was carried
+    // in from the session as it was then, and may be stale or empty now. The
+    // refusal happens before the request does anything, so re-reading the
+    // session and trying once more is safe. This heals a tab that kept running
+    // from before the bouncer was updated.
+    if (retry && res.status === 403 && (msg === 'missing CSRF token' || msg === 'bad CSRF token')) {
+      if (await rearmCsrf()) return request<T>(method, path, body, false)
+    }
     throw new ApiError(res.status, msg)
   }
   return data as T
+}
+
+/** Re-reads the session to pick up a fresh CSRF token. True when one came back. */
+async function rearmCsrf(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/session', { credentials: 'same-origin' })
+    if (!res.ok) return false
+    const data = (await res.json()) as { csrf_token?: string }
+    if (!data.csrf_token) return false
+    setCsrfToken(data.csrf_token)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** A link someone without Gestalt can open to reach this user's browser. */
@@ -197,7 +221,7 @@ export const api = {
   /** The limits for attached files, when the bouncer hosts them at all. */
   uploadInfo: () => request<UploadInfo>('GET', '/api/uploads/info'),
   /** Uploads one file. The name and kind travel in headers, the bytes in the body. */
-  uploadFile: async (file: File, signal?: AbortSignal): Promise<UploadResult> => {
+  uploadFile: async (file: File, signal?: AbortSignal, retry = true): Promise<UploadResult> => {
     const res = await fetch('/api/uploads', {
       method: 'PUT',
       credentials: 'same-origin',
@@ -209,7 +233,16 @@ export const api = {
       signal,
     })
     const data = (await res.json().catch(() => null)) as (UploadResult & { error?: string }) | null
-    if (!res.ok) throw new ApiError(res.status, data?.error ?? `request failed (${res.status})`)
+    if (!res.ok) {
+      const msg = data?.error ?? `request failed (${res.status})`
+      // The same self-heal as request(): a stale token from a long-lived tab is
+      // re-read from the session, and the upload tries once more. Nothing was
+      // uploaded during the refusal, so the retry cannot make a duplicate.
+      if (retry && res.status === 403 && (msg === 'missing CSRF token' || msg === 'bad CSRF token') && (await rearmCsrf())) {
+        return api.uploadFile(file, signal, false)
+      }
+      throw new ApiError(res.status, msg)
+    }
     if (!data || !data.url) throw new ApiError(res.status, 'the bouncer did not answer plainly')
     return data
   },

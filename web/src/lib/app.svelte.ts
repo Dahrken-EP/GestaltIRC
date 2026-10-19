@@ -31,6 +31,8 @@ export type Phase = 'loading' | 'login' | 'ready'
 class App {
   phase = $state<Phase>('loading')
   user = $state('')
+  /** The build the bouncer is running, from the session answer; blank on older bouncers. */
+  bouncerVersion = $state('')
   networks = $state.raw<NetworkState[]>([])
   activeId = $state('')
   showSettings = $state(false)
@@ -118,6 +120,7 @@ class App {
 
   private begin(session: SessionInfo): void {
     this.user = session.user
+    this.bouncerVersion = session.version ?? ''
     settings.connectRemote(session.prefs, (prefs) => {
       api.putPrefs(prefs).catch(() => {
         // not saved this time; the next change tries again

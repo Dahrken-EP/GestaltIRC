@@ -200,9 +200,16 @@ firewall (ufw, nftables, a cloud security group) is what limits it.
 - **Private addresses.** The web editor refuses servers on private addresses unless `allow_private_networks: true`
   is set in `bouncer.yaml` in the config volume. A TURN server relays to whatever address a client names, which is
   why coturn is configured to refuse every private range.
-- **Updating.** `git pull`, then `docker compose up -d --build`. Existing config and data are kept.
+- **Updating.** `git pull`, then `docker compose up -d --build`. Existing config and data are kept. The browser keeps
+  running the page it loaded until it is reloaded, so ask everyone to reload once after updating — a page that outlived
+  the update refuses uploads and network changes until then (0.2.13 and later retry by themselves once and heal).
 - **Tuning.** `history_limit`, `replay_limit`, `command_burst`, `command_rate`, `turn_ttl` and `sts_duration` are in
-  `bouncer.yaml`; `server/bouncer.example.yaml` documents each.
+  `bouncer.yaml`; `server/bouncer.example.yaml` documents each. Hosted attachments are tuned there too:
+  `disable_uploads`, `uploads_max_bytes`, `uploads_max_days` and `uploads_dir` (details in `docs/SERVER.md`).
+  The client shows the paper-clip only after the bouncer answers `/api/uploads/info`, so an old bouncer with a new
+  client has no attach button, and a new one with uploads off hides it again.
+- **Which build is running.** The client's About page shows the bouncer's version next to its own; compare the two
+  after an update before wondering why a new feature is missing.
 
 To edit the config in the volume:
 

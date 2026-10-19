@@ -24,6 +24,10 @@ import (
 // CookieName is the session cookie.
 const CookieName = "session"
 
+// Version is the bouncer's build, reported in the session answer so the client's
+// About page can show which build the server runs next to the client's own.
+const Version = "0.2.13"
+
 // NetworkStatus tells the API whether a network is up. The bouncer implements it.
 type NetworkStatus interface {
 	// Status returns the current nick and whether the network is connected. ok is
@@ -359,7 +363,7 @@ func (a *API) session(w http.ResponseWriter, r *http.Request) {
 			csrf = tok
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "networks": nets, "prefs": rawPrefs, "csrf_token": csrf})
+	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "networks": nets, "prefs": rawPrefs, "csrf_token": csrf, "version": Version})
 }
 
 func (a *API) getPrefs(w http.ResponseWriter, r *http.Request, u store.User) {

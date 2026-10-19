@@ -442,6 +442,10 @@ func TestSessionHandsOutTheCSRFToken(t *testing.T) {
 	if csrf == "" {
 		t.Fatalf("session response has no csrf_token: %v", body)
 	}
+	// The answer also tells the About page which build the bouncer runs.
+	if v, _ := body["version"].(string); v == "" {
+		t.Errorf("session response has no version: %v", body)
+	}
 
 	// And it is the token the state-changing request needs.
 	if resp, out := e.do(t, "PUT", "/api/prefs", `{"pane":"wide"}`, nil, c, csrf); resp.StatusCode != 200 {

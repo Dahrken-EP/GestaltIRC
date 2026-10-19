@@ -73,6 +73,67 @@ describe('api', () => {
     await api.putPrefs({ theme: 'dark' })
     expect(f.mock.calls[0]![1].headers['X-CSRF-Token']).toBe('T-T')
   })
+
+  // A page can outlive the bouncer's last restart: the token it carried in from
+  // the session as it was then may be stale or empty now, and the bouncer answers
+  // "missing CSRF token" before doing anything. The call re-reads the session and
+  // tries once more, so a long-lived tab heals instead of staying broken.
+  it('re-arms the CSRF token from the session when a state-changing call is refused', async () => {
+    const calls: { url: string; token: string }[] = []
+    let answered = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const headers = (init?.headers ?? {}) as Record<string, string>
+        if (url === '/api/session') {
+          // The first read is the token the tab carried in from before the
+          // bouncer's restart (stale); the re-read hands out the fresh one.
+          const token = answered ? 'fresh' : 'stale'
+          answered = true
+          return { ok: true, status: 200, json: async () => ({ user: 'matt', networks: [], prefs: null, csrf_token: token }) }
+        }
+        calls.push({ url, token: headers['X-CSRF-Token'] ?? '' })
+        if (calls.length === 1) return { ok: false, status: 403, json: async () => ({ error: 'bad CSRF token' }) }
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      }) as unknown as typeof fetch,
+    )
+    await api.session()
+    expect(await api.putPrefs({ theme: 'dark' })).toEqual({ ok: true })
+    expect(calls).toEqual([
+      { url: '/api/prefs', token: 'stale' },
+      { url: '/api/prefs', token: 'fresh' },
+    ])
+  })
+
+  it('does not re-read the session for refusals that are not about the CSRF token', async () => {
+    const f = reply(403, { error: 'cross-origin request refused' })
+    vi.stubGlobal('fetch', f)
+    await expect(api.putPrefs({})).rejects.toMatchObject({ message: 'cross-origin request refused' })
+    expect(f).toHaveBeenCalledTimes(1)
+  })
+
+  it('uploads heal a stale token the same way', async () => {
+    const calls: string[] = []
+    let answered = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const headers = (init?.headers ?? {}) as Record<string, string>
+        if (url === '/api/session') {
+          const token = answered ? 'fresh' : 'stale'
+          answered = true
+          return { ok: true, status: 200, json: async () => ({ user: 'matt', networks: [], prefs: null, csrf_token: token }) }
+        }
+        calls.push(headers['X-CSRF-Token'] ?? '')
+        if (calls.length === 1) return { ok: false, status: 403, json: async () => ({ error: 'missing CSRF token' }) }
+        return { ok: true, status: 200, json: async () => ({ id: '1', name: 'f.txt', url: '/uploads/1/f.txt', size: 1, mime: 'text/plain', expires_at: 1 }) }
+      }) as unknown as typeof fetch,
+    )
+    await api.session()
+    const file = new File(['x'], 'f.txt')
+    expect(await api.uploadFile(file)).toMatchObject({ url: '/uploads/1/f.txt' })
+    expect(calls).toEqual(['stale', 'fresh'])
+  })
 })
 
 describe('websocketUrl', () => {
