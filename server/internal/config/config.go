@@ -100,13 +100,12 @@ type Config struct {
 	// UploadsDir is the directory uploaded files are kept in. Defaults to data_dir/uploads.
 	UploadsDir string `yaml:"uploads_dir"`
 
-	// PluginsDir is the directory server-side plugin manifests are loaded from.
-	// Empty disables server-side plugins.
-	PluginsDir string `yaml:"plugins_dir"`
-	// EnableServerPlugins switches server-side plugin support on. Off by default.
-	EnableServerPlugins bool `yaml:"enable_server_plugins"`
-	// PluginStoragePath is where plugin data is kept. Defaults to data_dir/plugins.
-	PluginStoragePath string `yaml:"plugin_storage_path"`
+	// PluginsDir, EnableServerPlugins and PluginStoragePath belonged to server-side plugins, which never ran
+	// anything and have been removed. The keys are still accepted, so that a config file that has them keeps
+	// loading, and are ignored; Load says so when they are set. (Plugins for the web client are not affected.)
+	PluginsDir          string `yaml:"plugins_dir"`
+	EnableServerPlugins bool   `yaml:"enable_server_plugins"`
+	PluginStoragePath   string `yaml:"plugin_storage_path"`
 }
 
 // Load reads and validates the config file.
@@ -125,6 +124,9 @@ func Load(path string) (*Config, error) {
 	c.setDefaults()
 	if info, err := os.Stat(path); err == nil && info.Mode().Perm()&0o077 != 0 && c.TurnSecret != "" {
 		c.Warnings = append(c.Warnings, fmt.Sprintf("%s holds turn_secret and can be read by other users on this machine; use turn_secret_file, or chmod 600 it", path))
+	}
+	if c.EnableServerPlugins || c.PluginsDir != "" || c.PluginStoragePath != "" {
+		c.Warnings = append(c.Warnings, "plugins_dir, enable_server_plugins and plugin_storage_path are ignored: server-side plugins were removed (plugins for the web client are unaffected)")
 	}
 	if c.TurnSecretFile != "" {
 		raw, err := os.ReadFile(c.TurnSecretFile)
@@ -166,9 +168,6 @@ func (c *Config) setDefaults() {
 	}
 	if c.ReplayLimit == 0 {
 		c.ReplayLimit = 200
-	}
-	if c.PluginStoragePath == "" {
-		c.PluginStoragePath = filepath.Join(c.DataDir, "plugins")
 	}
 	if c.APIRate == 0 {
 		c.APIRate = 600
