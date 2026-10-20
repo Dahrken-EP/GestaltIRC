@@ -21,6 +21,9 @@
       "providerShortName": null,
       "signingIdentity": null,
       "entitlements": "Entitlements.plist"
+    },
+    "linux": {
+      "appimage": { "bundleMediaFramework": true }
     }
   }
 }
