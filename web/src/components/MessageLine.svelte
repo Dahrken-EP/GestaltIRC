@@ -122,7 +122,7 @@
   }
 </script>
 
-<div class="line {msg.kind}" class:mention={msg.mention && isChat} class:self={msg.self} class:selected data-msgid={msg.msgid}>
+<div class="line {msg.kind}" class:stamps={settings.timestamps} class:mention={msg.mention && isChat} class:self={msg.self} class:selected data-msgid={msg.msgid}>
   {#if msg.replyTo}
     <div class="reply">
       <span class="dim">↳</span>
@@ -216,9 +216,16 @@
 
 <style>
   .line {
+    /* The width of the name column, and where a message's text starts (what the pictures and reactions under it line
+       up with): after the name column and, when shown, the time column (3.2em of the time's own 0.85em type). */
+    --who-w: calc(15ch + 2em);
+    --text-x: calc(var(--who-w) + 8px);
     padding: var(--row-pad) 10px var(--row-pad) 8px;
     border-left: 3px solid transparent;
     position: relative;
+  }
+  .line.stamps {
+    --text-x: calc(3.2em * 0.85 + 8px + var(--who-w) + 8px);
   }
   .main {
     display: flex;
@@ -248,7 +255,7 @@
        the same start instead of sliding back to a narrower column. */
     flex: none;
     /* Room for a 15-character nick (the width of "0" is wider than an average letter) beside its < > markers. */
-    width: calc(15ch + 2em);
+    width: var(--who-w);
     text-align: right;
     white-space: nowrap;
     overflow: hidden;
@@ -368,14 +375,14 @@
   }
 
   .embeds {
-    padding: 0 0 2px calc(3.2em + 16px);
+    padding: 0 0 2px var(--text-x);
   }
 
   .reactions {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    padding: 2px 0 0 calc(3.2em + 16px);
+    padding: 2px 0 0 var(--text-x);
   }
   .chip {
     border: 1px solid var(--border);
