@@ -66,6 +66,7 @@ Both desktop apps connect to a bouncer you run elsewhere (the address is remembe
 computer, which is connected to IRC only while the app is open. Linux uses Electron and Windows uses Tauri; see **[docs/DESKTOP.md](docs/DESKTOP.md)**.
 
 - **Linux:** download **`Gestalt-<version>.AppImage`** from the **[releases page](https://github.com/Dahrken-EP/GestaltIRC/releases/latest)**, then `chmod +x` it and run it. On a recent distribution you may need FUSE 2 (`sudo apt install libfuse2`).
+- **Linux, experimental:** **`Gestalt_<version>_amd64.AppImage`** is the Tauri app with its own native voice. It is smaller and uses the system's web engine, but has had less use than the Electron one above.
 - **Windows:** download **`Gestalt_<version>_x64-setup.exe`** from the releases page and run it. The installer is not signed yet, so Windows SmartScreen will warn: choose *More info*, then *Run anyway*.
 
 ## Run the bouncer with Docker

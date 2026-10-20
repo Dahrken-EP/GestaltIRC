@@ -1,6 +1,7 @@
 name: release
 
-# Makes a release: the web client, the Linux AppImage and the Windows installer, attached to a tag. Run it by hand from
+# Makes a release: the web client, the Linux AppImage (Electron), the experimental Linux AppImage (Tauri, native voice)
+# and the Windows installer, attached to a tag. Run it by hand from
 # the Actions tab with the version (for example 0.1.7), on the branch to release (normally master). The tag is made
 # for you, at the commit it ran on.
 on:
@@ -67,6 +68,10 @@ jobs:
           path: desktop/dist-electron/*.AppImage
           if-no-files-found: error
 
+  linux-native:
+    needs: check
+    uses: ./.github/workflows/native-appimage.yml
+
   windows:
     needs: check
     runs-on: windows-latest
@@ -96,7 +101,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [web, linux, windows]
+    needs: [web, linux, linux-native, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -117,6 +122,7 @@ jobs:
 
           - **gestalt-web-${{ inputs.version }}.zip**: the web client, for serving with the bouncer's \`web_dir\` (the Docker image already includes it).
           - **Gestalt-${{ inputs.version }}.AppImage**: the Linux desktop app (Electron). \`chmod +x\` it and run it. On a recent distribution you may need \`libfuse2\`.
+          - **Gestalt_${{ inputs.version }}_amd64.AppImage**: the experimental Linux desktop app (Tauri, with its own native voice). It uses the system's web engine and is smaller; voice and file transfer with browsers are tested in CI, but it has had less use than the Electron one. \`chmod +x\` it and run it.
           - **Gestalt_${{ inputs.version }}_x64-setup.exe**: the Windows desktop app (Tauri). It is not signed, so SmartScreen will warn.
 
           Both desktop apps connect to a bouncer you run elsewhere, or start one of their own on your computer. The bouncer itself is run with Docker: see the README."
