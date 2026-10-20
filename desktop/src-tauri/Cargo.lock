@@ -1433,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "gestalt-desktop"
-version = "0.2.16"
+version = "0.2.17"
 dependencies = [
  "base64 0.22.1",
  "bytes",
