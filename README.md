@@ -5,8 +5,6 @@
   </picture>
 </p>
 
-This whole thing is vibe coded and just for me to play with.
-
 A self-hosted IRC bouncer with a compact web client. The bouncer keeps you connected to your IRC networks and keeps the history; the client runs in any browser, on a phone or a desktop, and adds direct chat, file transfer, voice and plugins. A gestalt is a whole that is more than its parts: IRC, kept alive by the bouncer, seen through one client, with the people on it able to reach each other directly.
 
 The server is Go and the client is Svelte. Any other IRC client can use the same bouncer.
