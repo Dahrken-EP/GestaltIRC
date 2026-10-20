@@ -52,7 +52,7 @@ const CookieName = "session"
 // About page can show which build the server runs next to the client's own. Builds set it with
 // -ldflags "-X gestalt/server/internal/api.Version=..."; the value here is what a plain `go build` reports, and a
 // test keeps it equal to the version in desktop/package.json, which the release is checked against.
-var Version = "0.2.16"
+var Version = "0.2.17"
 
 // NetworkStatus tells the API whether a network is up. The bouncer implements it.
 type NetworkStatus interface {
