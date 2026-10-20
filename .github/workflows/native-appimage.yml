@@ -1,8 +1,9 @@
 name: native-appimage
 
 # The experimental Linux app (Tauri, with the native voice stack) as an AppImage. Used by the release workflow, and by
-# attach-native for a release that was made without it.
+# attach-native for a release that was made without it. Run by hand, it only builds (the AppImage is the run's artifact).
 on:
+  workflow_dispatch:
   workflow_call:
     inputs:
       ref:
@@ -37,6 +38,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev libasound2-dev libopus-dev
+          # The AppImage carries what is installed here for playing media (bundleMediaFramework): patchelf is needed
+          # to bundle it, and these are the decoders for the web's formats (Opus, Vorbis, MP3, AAC, H.264, VP8/9).
+          sudo apt-get install -y patchelf gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
       - run: |
           npm --prefix desktop ci
           desktop/build-sidecar.sh
