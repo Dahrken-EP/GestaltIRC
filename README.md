@@ -16,27 +16,22 @@ The server is Go and the client is Svelte. Any other IRC client can use the same
   <img src="docs/assets/screenshot-servers.png" alt="The server bar with three servers, one switched off, a + button, and the menu for the selected server" width="900">
 </p>
 
-The server dialog has the server's details first, then who you are (with alternative nicks), how you log in, what to do after connecting, and the highlight words and notifications for that server only.
-<p align="center">
-  <img src="docs/assets/screenshot-server-dialog.png" alt="The Add a server dialog, filled in" width="420">
-</p>
-
-**Pictures and gifs in the conversation**, one after another: a picture link, a Giphy page, a plain gif link and an imgur page. Your browser never contacts those sites; the bouncer fetches them.
+**Pictures and gifs in the conversation**, fetched by the bouncer.
 <p align="center">
   <img src="docs/assets/screenshot-media-images.png" alt="A chat with an image, a Giphy gif, a gif link and an imgur picture, each shown under the message that linked it" width="560">
 </p>
 
-**Sound, video and links**: an audio player for a sound file, a card for a YouTube link (nothing loads from YouTube until you press play), and a preview card for any page.
+**Sound, video and links**: Inline images, and nested players for twitch, youtube, and more.
 <p align="center">
   <img src="docs/assets/screenshot-media-embeds.png" alt="A chat with an audio player, a YouTube card and a link preview card" width="560">
 </p>
 
-**Direct chat** between two browsers, with file transfer. The safety code and certificates stay out of sight until you press Verify.
+**Direct chat** Direct chat and voice allows you to connect with people in ways that IRC normally doesn't. Voice chat is made available to anyone in the channel. Toggled by settings.
 <p align="center">
   <img src="docs/assets/screenshot-direct.png" alt="A direct chat with a finished file transfer" width="900">
 </p>
 
-**Settings**, with a tab for each kind of thing: General, Appearance, Notifications, Highlights, Media and Plugins.
+**Settings**
 <p align="center">
   <img src="docs/assets/screenshot-settings-general.png" alt="Settings, General" width="300">
   <img src="docs/assets/screenshot-settings-appearance.png" alt="Settings, Appearance" width="300">
