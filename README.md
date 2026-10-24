@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-This is vibe coded just for me, the only reason it's even public is for the curious or to save someone else time building their own.  
+This is vibe coded just for me, and the only reason it's even public is for the curious or to save someone else time building their own.  
 
 A self-hosted IRC bouncer with a compact web client. The bouncer keeps you connected to your IRC networks and keeps the history; the client runs in any browser, on a phone or a desktop, and adds direct chat, file transfer, voice and plugins. A gestalt is a whole that is more than its parts: IRC, kept alive by the bouncer, seen through one client, with the people on it able to reach each other directly.
 
