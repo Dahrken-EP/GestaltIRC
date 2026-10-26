@@ -1171,7 +1171,10 @@ export class NetworkState {
     }
     const key = (b.params[0] ?? '').toLowerCase()
     const before = this.find(key)?.messages.length ?? 0
-    for (const m of b.messages) this.handleMessage(m, true)
+    // The batch names the conversation. In a private one, who said a line is told by the other person, not by my
+    // nick now: I may have had other names when it was said.
+    const peer = key && !this.isChannel(key) ? key : undefined
+    for (const m of b.messages) this.handleMessage(m, true, peer)
     const target = key ? this.find(key) : undefined
     if (!target) return
     if (target.historyLoading) {
@@ -1198,7 +1201,7 @@ export class NetworkState {
 
   // --- incoming ---
 
-  handleMessage(m: Message, history = false): void {
+  handleMessage(m: Message, history = false, peer?: string): void {
     switch (m.command) {
       case '001':
         this.nick = m.params[0] ?? this.nick
@@ -1210,7 +1213,7 @@ export class NetworkState {
         break
       case 'PRIVMSG':
       case 'NOTICE':
-        this.onText(m, history)
+        this.onText(m, history, peer)
         break
       case 'TAGMSG':
         this.onTagmsg(m, history)
@@ -1318,13 +1321,14 @@ export class NetworkState {
     return this.find(this.isSelf(from) ? target : from)
   }
 
-  private onText(m: Message, history: boolean): void {
+  private onText(m: Message, history: boolean, historyPeer?: string): void {
     const from = nickOf(m.prefix)
     const target = m.params[0] ?? ''
     let text = m.params[1] ?? ''
     let kind: Kind = m.command === 'NOTICE' ? 'notice' : 'msg'
     const time = timeOf(m)
-    const self = !isServerPrefix(m.prefix) && this.isSelf(from)
+    // In a private conversation's history there are two sides: the other person, and me under whatever nick I had.
+    const self = !isServerPrefix(m.prefix) && (this.isSelf(from) || (historyPeer !== undefined && !this.isChannel(target) && from.toLowerCase() !== historyPeer))
 
     const ctcp = /^\x01([^\x01 ]*) ?([^\x01]*)\x01?$/.exec(text)
     if (ctcp) {
@@ -1339,7 +1343,7 @@ export class NetworkState {
     }
 
     if (!isServerPrefix(m.prefix) && !this.isChannel(target)) {
-      const peer = (self ? target : from).toLowerCase()
+      const peer = (historyPeer ?? (self ? target : from)).toLowerCase()
       const closedAt = this.closedQueries[peer]
       if (closedAt !== undefined) {
         if (history && time <= closedAt) return
@@ -1350,7 +1354,11 @@ export class NetworkState {
     let buf: Buffer
     if (isServerPrefix(m.prefix)) buf = this.statusBuffer
     else if (this.isChannel(target)) buf = this.buffer(target)
-    else buf = this.buffer(self ? target : from)
+    else {
+      // The conversation's name as the messages spell it; the batch's own spelling is lowercased by the bouncer.
+      const named = self ? target : from
+      buf = this.buffer(historyPeer && named.toLowerCase() !== historyPeer ? historyPeer : named)
+    }
 
     // Someone who sends a message has stopped typing.
     if (!self) buf.setTyping(from, false)
