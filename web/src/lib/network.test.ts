@@ -184,6 +184,35 @@ describe('NetworkState', () => {
     expect(alice.messages.map((m) => m.text)).toEqual(['hi'])
   })
 
+  it('files a conversation by the other person, whatever nick I had when each message was said', () => {
+    const { net, mentioned } = setup('enigma-penguin')
+    // I have been enigma-penguin, then enigma-penguin|w, then enigma-penguin|sleep, and am enigma-penguin again.
+    net.handleBatch({
+      type: 'chathistory',
+      params: ['the_decryptor'],
+      messages: [
+        parse('@time=2030-01-01T10:00:00.000Z :The_Decryptor!u@h PRIVMSG enigma-penguin|w :hello')!,
+        parse('@time=2030-01-01T10:01:00.000Z :enigma-penguin|w!u@h PRIVMSG The_Decryptor :hi')!,
+        parse('@time=2030-01-01T11:00:00.000Z :enigma-penguin|sleep!u@h PRIVMSG The_Decryptor :night')!,
+        parse('@time=2030-01-01T12:00:00.000Z :enigma-penguin!u@h PRIVMSG The_Decryptor :morning')!,
+        parse('@time=2030-01-01T12:01:00.000Z :The_Decryptor!u@h PRIVMSG enigma-penguin :hey')!,
+      ],
+    })
+    // One conversation, with him, and not one with each of my old names.
+    expect(net.buffers.filter((b) => b.kind === 'query').map((b) => b.name)).toEqual(['The_Decryptor'])
+    const chat = net.find('the_decryptor')!
+    expect(chat.messages.map((m) => [m.nick, m.text, m.self])).toEqual([
+      ['The_Decryptor', 'hello', false],
+      ['enigma-penguin|w', 'hi', true],
+      ['enigma-penguin|sleep', 'night', true],
+      ['enigma-penguin', 'morning', true],
+      ['The_Decryptor', 'hey', false],
+    ])
+    // What I said is not a mention of me, and history never notifies.
+    expect(mentioned).toEqual([])
+    expect(chat.messages.filter((m) => m.mention).map((m) => m.text)).toEqual(['hello', 'hey'])
+  })
+
   it('does not ask without chathistory', () => {
     const { feed, sent } = setup()
     feed(':b 001 me :Welcome')
